@@ -30,20 +30,20 @@ class SubmitModal(discord.ui.Modal, title="Submit Hasil Kerja"):
         if not is_staff(interaction.user):
             return await interaction.response.send_message(
                 "❌ Hanya staff yang bisa submit tugas!",
-                ephemeral=True
+                ephemeral=False
             )
         
         # Validate assignment
         if self.assignment["staff_id"] != interaction.user.id:
             return await interaction.response.send_message(
                 "❌ Tugas ini bukan milik kamu!",
-                ephemeral=True
+                ephemeral=False
             )
         
         if self.assignment["status"] != "claimed":
             return await interaction.response.send_message(
                 "❌ Tugas ini belum bisa di-submit!",
-                ephemeral=True
+                ephemeral=False
             )
         
         success = await db.submit_assignment(
@@ -62,7 +62,7 @@ class SubmitModal(discord.ui.Modal, title="Submit Hasil Kerja"):
             embed.add_field(name="Chapter", value=self.assignment["chapter"], inline=True)
             embed.add_field(name="Link", value=self.gdrive_link.value, inline=False)
             
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await interaction.response.send_message(embed=embed, ephemeral=False)
             
             # Notify in channel if exists
             if interaction.channel:
@@ -73,5 +73,5 @@ class SubmitModal(discord.ui.Modal, title="Submit Hasil Kerja"):
         else:
             await interaction.response.send_message(
                 "❌ Gagal submit hasil!",
-                ephemeral=True
+                ephemeral=False
             )

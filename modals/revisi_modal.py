@@ -23,7 +23,7 @@ class RevisiModal(discord.ui.Modal, title="Revisi Tugas"):
         if not is_admin(interaction.user):
             return await interaction.response.send_message(
                 "❌ Hanya admin yang bisa merevisi!",
-                ephemeral=True
+                ephemeral=False
             )
         
         success = await db.revise_assignment(self.assignment_id, self.catatan.value)
@@ -53,5 +53,5 @@ class RevisiModal(discord.ui.Modal, title="Revisi Tugas"):
         else:
             await interaction.response.send_message(
                 "❌ Gagal merevisi tugas!",
-                ephemeral=True
+                ephemeral=False
             )

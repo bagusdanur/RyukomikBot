@@ -48,31 +48,51 @@ def is_staff(member: Union[discord.Member, discord.User]) -> bool:
     return any(role.id == ROLE_STAFF_ID for role in member.roles)
 
 
+ROLE_PAYRATES = {
+    "TL": {"base": 3000, "max": 8000},
+    "TS": {"base": 3000, "max": 12000},
+    "TL+TS": {"base": 5000, "max": 15000},
+}
+
+
+def normalize_role(role: str) -> Optional[str]:
+    """Normalize assignment role names to the PRD role set."""
+    normalized = role.strip().upper().replace(" ", "")
+    aliases = {
+        "TL": "TL",
+        "TS": "TS",
+        "TL+TS": "TL+TS",
+        "TLTS": "TL+TS",
+    }
+    return aliases.get(normalized)
+
+
 def calculate_rate(role: str, manga: str) -> int:
-    """Calculate base rate with popular series bonus.
+    """Calculate the base rate for a role.
     
     Base rates:
     - TL (Translator): 3000
-    - PR (Proofreader): 3000
-    - CL (Cleaner): 3000
+    - TS (Typesetter): 3000
+    - TL+TS: 5000
     
-    Popular series bonus: +30%
-    Maximum rates: TL 15000, PR 12000, CL 8000
+    Maximum rates: TL 8000, TS 12000, TL+TS 15000
     """
-    base = 3000
-    
-    # Apply popular series bonus
-    if manga in POPULAR_SERIES:
-        base = int(base * 1.3)
-    
-    # Apply maximum caps
-    max_rates = {
-        "TL": 15000,
-        "PR": 12000,
-        "CL": 8000,
-    }
-    
-    return min(base, max_rates.get(role, 8000))
+    role = normalize_role(role) or role
+    rates = ROLE_PAYRATES.get(role, ROLE_PAYRATES["TL"])
+    return min(rates["base"], rates["max"])
+
+
+def calculate_final_rate(base_rate: int, role: str, multiplier: float) -> int:
+    """Calculate final rate while respecting the role cap."""
+    role = normalize_role(role) or role
+    max_rate = ROLE_PAYRATES.get(role, ROLE_PAYRATES["TL"])["max"]
+    return min(int(base_rate * multiplier), max_rate)
+
+
+def is_popular_series(manga: str) -> bool:
+    """Return whether a manga title should receive the popular-series bonus."""
+    normalized = manga.strip().casefold()
+    return any(title.casefold() == normalized for title in POPULAR_SERIES)
 
 
 async def find_ticket(guild: discord.Guild, staff_id: int) -> Optional[discord.TextChannel]:
@@ -87,6 +107,43 @@ async def find_ticket(guild: discord.Guild, staff_id: int) -> Optional[discord.T
             return channel
     
     return None
+
+
+async def find_or_create_staff_ticket(guild: discord.Guild, staff: discord.Member) -> Optional[discord.TextChannel]:
+    """Find or create a private staff ticket channel."""
+    existing = await find_ticket(guild, staff.id)
+    if existing:
+        return existing
+
+    admin_role = guild.get_role(ROLE_ADMIN_ID)
+    staff_role = guild.get_role(ROLE_STAFF_ID)
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(read_messages=False),
+        staff: discord.PermissionOverwrite(
+            read_messages=True,
+            send_messages=True,
+            attach_files=True,
+            embed_links=True,
+        ),
+    }
+    if admin_role:
+        overwrites[admin_role] = discord.PermissionOverwrite(
+            read_messages=True,
+            send_messages=True,
+            manage_messages=True,
+            attach_files=True,
+            embed_links=True,
+        )
+    if staff_role:
+        overwrites[staff_role] = discord.PermissionOverwrite(read_messages=False)
+
+    safe_name = "".join(ch for ch in staff.name.lower() if ch.isalnum() or ch == "-")
+    channel_name = f"tiket-{safe_name}-{str(staff.id)[-4:]}"
+    return await guild.create_text_channel(
+        name=channel_name,
+        overwrites=overwrites,
+        topic=f"Tiket staff untuk {staff.display_name} ({staff.id})",
+    )
 
 
 def format_currency(amount: int) -> str:

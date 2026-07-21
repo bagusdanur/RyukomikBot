@@ -16,7 +16,7 @@ class AdminPanelView(discord.ui.View):
         if not is_admin(interaction.user):
             return await interaction.response.send_message(
                 "❌ Hanya admin yang bisa menggunakan fitur ini!",
-                ephemeral=True
+                ephemeral=False
             )
         
         from modals.assign_modal import AssignModal
@@ -29,16 +29,16 @@ class AdminPanelView(discord.ui.View):
         if not is_admin(interaction.user):
             return await interaction.response.send_message(
                 "❌ Hanya admin yang bisa menggunakan fitur ini!",
-                ephemeral=True
+                ephemeral=False
             )
         
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=False)
         
         submitted = await db.get_assignments_by_status("submitted")
         if not submitted:
             return await interaction.followup.send(
                 "📋 Tidak ada tugas yang perlu di-review.",
-                ephemeral=True
+                ephemeral=False
             )
         
         embed = discord.Embed(
@@ -62,7 +62,7 @@ class AdminPanelView(discord.ui.View):
                 inline=False
             )
         
-        await interaction.followup.send(embed=embed, view=ReviewSelectView(submitted[:10]), ephemeral=True)
+        await interaction.followup.send(embed=embed, view=ReviewSelectView(submitted[:10]), ephemeral=False)
     
     @discord.ui.button(label="📊 Rekap", style=discord.ButtonStyle.success, custom_id="admin_rekap")
     async def rekap_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -70,7 +70,7 @@ class AdminPanelView(discord.ui.View):
         if not is_admin(interaction.user):
             return await interaction.response.send_message(
                 "❌ Hanya admin yang bisa menggunakan fitur ini!",
-                ephemeral=True
+                ephemeral=False
             )
         
         from modals.rekap_modal import RekapModal
@@ -83,10 +83,10 @@ class AdminPanelView(discord.ui.View):
         if not is_admin(interaction.user):
             return await interaction.response.send_message(
                 "❌ Hanya admin yang bisa menggunakan fitur ini!",
-                ephemeral=True
+                ephemeral=False
             )
         
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=False)
         
         # Get stats from database
         db_conn = await db.get_db()
@@ -141,7 +141,7 @@ class AdminPanelView(discord.ui.View):
             inline=True
         )
         
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=False)
 
 
 class ReviewSelectView(discord.ui.View):
@@ -180,7 +180,7 @@ class ReviewSelect(discord.ui.Select):
         if not assignment:
             return await interaction.response.send_message(
                 "❌ Tugas tidak ditemukan!",
-                ephemeral=True
+                ephemeral=False
             )
         
         embed = discord.Embed(
@@ -203,7 +203,7 @@ class ReviewSelect(discord.ui.Select):
         await interaction.response.send_message(
             embed=embed,
             view=TicketReviewView(assignment["id"]),
-            ephemeral=True
+            ephemeral=False
         )
 
 
@@ -217,6 +217,12 @@ class TicketReviewView(discord.ui.View):
     @discord.ui.button(label="✅ Setuju", style=discord.ButtonStyle.success, custom_id="review_approve")
     async def approve_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Approve assignment."""
+        if not is_admin(interaction.user):
+            return await interaction.response.send_message(
+                "Hanya admin yang bisa approve!",
+                ephemeral=False
+            )
+        
         success = await db.approve_assignment(self.assignment_id)
         
         if success:
@@ -243,12 +249,18 @@ class TicketReviewView(discord.ui.View):
         else:
             await interaction.response.send_message(
                 "❌ Gagal menyetujui tugas!",
-                ephemeral=True
+                ephemeral=False
             )
     
     @discord.ui.button(label="🔄 Revisi", style=discord.ButtonStyle.danger, custom_id="review_revise")
     async def revise_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Open revise modal."""
+        if not is_admin(interaction.user):
+            return await interaction.response.send_message(
+                "Hanya admin yang bisa merevisi!",
+                ephemeral=False
+            )
+        
         modal = ReviseModal(self.assignment_id)
         await interaction.response.send_modal(modal)
 
@@ -295,5 +307,5 @@ class ReviseModal(discord.ui.Modal, title="Revisi Tugas"):
         else:
             await interaction.response.send_message(
                 "❌ Gagal merevisi tugas!",
-                ephemeral=True
+                ephemeral=False
             )

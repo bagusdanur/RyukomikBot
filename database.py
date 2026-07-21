@@ -102,7 +102,7 @@ async def submit_assignment(assignment_id: int, gdrive_link: str, catatan: Optio
         cursor = await db.execute("""
             UPDATE assignments 
             SET gdrive_link = ?, status = 'submitted', submitted_at = CURRENT_TIMESTAMP, admin_notes = COALESCE(?, admin_notes)
-            WHERE id = ? AND status = 'claimed'
+            WHERE id = ? AND status IN ('claimed', 'revision')
         """, (gdrive_link, catatan, assignment_id))
         await db.commit()
         return cursor.rowcount > 0
@@ -142,6 +142,9 @@ async def revise_assignment(assignment_id: int, catatan: str) -> bool:
 
 async def mark_paid(assignment_ids: List[int], period: str) -> bool:
     """Mark multiple assignments as paid. Returns True if successful."""
+    if not assignment_ids:
+        return False
+    
     db = await get_db()
     try:
         placeholders = ",".join(["?" for _ in assignment_ids])
@@ -204,17 +207,22 @@ async def get_staff_stats(staff_id: int, period: Optional[str] = None) -> Dict[s
                     COUNT(*) as total,
                     SUM(CASE WHEN status = 'approved' THEN final_rate ELSE 0 END) as total_earned,
                     SUM(CASE WHEN status = 'paid' THEN final_rate ELSE 0 END) as total_paid,
-                    SUM(CASE WHEN status IN ('open', 'claimed') THEN 1 ELSE 0 END) as pending
+                    SUM(CASE WHEN status IN ('open', 'claimed', 'submitted', 'revision') THEN 1 ELSE 0 END) as pending
                 FROM assignments 
-                WHERE staff_id = ? AND (paid_period = ? OR assigned_at LIKE ?)
-            """, (staff_id, period, f"%{period}%"))
+                WHERE staff_id = ? 
+                  AND (
+                    approved_at LIKE ?
+                    OR paid_period = ?
+                    OR (approved_at IS NULL AND assigned_at LIKE ?)
+                  )
+            """, (staff_id, f"{period}%", period, f"{period}%"))
         else:
             cursor = await db.execute("""
                 SELECT 
                     COUNT(*) as total,
                     SUM(CASE WHEN status = 'approved' THEN final_rate ELSE 0 END) as total_earned,
                     SUM(CASE WHEN status = 'paid' THEN final_rate ELSE 0 END) as total_paid,
-                    SUM(CASE WHEN status IN ('open', 'claimed') THEN 1 ELSE 0 END) as pending
+                    SUM(CASE WHEN status IN ('open', 'claimed', 'submitted', 'revision') THEN 1 ELSE 0 END) as pending
                 FROM assignments 
                 WHERE staff_id = ?
             """, (staff_id,))
@@ -234,9 +242,41 @@ async def get_rekap(period: str) -> List[Dict[str, Any]]:
                 COUNT(*) as chapter_count,
                 SUM(final_rate) as total_amount
             FROM assignments 
-            WHERE paid_period = ? AND status = 'approved'
+            WHERE approved_at LIKE ? AND status = 'approved'
             GROUP BY staff_id
-        """, (period,))
+        """, (f"{period}%",))
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        await db.close()
+
+
+async def set_assignment_ticket_channel(assignment_id: int, ticket_channel_id: int) -> bool:
+    """Store the staff ticket channel for an assignment."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "UPDATE assignments SET ticket_channel_id = ? WHERE id = ?",
+            (ticket_channel_id, assignment_id),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+    finally:
+        await db.close()
+
+
+async def get_approved_assignments_for_payment(staff_id: int, period: str) -> List[Dict[str, Any]]:
+    """Get approved, unpaid assignments for a staff member in an approval period."""
+    db = await get_db()
+    try:
+        cursor = await db.execute("""
+            SELECT *
+            FROM assignments
+            WHERE staff_id = ?
+              AND status = 'approved'
+              AND approved_at LIKE ?
+            ORDER BY approved_at DESC
+        """, (staff_id, f"{period}%"))
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
     finally:

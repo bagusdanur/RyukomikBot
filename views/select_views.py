@@ -1,5 +1,6 @@
 import discord
 from helpers.utils import is_admin, format_currency
+from views.ticket_views import TicketReviewView, TicketSubmitModal
 import database as db
 
 
@@ -42,7 +43,7 @@ class ReviewSelect(discord.ui.Select):
         if not assignment:
             return await interaction.response.send_message(
                 "❌ Tugas tidak ditemukan!",
-                ephemeral=True
+                ephemeral=False
             )
         
         embed = discord.Embed(
@@ -65,7 +66,7 @@ class ReviewSelect(discord.ui.Select):
         await interaction.response.send_message(
             embed=embed,
             view=TicketReviewView(assignment["id"]),
-            ephemeral=True
+            ephemeral=False
         )
 
 
@@ -108,7 +109,19 @@ class SubmitSelect(discord.ui.Select):
         if not assignment:
             return await interaction.response.send_message(
                 "❌ Tugas tidak ditemukan!",
-                ephemeral=True
+                ephemeral=False
+            )
+        
+        if assignment["staff_id"] != interaction.user.id:
+            return await interaction.response.send_message(
+                "Kamu hanya bisa submit tugas milikmu sendiri!",
+                ephemeral=False
+            )
+        
+        if assignment["status"] not in ("claimed", "revision"):
+            return await interaction.response.send_message(
+                "Tugas ini belum bisa di-submit!",
+                ephemeral=False
             )
         
         modal = TicketSubmitModal(assignment)
@@ -133,27 +146,29 @@ class ConfirmPayView(discord.ui.View):
         if not is_admin(interaction.user):
             return await interaction.response.send_message(
                 "❌ Hanya admin yang bisa memproses pembayaran!",
-                ephemeral=True
+                ephemeral=False
             )
         
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=False)
         
         # Get approved assignments for this staff and period
         db_conn = await db.get_db()
         try:
             cursor = await db_conn.execute("""
-                SELECT id FROM assignments 
-                WHERE staff_id = ? AND paid_period = ? AND status = 'approved'
-            """, (self.staff_id, self.period))
+                SELECT id, final_rate FROM assignments 
+                WHERE staff_id = ? AND approved_at LIKE ? AND status = 'approved'
+            """, (self.staff_id, f"{self.period}%"))
             rows = await cursor.fetchall()
             assignment_ids = [row[0] for row in rows]
+            total = sum(row[1] for row in rows)
+            count = len(rows)
         finally:
             await db_conn.close()
         
         if not assignment_ids:
             return await interaction.followup.send(
                 "❌ Tidak ada tugas yang perlu dibayar!",
-                ephemeral=True
+                ephemeral=False
             )
         
         # Mark as paid
@@ -164,8 +179,8 @@ class ConfirmPayView(discord.ui.View):
             payment_id = await db.create_payment(
                 self.staff_id,
                 self.period,
-                self.total,
-                self.count
+                total,
+                count
             )
             
             # Mark payment as paid
@@ -180,8 +195,8 @@ class ConfirmPayView(discord.ui.View):
                 color=discord.Color.green()
             )
             embed.add_field(name="Periode", value=self.period, inline=True)
-            embed.add_field(name="Total", value=format_currency(self.total), inline=True)
-            embed.add_field(name="Jumlah Chapter", value=str(self.count), inline=True)
+            embed.add_field(name="Total", value=format_currency(total), inline=True)
+            embed.add_field(name="Jumlah Chapter", value=str(count), inline=True)
             
             # Disable button
             for child in self.children:
@@ -198,12 +213,12 @@ class ConfirmPayView(discord.ui.View):
                 try:
                     await staff.send(
                         f"💰 Pembayaran kamu untuk periode **{self.period}** telah diproses!\n"
-                        f"Total: **{format_currency(self.total)}**"
+                        f"Total: **{format_currency(total)}**"
                     )
                 except:
                     pass
         else:
             await interaction.followup.send(
                 "❌ Gagal memproses pembayaran!",
-                ephemeral=True
+                ephemeral=False
             )

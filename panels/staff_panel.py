@@ -1,5 +1,6 @@
 import discord
 from helpers.utils import is_staff, STATUS_EMOJI, format_currency, get_current_period
+from views.ticket_views import TicketSubmitModal
 import database as db
 
 
@@ -15,17 +16,17 @@ class StaffPanelView(discord.ui.View):
         if not is_staff(interaction.user):
             return await interaction.response.send_message(
                 "❌ Hanya staff yang bisa menggunakan fitur ini!",
-                ephemeral=True
+                ephemeral=False
             )
         
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=False)
         
         assignments = await db.get_assignments_by_staff(interaction.user.id)
         
         if not assignments:
             return await interaction.followup.send(
                 "📋 Kamu belum memiliki tugas.",
-                ephemeral=True
+                ephemeral=False
             )
         
         embed = discord.Embed(
@@ -54,7 +55,7 @@ class StaffPanelView(discord.ui.View):
                 completed_text += f"{emoji} **#{a['id']}** - {a['manga']} Ch.{a['chapter']}\n"
             embed.add_field(name="Selesai", value=completed_text, inline=False)
         
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=False)
     
     @discord.ui.button(label="📤 Submit Hasil", style=discord.ButtonStyle.success, custom_id="staff_submit")
     async def submit_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -62,18 +63,18 @@ class StaffPanelView(discord.ui.View):
         if not is_staff(interaction.user):
             return await interaction.response.send_message(
                 "❌ Hanya staff yang bisa menggunakan fitur ini!",
-                ephemeral=True
+                ephemeral=False
             )
         
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=False)
         
         assignments = await db.get_assignments_by_staff(interaction.user.id)
-        claimed = [a for a in assignments if a["status"] == "claimed"]
+        claimed = [a for a in assignments if a["status"] in ("claimed", "revision")]
         
         if not claimed:
             return await interaction.followup.send(
                 "📤 Tidak ada tugas yang bisa di-submit saat ini.",
-                ephemeral=True
+                ephemeral=False
             )
         
         embed = discord.Embed(
@@ -92,7 +93,7 @@ class StaffPanelView(discord.ui.View):
         await interaction.followup.send(
             embed=embed,
             view=SubmitSelectView(claimed),
-            ephemeral=True
+            ephemeral=False
         )
     
     @discord.ui.button(label="💰 Penghasilan", style=discord.ButtonStyle.secondary, custom_id="staff_income")
@@ -101,10 +102,10 @@ class StaffPanelView(discord.ui.View):
         if not is_staff(interaction.user):
             return await interaction.response.send_message(
                 "❌ Hanya staff yang bisa menggunakan fitur ini!",
-                ephemeral=True
+                ephemeral=False
             )
         
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=False)
         
         period = get_current_period()
         stats = await db.get_staff_stats(interaction.user.id, period)
@@ -136,7 +137,7 @@ class StaffPanelView(discord.ui.View):
                 detail_text += f"• {a['manga']} Ch.{a['chapter']}: {format_currency(a['final_rate'])}\n"
             embed.add_field(name="Detail (Belum Dibayar)", value=detail_text, inline=False)
         
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=False)
 
 
 class SubmitSelectView(discord.ui.View):
@@ -174,7 +175,19 @@ class SubmitSelect(discord.ui.Select):
         if not assignment:
             return await interaction.response.send_message(
                 "❌ Tugas tidak ditemukan!",
-                ephemeral=True
+                ephemeral=False
+            )
+        
+        if assignment["staff_id"] != interaction.user.id:
+            return await interaction.response.send_message(
+                "Kamu hanya bisa submit tugas milikmu sendiri!",
+                ephemeral=False
+            )
+        
+        if assignment["status"] not in ("claimed", "revision"):
+            return await interaction.response.send_message(
+                "Tugas ini belum bisa di-submit!",
+                ephemeral=False
             )
         
         modal = TicketSubmitModal(assignment)
