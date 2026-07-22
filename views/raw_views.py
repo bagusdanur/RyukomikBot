@@ -73,15 +73,18 @@ async def create_filebin_download(source, manga_id, chapter_ids):
             safe_chapter = re.sub(r"[^a-zA-Z0-9_-]+", "-", chapter_id).strip("-")[:30] or "chapter"
             image_number = 0
             uploaded = True
-            for root, _, files in os.walk(result):
-                for filename in sorted(files):
-                    image_number += 1
-                    extension = os.path.splitext(filename)[1] or ".jpg"
-                    remote_name = f"ch-{safe_chapter}_{image_number:03d}{extension}"
-                    if not await upload_to_filebin(bin_id, os.path.join(root, filename), remote_name):
-                        uploaded = False
-                        break
-                if not uploaded:
+            image_files = []
+            for root, directories, files in os.walk(result):
+                directories.sort()
+                for filename in files:
+                    image_files.append(os.path.join(root, filename))
+            for image_path in sorted(image_files, key=lambda path: os.path.relpath(path, result)):
+                filename = os.path.basename(image_path)
+                image_number += 1
+                extension = os.path.splitext(filename)[1] or ".jpg"
+                remote_name = f"ch-{safe_chapter}_{image_number:03d}{extension}"
+                if not await upload_to_filebin(bin_id, image_path, remote_name):
+                    uploaded = False
                     break
             if uploaded and image_number:
                 completed.append(chapter_id)

@@ -1,6 +1,8 @@
 import aiohttp
 import os
+import re
 from typing import Optional, Dict, List, Any
+from urllib.parse import parse_qs, unquote, urlparse
 from config import DOUJIVA_API
 
 
@@ -34,6 +36,53 @@ def _clean_chapter_id(chapter_id: str) -> str:
     if chapter_id.isdigit():
         return f"chapter-{chapter_id}"
     return chapter_id
+
+
+def _extract_image_url(image: Any) -> str:
+    """Normalize API image entries that may be URLs or metadata objects."""
+    if isinstance(image, str):
+        return image.strip()
+    if isinstance(image, dict):
+        for key in ("url", "src", "image", "image_url"):
+            value = image.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return ""
+
+
+def _original_image_url(url: str) -> str:
+    """Return the upstream image URL when Doujiva wraps it in its proxy."""
+    query_url = parse_qs(urlparse(url).query).get("url", [])
+    return unquote(query_url[0]) if query_url else url
+
+
+def _page_number(url: str) -> Optional[int]:
+    """Read page number from upstream names such as 1.jpg or 10-hash.jpg."""
+    filename = os.path.basename(urlparse(_original_image_url(url)).path)
+    match = re.match(r"^(\d+)(?:\D|$)", filename)
+    return int(match.group(1)) if match else None
+
+
+def _sort_chapter_images(images: List[Any]) -> List[str]:
+    """Sort numerically by API metadata/filename, preserving API order as fallback."""
+    normalized = []
+    for api_index, image in enumerate(images):
+        url = _extract_image_url(image)
+        if not url:
+            continue
+        explicit_page = image.get("page") if isinstance(image, dict) else None
+        try:
+            page = int(explicit_page)
+        except (TypeError, ValueError):
+            page = _page_number(url)
+        normalized.append((page is None, page if page is not None else api_index, api_index, url))
+    normalized.sort(key=lambda item: item[:3])
+    return [item[3] for item in normalized]
+
+
+def _image_extension(url: str) -> str:
+    extension = os.path.splitext(urlparse(_original_image_url(url)).path)[1].lower()
+    return extension.lstrip(".") if extension in {".jpg", ".jpeg", ".png", ".webp", ".gif"} else "jpg"
 
 
 class DoujivaDownloader:
@@ -123,13 +172,13 @@ class DoujivaDownloader:
                 async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as response:
                     if response.status == 200:
                         data = await response.json()
-                        return data.get("images", [])
+                        return _sort_chapter_images(data.get("images", []))
 
                 url_fallback = f"{self.api_url}/chapter/manga/{clean_manga}/{clean_chap}"
                 async with session.get(url_fallback, timeout=aiohttp.ClientTimeout(total=30)) as response:
                     if response.status == 200:
                         data = await response.json()
-                        return data.get("images", [])
+                        return _sort_chapter_images(data.get("images", []))
 
                 return []
             except Exception as e:
@@ -173,9 +222,7 @@ class DoujivaDownloader:
 
         downloaded = 0
         for i, url in enumerate(images):
-            ext = "jpg"
-            if "." in url.split("?")[0]:
-                ext = url.split("?")[0].split(".")[-1]
+            ext = _image_extension(url)
             save_path = os.path.join(chapter_dir, f"{i+1:03d}.{ext}")
 
             if await self.download_image(url, save_path):
