@@ -78,6 +78,77 @@ def build_staff_panel_embed(staff: discord.Member) -> discord.Embed:
 
 
 def build_guide_embed(audience: str = "all") -> discord.Embed:
+    if audience == "staff":
+        embed = discord.Embed(
+            title="📚 Panduan Kerja Staff Ryukomik",
+            description=(
+                "Panduan singkat untuk mengerjakan tugas dari awal sampai pembayaran. "
+                "Semua detail tugas dan submit dilakukan melalui tiket privat kamu."
+            ),
+            color=discord.Color.from_rgb(88, 101, 242),
+        )
+        embed.add_field(
+            name="1️⃣ Ambil atau Terima Tugas",
+            value=(
+                f"• Buka <#{STAFF_TASKS_CHANNEL_ID}> lalu tekan **Claim Tugas** pada pekerjaan yang sesuai role kamu.\n"
+                "• Jika admin assign langsung, tugas otomatis muncul di tiket privat—tidak perlu claim.\n"
+                "• Jangan claim pekerjaan yang tidak dapat kamu selesaikan sesuai deadline."
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="2️⃣ Cek Detail dan Kerjakan",
+            value=(
+                "Tekan **Tugas Saya**, lalu pilih tugas dari dropdown untuk melihat chapter, role, "
+                "bayaran, status, dan deadline. Kerjakan sesuai role **TL**, **TS**, atau **TL+TS**."
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="3️⃣ Ambil Bahan RAW",
+            value=(
+                "Jalankan `/raw-search`, pilih sumber **Asura/Doujiva**, lalu pilih komik dan chapter "
+                "melalui dropdown. Bot akan membuat ZIP; kamu tidak perlu menyalin manga ID atau chapter ID."
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="4️⃣ Submit Hasil",
+            value=(
+                "Upload hasil ke Google Drive dan pastikan izin link dapat dibuka. Tekan **Submit Hasil**, "
+                "pilih tugas, tempel link, lalu tambahkan catatan bila diperlukan."
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="5️⃣ Review, Revisi, dan Selesai",
+            value=(
+                "• `submitted` — menunggu pemeriksaan admin.\n"
+                "• `revision` — baca catatan, perbaiki, lalu submit ulang dari tugas yang sama.\n"
+                "• `approved` — pekerjaan diterima dan masuk rekap gaji.\n"
+                "• `paid` — pembayaran sudah dikonfirmasi."
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="💰 Cek Penghasilan",
+            value=(
+                "Tekan **Penghasilan** untuk melihat tugas periode berjalan, nominal disetujui, "
+                "yang sudah dibayar, dan yang masih menunggu proses."
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="🆘 Kalau Ada Masalah",
+            value=(
+                "Jelaskan kendala di tiket privat dan tag administrator. Sertakan nomor tugas, "
+                "pesan error, dan screenshot agar cepat diperiksa. Jangan membuat tiket staff baru."
+            ),
+            inline=False,
+        )
+        embed.set_footer(text="Ryukomik • Panduan kerja staff")
+        return embed
+
     embed = discord.Embed(
         title="📚 Panduan Lengkap Ryukomik Bot",
         description="Panduan alur tugas, panel, tiket privat, pembayaran, rekrutmen, dan RAW downloader.",
@@ -95,7 +166,7 @@ def build_guide_embed(audience: str = "all") -> discord.Embed:
             ),
             inline=False,
         )
-    if audience in ("all", "staff"):
+    if audience == "all":
         embed.add_field(
             name="👤 Alur Staff",
             value=(

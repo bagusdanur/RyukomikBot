@@ -168,7 +168,7 @@ async def panels_command(
     )
 
 
-@bot.tree.command(name="panduan", description="Tampilkan panduan lengkap Ryukomik Bot")
+@bot.tree.command(name="panduan", description="Tampilkan panduan kerja sesuai role pengguna")
 async def guide_command(interaction: discord.Interaction):
     audience = "admin" if is_admin(interaction.user) else "staff" if is_staff(interaction.user) else "all"
     await interaction.response.send_message(embed=build_guide_embed(audience), ephemeral=False)
