@@ -77,6 +77,21 @@ async def setup_dashboard_tables():
             )
         """)
         await connection.execute("""
+            CREATE TABLE IF NOT EXISTS dashboard_invoice_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                invoice_id INTEGER NOT NULL,
+                assignment_id INTEGER NOT NULL,
+                manga TEXT NOT NULL,
+                chapter TEXT NOT NULL,
+                role TEXT NOT NULL,
+                amount INTEGER NOT NULL,
+                assigned_at DATETIME,
+                approved_at DATETIME,
+                UNIQUE(invoice_id, assignment_id),
+                FOREIGN KEY(invoice_id) REFERENCES dashboard_invoices(id)
+            )
+        """)
+        await connection.execute("""
             CREATE TABLE IF NOT EXISTS dashboard_staff_cache (
                 staff_id INTEGER PRIMARY KEY,
                 username TEXT NOT NULL,
@@ -583,30 +598,72 @@ async def invoices(period: str | None = Query(default=None, pattern=r"^\d{4}-\d{
         await connection.close()
 
 
+@app.get("/api/invoices/{invoice_id}")
+async def invoice_detail(invoice_id: int, _user=Depends(admin_user)):
+    connection = await dashboard_db()
+    try:
+        invoice = await (await connection.execute(
+            "SELECT * FROM dashboard_invoices WHERE id=?", (invoice_id,)
+        )).fetchone()
+        if not invoice:
+            raise HTTPException(status_code=404, detail="Invoice tidak ditemukan.")
+        items = await (await connection.execute("""
+            SELECT assignment_id,manga,chapter,role,amount,assigned_at,approved_at
+            FROM dashboard_invoice_items WHERE invoice_id=? ORDER BY assignment_id
+        """, (invoice_id,))).fetchall()
+        if not items:
+            status_clause = "paid_period=?" if invoice["status"] == "paid" else "status='approved' AND approved_at LIKE ?"
+            items = await (await connection.execute(f"""
+                SELECT id assignment_id,manga,chapter,role,final_rate amount,assigned_at,approved_at
+                FROM assignments WHERE staff_id=? AND {status_clause} ORDER BY id
+            """, (invoice["staff_id"], invoice["period"] if invoice["status"] == "paid" else f"{invoice['period']}%"))).fetchall()
+        result = (await enrich_staff([invoice]))[0]
+        result["items"] = [dict(item) for item in items]
+        dates = [item["assigned_at"] for item in items if item["assigned_at"]]
+        approved = [item["approved_at"] for item in items if item["approved_at"]]
+        result["work_started_at"] = min(dates) if dates else None
+        result["work_ended_at"] = max(approved) if approved else None
+        return result
+    finally:
+        await connection.close()
+
+
 @app.post("/api/invoices", status_code=201)
 async def create_invoice(payload: InvoiceCreate, user=Depends(admin_user)):
     connection = await dashboard_db()
     try:
-        totals = await (await connection.execute("""
-            SELECT COUNT(*) chapter_count, COALESCE(SUM(final_rate),0) total_amount
+        items = await (await connection.execute("""
+            SELECT id,manga,chapter,role,final_rate,assigned_at,approved_at
             FROM assignments WHERE staff_id=? AND status='approved' AND approved_at LIKE ?
-        """, (payload.staff_id, f"{payload.period}%"))).fetchone()
-        if not totals["chapter_count"]:
+            ORDER BY id
+        """, (payload.staff_id, f"{payload.period}%"))).fetchall()
+        if not items:
             raise HTTPException(status_code=422, detail="Tidak ada tugas approved yang belum dibayar pada periode ini.")
+        chapter_count = len(items)
+        total_amount = sum(item["final_rate"] for item in items)
         invoice_number = f"RYU-{payload.period.replace('-', '')}-{payload.staff_id}-{secrets.token_hex(2).upper()}"
         try:
             cursor = await connection.execute("""
                 INSERT INTO dashboard_invoices
                     (invoice_number,staff_id,period,chapter_count,total_amount,status,issued_by)
                 VALUES(?,?,?,?,?,'issued',?)
-            """, (invoice_number, payload.staff_id, payload.period, totals["chapter_count"], totals["total_amount"], user["id"]))
+            """, (invoice_number, payload.staff_id, payload.period, chapter_count, total_amount, user["id"]))
+            invoice_id = cursor.lastrowid
+            await connection.executemany("""
+                INSERT INTO dashboard_invoice_items
+                    (invoice_id,assignment_id,manga,chapter,role,amount,assigned_at,approved_at)
+                VALUES(?,?,?,?,?,?,?,?)
+            """, [(
+                invoice_id, item["id"], item["manga"], item["chapter"], item["role"],
+                item["final_rate"], item["assigned_at"], item["approved_at"]
+            ) for item in items])
             await connection.commit()
         except aiosqlite.IntegrityError:
             raise HTTPException(status_code=409, detail="Invoice staf untuk periode ini sudah dibuat.")
     finally:
         await connection.close()
-    await audit(user["id"], "invoice.create", "invoice", cursor.lastrowid, after={"invoice_number": invoice_number})
-    return {"id": cursor.lastrowid, "invoice_number": invoice_number}
+    await audit(user["id"], "invoice.create", "invoice", invoice_id, after={"invoice_number": invoice_number})
+    return {"id": invoice_id, "invoice_number": invoice_number}
 
 
 @app.post("/api/invoices/{invoice_id}/pay")
@@ -618,10 +675,20 @@ async def pay_invoice(invoice_id: int, user=Depends(admin_user)):
         )).fetchone()
         if not invoice or invoice["status"] != "issued":
             raise HTTPException(status_code=409, detail="Invoice tidak ditemukan atau sudah dibayar.")
-        await connection.execute("""
-            UPDATE assignments SET status='paid', paid_period=?
-            WHERE staff_id=? AND status='approved' AND approved_at LIKE ?
-        """, (invoice["period"], invoice["staff_id"], f"{invoice['period']}%"))
+        item_ids = [row["assignment_id"] for row in await (await connection.execute(
+            "SELECT assignment_id FROM dashboard_invoice_items WHERE invoice_id=?", (invoice_id,)
+        )).fetchall()]
+        if item_ids:
+            placeholders = ",".join("?" for _ in item_ids)
+            await connection.execute(
+                f"UPDATE assignments SET status='paid', paid_period=? WHERE status='approved' AND id IN ({placeholders})",
+                [invoice["period"], *item_ids],
+            )
+        else:
+            await connection.execute("""
+                UPDATE assignments SET status='paid', paid_period=?
+                WHERE staff_id=? AND status='approved' AND approved_at LIKE ?
+            """, (invoice["period"], invoice["staff_id"], f"{invoice['period']}%"))
         await connection.execute(
             "UPDATE dashboard_invoices SET status='paid', paid_at=CURRENT_TIMESTAMP WHERE id=?",
             (invoice_id,),

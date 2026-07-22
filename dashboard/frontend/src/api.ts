@@ -7,6 +7,7 @@ export type Assignment = {
 export type Staff = { id: number; staff_id: number; username: string; avatar: string | null; task_count: number; active_count: number; approved_amount: number; paid_amount: number }
 export type Recap = { staff_id: number; staff_name: string; staff_avatar: string | null; chapter_count: number; total_amount: number; pending_amount: number; paid_amount: number }
 export type Invoice = { id: number; invoice_number: string; staff_id: number; staff_name: string; staff_avatar: string | null; period: string; chapter_count: number; total_amount: number; status: string; issued_at: string; paid_at: string | null }
+export type InvoiceDetail = Invoice & { work_started_at:string|null;work_ended_at:string|null;items:Array<{assignment_id:number;manga:string;chapter:string;role:string;amount:number;assigned_at:string|null;approved_at:string|null}> }
 export type Submission = { id:number;assignment_id:number;staff_id:number;original_name:string;size_bytes:number;uploaded_at:string;manga:string;chapter:string;role:string }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -33,6 +34,7 @@ const liveApi = {
   deadlines: () => request<Assignment[]>('/api/deadlines'),
   recap: (period: string) => request<Recap[]>(`/api/recap?period=${period}`),
   invoices: (period: string) => request<Invoice[]>(`/api/invoices?period=${period}`),
+  invoice: (id: number) => request<InvoiceDetail>(`/api/invoices/${id}`),
   createInvoice: (staff_id: number, period: string) => request('/api/invoices', { method: 'POST', body: JSON.stringify({ staff_id, period }) }),
   payInvoice: (id: number) => request(`/api/invoices/${id}/pay`, { method: 'POST' }),
   presignUpload: (assignment_id:number,file:File) => request<{upload_id:number;upload_url:string}>('/api/uploads/presign', { method:'POST', body:JSON.stringify({assignment_id,filename:file.name,content_type:file.type||'application/zip',size_bytes:file.size}) }),
@@ -62,6 +64,7 @@ const demoApi = {
   deadlines: async () => sampleAssignments.filter(item => item.deadline_at && ['claimed', 'revision', 'submitted'].includes(item.status)),
   recap: async () => [{ staff_id:1001,staff_name:'Aira',staff_avatar:null,chapter_count:6,total_amount:68000,pending_amount:18000,paid_amount:50000 }],
   invoices: async () => [{ id:1,invoice_number:'RYU-202607-1001-A1B2',staff_id:1001,staff_name:'Aira',staff_avatar:null,period:'2026-07',chapter_count:6,total_amount:68000,status:'issued',issued_at:'2026-07-22',paid_at:null }],
+  invoice: async (id:number) => ({id,invoice_number:'RYU-202607-1001-A1B2',staff_id:1001,staff_name:'Aira',staff_avatar:null,period:'2026-07',chapter_count:2,total_amount:18000,status:'issued',issued_at:'2026-07-22',paid_at:null,work_started_at:'2026-07-01',work_ended_at:'2026-07-20',items:[{assignment_id:1,manga:'Contoh Manga',chapter:'1',role:'TL',amount:6000,assigned_at:'2026-07-01',approved_at:'2026-07-03'}]}),
   createInvoice: async () => ({ id: 2 }),
   payInvoice: async () => ({ ok: true }),
   presignUpload: async () => ({upload_id:1,upload_url:'demo'}),
