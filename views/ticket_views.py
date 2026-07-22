@@ -1,7 +1,7 @@
 import discord
 
-from config import STAFF_LOG_CHANNEL_ID
-from helpers.utils import is_admin, is_staff
+from config import DASHBOARD_URL, STAFF_LOG_CHANNEL_ID
+from helpers.utils import is_admin
 import database as db
 
 
@@ -14,7 +14,7 @@ class TicketSubmitView(discord.ui.View):
         super().__init__(timeout=None)
         self.assignment_id = assignment_id
 
-    @discord.ui.button(label="Submit Hasil", style=discord.ButtonStyle.success, custom_id="ticket_submit")
+    @discord.ui.button(label="Upload Hasil", style=discord.ButtonStyle.success, custom_id="ticket_submit")
     async def submit_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         assignment = await db.get_assignment(self.assignment_id)
 
@@ -30,72 +30,22 @@ class TicketSubmitView(discord.ui.View):
                 ephemeral=False,
             )
 
-        await interaction.response.send_modal(TicketSubmitModal(assignment))
-
-
-class TicketSubmitModal(discord.ui.Modal, title="Submit Hasil Kerja"):
-    """Modal for submitting work."""
-
-    function_name = "TicketSubmitModal"
-
-    def __init__(self, assignment: dict):
-        super().__init__()
-        self.assignment_id = assignment["id"]
-
-    gdrive_link = discord.ui.TextInput(
-        label="Link Google Drive",
-        placeholder="https://drive.google.com/...",
-        style=discord.TextStyle.short,
-        required=True,
-    )
-
-    catatan = discord.ui.TextInput(
-        label="Catatan (Opsional)",
-        placeholder="Catatan untuk admin...",
-        style=discord.TextStyle.paragraph,
-        required=False,
-    )
-
-    async def on_submit(self, interaction: discord.Interaction):
-        assignment = await db.get_assignment(self.assignment_id)
-        if not assignment:
-            return await interaction.response.send_message("Tugas tidak ditemukan!", ephemeral=False)
-
-        if not is_staff(interaction.user) or assignment["staff_id"] != interaction.user.id:
-            return await interaction.response.send_message(
-                "Kamu hanya bisa submit tugas milikmu sendiri!",
-                ephemeral=False,
-            )
-
-        if assignment["status"] not in ("claimed", "revision"):
-            return await interaction.response.send_message("Tugas ini belum bisa di-submit!", ephemeral=False)
-
-        success = await db.submit_assignment(
-            assignment["id"],
-            self.gdrive_link.value,
-            self.catatan.value or None,
-        )
-
-        if not success:
-            return await interaction.response.send_message("Gagal submit hasil!", ephemeral=False)
-
         embed = discord.Embed(
-            title="Hasil Di-submit",
-            description="Tugas kamu telah di-submit untuk review.",
+            title="Upload Hasil melalui Dashboard",
+            description=(
+                f"Tugas **#{assignment['id']} · {assignment['manga']} Chapter {assignment['chapter']}**\n\n"
+                "Tekan tombol di bawah, buka menu **Tugas**, lalu pilih **Upload hasil**. "
+                "Pilih semua gambar; sistem akan mengurutkan dan mengunggahnya langsung ke penyimpanan Ryukomik."
+            ),
             color=discord.Color.green(),
         )
-        embed.add_field(name="Manga", value=assignment["manga"], inline=True)
-        embed.add_field(name="Chapter", value=assignment["chapter"], inline=True)
-        embed.add_field(name="Link", value=self.gdrive_link.value, inline=False)
+        await interaction.response.send_message(embed=embed, view=DashboardUploadLinkView(), ephemeral=False)
 
-        await interaction.response.send_message(embed=embed, ephemeral=False)
 
-        if interaction.channel:
-            await interaction.channel.send(
-                f"**{interaction.user.display_name}** telah submit hasil untuk "
-                f"**{assignment['manga']}** chapter **{assignment['chapter']}**",
-                view=TicketReviewView(assignment["id"]),
-            )
+class DashboardUploadLinkView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=300)
+        self.add_item(discord.ui.Button(label="Buka Dashboard Upload", emoji="📤", url=DASHBOARD_URL))
 
 
 class TicketReviewView(discord.ui.View):

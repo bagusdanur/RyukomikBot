@@ -1,6 +1,6 @@
 import discord
 from helpers.utils import is_admin, format_currency
-from views.ticket_views import TicketReviewView, TicketSubmitModal
+from views.ticket_views import DashboardUploadLinkView, TicketReviewView
 import database as db
 
 
@@ -84,7 +84,11 @@ class ReviewSelect(discord.ui.Select):
         embed.add_field(name="Staff", value=staff_name, inline=True)
         embed.add_field(name="Role", value=assignment["role"], inline=True)
         embed.add_field(name="Rate", value=format_currency(assignment["final_rate"]), inline=True)
-        embed.add_field(name="Link GDrive", value=assignment["gdrive_link"] or "Belum ada", inline=False)
+        embed.add_field(
+            name="Hasil Kerja",
+            value="Tersimpan aman di R2. Buka dashboard admin untuk mengunduh hasil." if assignment["gdrive_link"] else "Belum ada",
+            inline=False,
+        )
         
         if assignment["admin_notes"]:
             embed.add_field(name="Catatan", value=assignment["admin_notes"], inline=False)
@@ -150,8 +154,16 @@ class SubmitSelect(discord.ui.Select):
                 ephemeral=False
             )
         
-        modal = TicketSubmitModal(assignment)
-        await interaction.response.send_modal(modal)
+        embed = discord.Embed(
+            title="Upload Hasil melalui Dashboard",
+            description=(
+                f"Tugas **#{assignment['id']} · {assignment['manga']} Chapter {assignment['chapter']}**\n\n"
+                "Buka dashboard, masuk ke menu **Tugas**, lalu tekan **Upload hasil** pada tugas ini. "
+                "Pilih seluruh gambar sekaligus; tidak perlu Google Drive."
+            ),
+            color=discord.Color.green(),
+        )
+        await interaction.response.send_message(embed=embed, view=DashboardUploadLinkView(), ephemeral=False)
 
 
 class ConfirmPayView(discord.ui.View):

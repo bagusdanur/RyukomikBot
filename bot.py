@@ -15,7 +15,6 @@ from views.ticket_views import TicketSubmitView, TicketReviewView
 from views.select_views import ReviewSelectView, SubmitSelectView, ConfirmPayView
 from views.raw_views import RawSearchView, create_filebin_download
 from modals.assign_modal import AssignModal
-from modals.submit_modal import SubmitModal
 from modals.revisi_modal import RevisiModal
 from modals.rekap_modal import RekapModal
 from recruitment.ticket import setup_recruitment, RecruitmentView

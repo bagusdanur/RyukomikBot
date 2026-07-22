@@ -17,7 +17,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 
-from config import GUILD_ID, ROLE_ADMIN_ID, ROLE_STAFF_ID, TOKEN
+from config import GUILD_ID, ROLE_ADMIN_ID, ROLE_STAFF_ID, STAFF_LOG_CHANNEL_ID, TOKEN
 import database as staff_db
 from database import DB_PATH, setup_database
 
@@ -369,6 +369,31 @@ async def send_assignment_notice(staff_id: int, assignment_id: int, payload: Ass
         }],
     }
     return bool(await discord_api("POST", f"/channels/{channel_id}/messages", message))
+
+
+async def send_submission_notice(upload, username: str):
+    if DEV_BYPASS:
+        return True
+    size_mb = upload["size_bytes"] / 1024 / 1024
+    message = {
+        "content": f"📥 <@{upload['staff_id']}> telah mengirim hasil tugas untuk direview.",
+        "embeds": [{
+            "title": f"Hasil Tugas #{upload['assignment_id']} Siap Direview",
+            "description": f"**{upload['manga']}** · Chapter **{upload['chapter']}**",
+            "color": 5763719,
+            "fields": [
+                {"name": "Staff", "value": username, "inline": True},
+                {"name": "Role", "value": upload["role"], "inline": True},
+                {"name": "File", "value": f"{upload['original_name']} ({size_mb:.1f} MB)", "inline": False},
+            ],
+            "footer": {"text": "Buka dashboard untuk download, lalu gunakan Review pada Admin Panel untuk Setuju/Revisi."},
+        }],
+        "components": [{
+            "type": 1,
+            "components": [{"type": 2, "style": 5, "label": "Buka Dashboard Review", "url": DASHBOARD_ORIGIN}],
+        }],
+    }
+    return bool(await discord_api("POST", f"/channels/{STAFF_LOG_CHANNEL_ID}/messages", message))
 
 
 @app.get("/health")
@@ -747,7 +772,7 @@ async def complete_upload(upload_id: int, user=Depends(current_user)):
     connection = await dashboard_db()
     try:
         upload = await (await connection.execute("""
-            SELECT s.*, a.status assignment_status FROM assignment_submissions s
+            SELECT s.*, a.status assignment_status, a.manga, a.chapter, a.role FROM assignment_submissions s
             JOIN assignments a ON a.id=s.assignment_id WHERE s.id=?
         """, (upload_id,))).fetchone()
         if not upload:
@@ -774,7 +799,8 @@ async def complete_upload(upload_id: int, user=Depends(current_user)):
     finally:
         await connection.close()
     await audit(user["id"], "submission.upload", "assignment", upload["assignment_id"], after={"upload_id": upload_id, "size": upload["size_bytes"]})
-    return {"ok": True, "assignment_id": upload["assignment_id"]}
+    notified = await send_submission_notice(upload, user.get("username") or f"Staff {upload['staff_id']}")
+    return {"ok": True, "assignment_id": upload["assignment_id"], "notified": notified}
 
 
 @app.get("/api/submissions")

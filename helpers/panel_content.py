@@ -19,7 +19,7 @@ def build_admin_panel_embed() -> discord.Embed:
     )
     embed.add_field(
         name="📝 2. Review Hasil",
-        value="Periksa link hasil staff, lalu pilih **Setuju** atau kirim **Revisi**.",
+        value="Notifikasi upload masuk ke staff-mod. Download hasil dari dashboard, lalu pilih **Setuju** atau kirim **Revisi**.",
         inline=False,
     )
     embed.add_field(
@@ -49,7 +49,7 @@ def build_staff_panel_embed(staff: discord.Member) -> discord.Embed:
         title="👤 Ruang Kerja Staff",
         description=(
             f"Halo {staff.mention}, panel ini adalah pusat tugas privat kamu. "
-            "Semua proses submit dan revisi dilakukan dari tiket ini."
+            "Detail tugas tersedia di sini, sedangkan upload hasil dilakukan aman melalui dashboard staff."
         ),
         color=discord.Color.from_rgb(88, 101, 242),
     )
@@ -60,7 +60,7 @@ def build_staff_panel_embed(staff: discord.Member) -> discord.Embed:
     )
     embed.add_field(
         name="📤 Submit Hasil",
-        value="Pilih tugas berstatus **claimed/revision**, lalu kirim link Google Drive hasil kerja.",
+        value="Pilih tugas berstatus **claimed/revision**, buka dashboard, lalu upload seluruh gambar. Tidak perlu Google Drive.",
         inline=False,
     )
     embed.add_field(
@@ -83,7 +83,7 @@ def build_guide_embed(audience: str = "all") -> discord.Embed:
             title="📚 Panduan Kerja Staff Ryukomik",
             description=(
                 "Panduan singkat untuk mengerjakan tugas dari awal sampai pembayaran. "
-                "Semua detail tugas dan submit dilakukan melalui tiket privat kamu."
+                "Detail tugas tersedia di tiket privat dan upload hasil dilakukan melalui dashboard staff."
             ),
             color=discord.Color.from_rgb(88, 101, 242),
         )
@@ -115,8 +115,9 @@ def build_guide_embed(audience: str = "all") -> discord.Embed:
         embed.add_field(
             name="4️⃣ Submit Hasil",
             value=(
-                "Upload hasil ke Google Drive dan pastikan izin link dapat dibuka. Tekan **Submit Hasil**, "
-                "pilih tugas, tempel link, lalu tambahkan catatan bila diperlukan."
+                "Tekan **Upload Hasil** pada detail tugas untuk membuka dashboard, atau langsung masuk ke "
+                "**staff.ryukomik.web.id → Tugas**. Pilih seluruh gambar sekaligus; sistem mengurutkan halaman, "
+                "membuat ZIP, dan mengunggahnya langsung ke penyimpanan Ryukomik. Tidak perlu Google Drive."
             ),
             inline=False,
         )
@@ -126,7 +127,8 @@ def build_guide_embed(audience: str = "all") -> discord.Embed:
                 "• `submitted` — menunggu pemeriksaan admin.\n"
                 "• `revision` — baca catatan, perbaiki, lalu submit ulang dari tugas yang sama.\n"
                 "• `approved` — pekerjaan diterima dan masuk rekap gaji.\n"
-                "• `paid` — pembayaran sudah dikonfirmasi."
+                "• `paid` — pembayaran sudah dikonfirmasi.\n"
+                f"Notifikasi hasil masuk ke <#{STAFF_LOG_CHANNEL_ID}> agar diproses administrator."
             ),
             inline=False,
         )
@@ -160,7 +162,7 @@ def build_guide_embed(audience: str = "all") -> discord.Embed:
             value=(
                 "1. `/panels admin` di channel staff-mod.\n"
                 "2. **Assign Tugas** dan isi manga, chapter, role, serta rate.\n"
-                "3. Setelah staff submit, buka **Review** untuk approve/revisi.\n"
+                f"3. Setelah staff upload, notifikasi masuk ke <#{STAFF_LOG_CHANNEL_ID}>; buka **Review** untuk approve/revisi.\n"
                 "4. Gunakan **Rekap Gaji** untuk menghitung dan mengonfirmasi pembayaran.\n"
                 "5. Buat panel staff dengan `/panels staff staff:@nama`."
             ),
@@ -172,7 +174,7 @@ def build_guide_embed(audience: str = "all") -> discord.Embed:
             value=(
                 "1. Claim tugas yang tersedia di channel staff-tasks.\n"
                 "2. Buka tiket privat dan baca detail tugas.\n"
-                "3. Klik **Submit Hasil** dan kirim link Google Drive.\n"
+                "3. Klik **Upload Hasil** dan upload seluruh gambar melalui dashboard staff.\n"
                 "4. Jika revision, perbaiki sesuai catatan dan submit ulang.\n"
                 "5. Cek pendapatan melalui tombol **Penghasilan**."
             ),
