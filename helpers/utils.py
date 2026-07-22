@@ -118,9 +118,10 @@ async def find_or_create_staff_ticket(guild: discord.Guild, staff: discord.Membe
     admin_role = guild.get_role(ROLE_ADMIN_ID)
     staff_role = guild.get_role(ROLE_STAFF_ID)
     overwrites = {
-        guild.default_role: discord.PermissionOverwrite(read_messages=False),
+        guild.default_role: discord.PermissionOverwrite(view_channel=False),
         staff: discord.PermissionOverwrite(
-            read_messages=True,
+            view_channel=True,
+            read_message_history=True,
             send_messages=True,
             attach_files=True,
             embed_links=True,
@@ -128,14 +129,15 @@ async def find_or_create_staff_ticket(guild: discord.Guild, staff: discord.Membe
     }
     if admin_role:
         overwrites[admin_role] = discord.PermissionOverwrite(
-            read_messages=True,
+            view_channel=True,
+            read_message_history=True,
             send_messages=True,
             manage_messages=True,
             attach_files=True,
             embed_links=True,
         )
     if staff_role:
-        overwrites[staff_role] = discord.PermissionOverwrite(read_messages=False)
+        overwrites[staff_role] = discord.PermissionOverwrite(view_channel=False)
 
     safe_name = "".join(ch for ch in staff.name.lower() if ch.isalnum() or ch == "-")
     channel_name = f"tiket-{safe_name}-{str(staff.id)[-4:]}"

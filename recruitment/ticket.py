@@ -14,6 +14,40 @@ TEST_MATERIALS = {
 }
 
 
+def build_ticket_overwrites(guild: discord.Guild, applicant: discord.Member):
+    """Return strict permissions: applicant, administrators, and the bot only."""
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(view_channel=False),
+        applicant: discord.PermissionOverwrite(
+            view_channel=True,
+            read_message_history=True,
+            send_messages=True,
+            attach_files=True,
+            embed_links=True,
+        ),
+    }
+    admin_role = guild.get_role(ROLE_ADMIN_ID)
+    if admin_role:
+        overwrites[admin_role] = discord.PermissionOverwrite(
+            view_channel=True,
+            read_message_history=True,
+            send_messages=True,
+            manage_messages=True,
+            attach_files=True,
+            embed_links=True,
+        )
+    bot_member = guild.me
+    if bot_member:
+        overwrites[bot_member] = discord.PermissionOverwrite(
+            view_channel=True,
+            read_message_history=True,
+            send_messages=True,
+            manage_channels=True,
+            manage_messages=True,
+        )
+    return overwrites
+
+
 class RecruitmentView(discord.ui.View):
     """View for recruitment ticket creation."""
 
@@ -36,24 +70,7 @@ class RecruitmentView(discord.ui.View):
 
         await interaction.response.defer(ephemeral=False)
 
-        admin_role = guild.get_role(ROLE_ADMIN_ID)
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(read_messages=False),
-            member: discord.PermissionOverwrite(
-                read_messages=True,
-                send_messages=True,
-                attach_files=True,
-                embed_links=True,
-            ),
-        }
-        if admin_role:
-            overwrites[admin_role] = discord.PermissionOverwrite(
-                read_messages=True,
-                send_messages=True,
-                manage_messages=True,
-                attach_files=True,
-                embed_links=True,
-            )
+        overwrites = build_ticket_overwrites(guild, member)
 
         category = guild.get_channel(REKRUT_CAT_ID)
         safe_name = "".join(ch for ch in member.name.lower() if ch.isalnum() or ch == "-")
@@ -62,6 +79,13 @@ class RecruitmentView(discord.ui.View):
             category=category,
             overwrites=overwrites,
             topic=f"Tiket rekrutmen untuk {member.display_name} ({member.id})",
+            reason="Membuat tiket rekrutmen privat",
+        )
+        # Apply the overwrite once more without category sync to avoid inherited access.
+        await ticket_channel.edit(
+            overwrites=overwrites,
+            sync_permissions=False,
+            reason="Mengunci tiket untuk pelamar dan administrator",
         )
 
         embed = discord.Embed(
@@ -228,6 +252,30 @@ class RecruitmentBot:
             await ctx.send(embed=embed)
             await asyncio.sleep(5)
             await ctx.channel.delete()
+
+        @self.bot.command(name="fix-rekrut")
+        async def fix_recruitment_permissions(ctx: commands.Context):
+            """Repair permissions for a recruitment ticket created by older code."""
+            if not ctx.guild or ctx.channel.category_id != REKRUT_CAT_ID:
+                return await ctx.send("Command ini hanya bisa digunakan di tiket rekrutmen.")
+            if not ctx.author.guild_permissions.administrator:
+                return await ctx.send("Hanya administrator yang dapat memperbaiki permission tiket.")
+
+            topic = ctx.channel.topic or ""
+            applicant_id = next(
+                (int(part) for part in topic.replace("(", " ").replace(")", " ").split() if part.isdigit()),
+                None,
+            )
+            applicant = ctx.guild.get_member(applicant_id) if applicant_id else None
+            if not applicant:
+                return await ctx.send("Pemilik tiket tidak ditemukan dari topic channel.")
+
+            await ctx.channel.edit(
+                overwrites=build_ticket_overwrites(ctx.guild, applicant),
+                sync_permissions=False,
+                reason=f"Permission tiket diperbaiki oleh {ctx.author}",
+            )
+            await ctx.send("Permission diperbaiki: hanya pelamar, administrator, dan bot yang dapat melihat tiket ini.")
 
 
 def setup_recruitment(bot: commands.Bot):

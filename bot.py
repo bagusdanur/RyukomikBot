@@ -1,10 +1,10 @@
-import discord
+﻿import discord
 from discord.ext import commands
 import asyncio
 import os
 from datetime import datetime
 
-from config import TOKEN, GUILD_ID, STAFF_TASKS_CHANNEL_ID, ROLE_STAFF_ID, ROLE_ADMIN_ID
+from config import TOKEN, GUILD_ID, STAFF_TASKS_CHANNEL_ID, STAFF_LOG_CHANNEL_ID, ROLE_STAFF_ID, ROLE_ADMIN_ID
 from database import get_assignments_by_status, setup_database
 from panels.admin_panel import AdminPanelView
 from panels.staff_panel import StaffPanelView
@@ -17,7 +17,7 @@ from modals.revisi_modal import RevisiModal
 from modals.rekap_modal import RekapModal
 from recruitment.ticket import setup_recruitment, RecruitmentView
 from raw_downloader.asura import AsuraDownloader
-from helpers.utils import is_admin, is_staff
+from helpers.utils import find_or_create_staff_ticket, is_admin, is_staff
 
 
 # Intents
@@ -98,61 +98,39 @@ bot = RyukomikBot()
 
 @bot.tree.command(name="panels", description="Tampilkan panel admin/staff")
 async def panels_command(interaction: discord.Interaction, panel: str = "auto"):
-    """Show admin or staff panel."""
-    panel = panel.casefold()
-    if panel not in ("auto", "admin", "staff"):
-        return await interaction.response.send_message(
-            "Panel harus `admin`, `staff`, atau kosong untuk auto.",
-            ephemeral=False
-        )
+    """Send exactly one panel to its designated channel."""
+    selected = panel.casefold()
+    if selected not in ("auto", "admin", "staff"):
+        return await interaction.response.send_message("Panel harus `admin`, `staff`, atau `auto`.", ephemeral=False)
+    if selected == "auto":
+        selected = "admin" if is_admin(interaction.user) else "staff"
 
-    if panel in ("auto", "admin") and is_admin(interaction.user):
+    if selected == "admin":
+        if not is_admin(interaction.user):
+            return await interaction.response.send_message("Kamu bukan administrator.", ephemeral=False)
+        if interaction.channel_id != STAFF_LOG_CHANNEL_ID:
+            return await interaction.response.send_message(
+                f"Panel admin hanya boleh dikirim di <#{STAFF_LOG_CHANNEL_ID}>.", ephemeral=False
+            )
         embed = discord.Embed(
-            title="🔧 Admin Panel",
-            description="Panel untuk mengelola tugas dan pembayaran staff.",
-            color=discord.Color.red()
+            title="ADMIN PANEL",
+            description="Assign tugas, review hasil, rekap gaji, dan pantau statistik staff.",
+            color=discord.Color.red(),
         )
-        embed.add_field(
-            name="Fitur",
-            value=(
-                "📋 **Assign Tugas** - Assign tugas baru ke staff\n"
-                "📝 **Review** - Review tugas yang di-submit\n"
-                "📊 **Rekap** - Rekap pembayaran staff\n"
-                "📈 **Stats** - Statistik keseluruhan"
-            ),
-            inline=False
-        )
-        await interaction.response.send_message(
-            embed=embed,
-            view=AdminPanelView(),
-            ephemeral=False
-        )
-    elif panel in ("auto", "staff") and is_staff(interaction.user):
-        embed = discord.Embed(
-            title="📋 Staff Panel",
-            description="Panel untuk mengelola tugas dan penghasilan.",
-            color=discord.Color.blue()
-        )
-        embed.add_field(
-            name="Fitur",
-            value=(
-                "📋 **Tugas Saya** - Lihat tugas yang sedang dikerjakan\n"
-                "📤 **Submit Hasil** - Submit hasil kerja\n"
-                "💰 **Penghasilan** - Lihat penghasilan"
-            ),
-            inline=False
-        )
-        await interaction.response.send_message(
-            embed=embed,
-            view=StaffPanelView(),
-            ephemeral=False
-        )
-    else:
-        await interaction.response.send_message(
-            "❌ Kamu tidak memiliki akses ke panel ini!",
-            ephemeral=False
-        )
+        return await interaction.response.send_message(embed=embed, view=AdminPanelView(), ephemeral=False)
 
+    if not is_staff(interaction.user) or not interaction.guild or not isinstance(interaction.user, discord.Member):
+        return await interaction.response.send_message("Kamu bukan staff.", ephemeral=False)
+    ticket = await find_or_create_staff_ticket(interaction.guild, interaction.user)
+    embed = discord.Embed(
+        title="STAFF PANEL",
+        description="Lihat tugas, submit hasil, dan cek penghasilan dari tiket privat ini.",
+        color=discord.Color.blue(),
+    )
+    await ticket.send(embed=embed, view=StaffPanelView())
+    await interaction.response.send_message(
+        f"Panel staff dikirim ke tiket privat kamu: {ticket.mention}", ephemeral=False
+    )
 
 @bot.tree.command(name="update-payrate", description="Update base rate untuk role tertentu")
 async def update_payrate_command(
@@ -163,7 +141,7 @@ async def update_payrate_command(
     """Update payrate for a role."""
     if not is_admin(interaction.user):
         return await interaction.response.send_message(
-            "❌ Hanya admin yang bisa mengubah payrate!",
+            "âŒ Hanya admin yang bisa mengubah payrate!",
             ephemeral=False
         )
     
@@ -176,14 +154,14 @@ async def update_payrate_command(
     
     if new_rate < 0 or new_rate > 50000:
         return await interaction.response.send_message(
-            "❌ Rate harus antara 0 dan 50000!",
+            "âŒ Rate harus antara 0 dan 50000!",
             ephemeral=False
         )
     
     # In a real implementation, this would update a config file or database
     # For now, we'll just acknowledge it
     embed = discord.Embed(
-        title="✅ Payrate Diupdate",
+        title="âœ… Payrate Diupdate",
         description=f"Base rate untuk **{role}** telah diupdate ke **Rp {new_rate:,}**",
         color=discord.Color.green()
     )
@@ -201,12 +179,12 @@ async def search_manga_command(interaction: discord.Interaction, query: str):
     
     if not results:
         return await interaction.followup.send(
-            f"🔍 Tidak ditemukan manga dengan query: **{query}**",
+            f"ðŸ” Tidak ditemukan manga dengan query: **{query}**",
             ephemeral=False
         )
     
     embed = discord.Embed(
-        title="🔍 Hasil Pencarian",
+        title="ðŸ” Hasil Pencarian",
         description=f"Query: **{query}**",
         color=discord.Color.blue()
     )
@@ -226,180 +204,103 @@ async def search_manga_command(interaction: discord.Interaction, query: str):
 
 
 @bot.tree.command(name="download-raw", description="Download chapter RAW dari Asura Scans")
-async def download_raw_command(
-    interaction: discord.Interaction,
-    manga_id: str,
-    chapter_id: str
-):
-    """Download a chapter from Asura Scans."""
+async def download_raw_command(interaction: discord.Interaction, manga_id: str, chapter_id: str):
+    """Download one RAW chapter."""
     if not is_staff(interaction.user):
-        return await interaction.response.send_message(
-            "❌ Hanya staff yang bisa download RAW!",
-            ephemeral=False
-        )
+        return await interaction.response.send_message("Hanya staff yang bisa download RAW!", ephemeral=False)
+    await interaction.response.defer(ephemeral=False)
+    save_dir = os.path.join(os.path.dirname(__file__), "data", "raw")
+    os.makedirs(save_dir, exist_ok=True)
+    result = await bot.downloader.download_chapter(manga_id, chapter_id, save_dir)
+    if not result:
+        return await interaction.followup.send("Gagal download chapter. Periksa manga ID dan chapter ID.", ephemeral=False)
+    embed = discord.Embed(title="Download Berhasil", color=discord.Color.green())
+    embed.add_field(name="Manga ID", value=manga_id, inline=True)
+    embed.add_field(name="Chapter ID", value=chapter_id, inline=True)
+    embed.add_field(name="Lokasi", value=f"`{result}`", inline=False)
+    await interaction.followup.send(embed=embed, ephemeral=False)
 
 
 @bot.tree.command(name="raw-search", description="Cari komik RAW dari Asura Scans")
 async def raw_search_command(interaction: discord.Interaction, query: str):
-    """PRD-compatible raw search command."""
     await search_manga_command(interaction, query)
 
 
 @bot.tree.command(name="raw-chapters", description="Lihat daftar chapter RAW")
 async def raw_chapters_command(interaction: discord.Interaction, manga_id: str):
-    """List chapters for a manga."""
     await interaction.response.defer(ephemeral=False)
     chapters = await bot.downloader.get_chapter_list(manga_id)
     if not chapters:
-        return await interaction.followup.send(
-            f"Tidak ada chapter untuk manga ID **{manga_id}**.",
-            ephemeral=False,
-        )
-
-    embed = discord.Embed(
-        title="Daftar Chapter RAW",
-        description=f"Manga ID: **{manga_id}**",
-        color=discord.Color.blue(),
-    )
+        return await interaction.followup.send(f"Tidak ada chapter untuk manga ID **{manga_id}**.", ephemeral=False)
+    embed = discord.Embed(title="Daftar Chapter RAW", description=f"Manga ID: **{manga_id}**", color=discord.Color.blue())
     for chapter in chapters[:20]:
         chapter_id = chapter.get("id", chapter.get("chapter_id", "N/A"))
         title = chapter.get("title", chapter.get("name", f"Chapter {chapter_id}"))
         embed.add_field(name=str(title), value=f"ID: `{chapter_id}`", inline=False)
-    if len(chapters) > 20:
-        embed.set_footer(text=f"Menampilkan 20 dari {len(chapters)} chapter.")
     await interaction.followup.send(embed=embed, ephemeral=False)
 
 
 @bot.tree.command(name="raw-download", description="Download chapter RAW dari Asura Scans")
-async def raw_download_command(
-    interaction: discord.Interaction,
-    manga_id: str,
-    chapter_id: str
-):
-    """PRD-compatible raw download command."""
+async def raw_download_command(interaction: discord.Interaction, manga_id: str, chapter_id: str):
     await download_raw_command(interaction, manga_id, chapter_id)
 
 
 @bot.tree.command(name="raw-download-batch", description="Batch download chapter RAW")
-async def raw_download_batch_command(
-    interaction: discord.Interaction,
-    manga_id: str,
-    chapter_ids: str
-):
-    """Download multiple chapters. chapter_ids is comma-separated."""
+async def raw_download_batch_command(interaction: discord.Interaction, manga_id: str, chapter_ids: str):
     if not is_staff(interaction.user):
-        return await interaction.response.send_message(
-            "Hanya staff yang bisa download RAW!",
-            ephemeral=False,
-        )
-
+        return await interaction.response.send_message("Hanya staff yang bisa download RAW!", ephemeral=False)
     await interaction.response.defer(ephemeral=False)
     save_dir = os.path.join(os.path.dirname(__file__), "data", "raw")
     os.makedirs(save_dir, exist_ok=True)
-
-    ids = [chapter_id.strip() for chapter_id in chapter_ids.split(",") if chapter_id.strip()]
+    ids = [item.strip() for item in chapter_ids.split(",") if item.strip()][:10]
     if not ids:
         return await interaction.followup.send("Isi minimal satu chapter ID.", ephemeral=False)
-
-    results = []
-    for chapter_id in ids[:10]:
+    embed = discord.Embed(title="Batch Download RAW", color=discord.Color.green())
+    for chapter_id in ids:
         result = await bot.downloader.download_chapter(manga_id, chapter_id, save_dir)
-        results.append((chapter_id, result))
-
-    embed = discord.Embed(
-        title="Batch Download RAW",
-        description=f"Manga ID: **{manga_id}**",
-        color=discord.Color.green(),
-    )
-    for chapter_id, result in results:
-        status = f"OK: `{result}`" if result else "Gagal"
-        embed.add_field(name=f"Chapter {chapter_id}", value=status, inline=False)
+        embed.add_field(name=f"Chapter {chapter_id}", value=f"OK: `{result}`" if result else "Gagal", inline=False)
     await interaction.followup.send(embed=embed, ephemeral=False)
 
 
 @bot.tree.command(name="raw-update", description="Cek update RAW terbaru")
 async def raw_update_command(interaction: discord.Interaction, query: str = ""):
-    """Best-effort latest raw update command using the configured Asura API."""
     await interaction.response.defer(ephemeral=False)
     results = await bot.downloader.search_manga(query or "latest")
     if not results:
-        return await interaction.followup.send(
-            "Belum bisa mengambil update RAW terbaru dari API.",
-            ephemeral=False,
-        )
-
+        return await interaction.followup.send("Belum bisa mengambil update RAW terbaru dari API.", ephemeral=False)
     embed = discord.Embed(title="Update RAW Terbaru", color=discord.Color.blue())
     for manga in results[:10]:
-        embed.add_field(
-            name=manga.get("title", "Unknown"),
-            value=(
-                f"ID: `{manga.get('id', 'N/A')}`\n"
-                f"Status: {manga.get('status', 'N/A')}\n"
-                f"Chapters: {manga.get('chapter_count', 'N/A')}"
-            ),
-            inline=False,
-        )
+        embed.add_field(name=manga.get("title", "Unknown"), value=f"ID: `{manga.get('id', 'N/A')}`", inline=False)
     await interaction.followup.send(embed=embed, ephemeral=False)
-    
-    await interaction.response.defer(ephemeral=False)
-    
-    save_dir = os.path.join(os.path.dirname(__file__), "data", "raw")
-    os.makedirs(save_dir, exist_ok=True)
-    
-    result = await bot.downloader.download_chapter(manga_id, chapter_id, save_dir)
-    
-    if result:
-        embed = discord.Embed(
-            title="✅ Download Berhasil",
-            description=f"Chapter berhasil didownload!",
-            color=discord.Color.green()
-        )
-        embed.add_field(name="Manga ID", value=manga_id, inline=True)
-        embed.add_field(name="Chapter ID", value=chapter_id, inline=True)
-        embed.add_field(name="Lokasi", value=f"`{result}`", inline=False)
-        
-        await interaction.followup.send(embed=embed, ephemeral=False)
-    else:
-        await interaction.followup.send(
-            "❌ Gagal download chapter. Pastikan ID manga dan chapter benar!",
-            ephemeral=False
-        )
-
 
 # ==================== MESSAGE COMMANDS ====================
 
 @bot.command(name="panel")
 async def panel_command(ctx: commands.Context):
-    """Show panel via prefix command."""
+    """Send one panel to the correct private/moderation channel."""
     if is_admin(ctx.author):
-        embed = discord.Embed(
-            title="🔧 Admin Panel",
-            description="Panel untuk mengelola tugas dan pembayaran staff.",
-            color=discord.Color.red()
-        )
-        await ctx.send(embed=embed, view=AdminPanelView())
-    elif is_staff(ctx.author):
-        embed = discord.Embed(
-            title="📋 Staff Panel",
-            description="Panel untuk mengelola tugas dan penghasilan.",
-            color=discord.Color.blue()
-        )
-        await ctx.send(embed=embed, view=StaffPanelView())
-    else:
-        await ctx.send("❌ Kamu tidak memiliki akses ke panel ini!")
-
+        if ctx.channel.id != STAFF_LOG_CHANNEL_ID:
+            return await ctx.send(f"Panel admin hanya boleh dikirim di <#{STAFF_LOG_CHANNEL_ID}>.")
+        embed = discord.Embed(title="ADMIN PANEL", description="Kelola tugas dan pembayaran staff.", color=discord.Color.red())
+        return await ctx.send(embed=embed, view=AdminPanelView())
+    if is_staff(ctx.author):
+        ticket = await find_or_create_staff_ticket(ctx.guild, ctx.author)
+        embed = discord.Embed(title="STAFF PANEL", description="Kelola tugas dan penghasilan dari tiket privat ini.", color=discord.Color.blue())
+        await ticket.send(embed=embed, view=StaffPanelView())
+        return await ctx.send(f"Panel staff dikirim ke tiket privat kamu: {ticket.mention}")
+    await ctx.send("Kamu tidak memiliki akses ke panel ini.")
 
 @bot.command(name="help-ryukomik")
 async def help_command(ctx: commands.Context):
     """Show help for Ryukomik bot."""
     embed = discord.Embed(
-        title="📚 Ryukomik Bot - Help",
+        title="ðŸ“š Ryukomik Bot - Help",
         description="Bot untuk mengelola tugas dan pembayaran staff Ryukomik.",
         color=discord.Color.gold()
     )
     
     embed.add_field(
-        name="📋 Slash Commands",
+        name="ðŸ“‹ Slash Commands",
         value=(
             "`/panels` - Tampilkan panel admin/staff\n"
             "`/update-payrate` - Update base rate\n"
@@ -413,7 +314,7 @@ async def help_command(ctx: commands.Context):
     )
     
     embed.add_field(
-        name="💬 Prefix Commands",
+        name="ðŸ’¬ Prefix Commands",
         value=(
             "`!panel` - Tampilkan panel\n"
             "`!rekrut` - Kirim embed rekrutmen (admin)\n"
@@ -424,7 +325,7 @@ async def help_command(ctx: commands.Context):
     )
     
     embed.add_field(
-        name="👥 Roles",
+        name="ðŸ‘¥ Roles",
         value=(
             f"<@&{ROLE_ADMIN_ID}> - Admin (full access)\n"
             f"<@&{ROLE_STAFF_ID}> - Staff (submit & view tasks)"
@@ -443,12 +344,12 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError):
     if isinstance(error, commands.CommandNotFound):
         return
     elif isinstance(error, commands.MissingPermissions):
-        await ctx.send("❌ Kamu tidak memiliki izin untuk menggunakan command ini!")
+        await ctx.send("âŒ Kamu tidak memiliki izin untuk menggunakan command ini!")
     elif isinstance(error, commands.BadArgument):
-        await ctx.send("❌ Argument tidak valid!")
+        await ctx.send("âŒ Argument tidak valid!")
     else:
         print(f"Error: {error}")
-        await ctx.send("❌ Terjadi error saat menjalankan command!")
+        await ctx.send("âŒ Terjadi error saat menjalankan command!")
 
 
 @bot.tree.error
@@ -471,3 +372,4 @@ if __name__ == "__main__":
         exit(1)
     
     bot.run(TOKEN)
+
