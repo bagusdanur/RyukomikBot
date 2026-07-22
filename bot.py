@@ -18,6 +18,7 @@ from modals.rekap_modal import RekapModal
 from recruitment.ticket import setup_recruitment, RecruitmentView
 from raw_downloader.asura import AsuraDownloader
 from helpers.utils import find_or_create_staff_ticket, is_admin, is_staff
+from helpers.panel_content import build_admin_panel_embed, build_guide_embed, build_staff_panel_embed
 
 
 # Intents
@@ -105,7 +106,15 @@ bot = RyukomikBot()
 # ==================== SLASH COMMANDS ====================
 
 @bot.tree.command(name="panels", description="Tampilkan panel admin/staff")
-async def panels_command(interaction: discord.Interaction, panel: str = "auto"):
+@discord.app_commands.describe(
+    panel="Pilih admin atau staff",
+    staff="Staff tujuan saat administrator membuat Staff Panel",
+)
+async def panels_command(
+    interaction: discord.Interaction,
+    panel: str = "auto",
+    staff: discord.Member = None,
+):
     """Send exactly one panel to its designated channel."""
     selected = panel.casefold()
     if selected not in ("auto", "admin", "staff"):
@@ -120,25 +129,46 @@ async def panels_command(interaction: discord.Interaction, panel: str = "auto"):
             return await interaction.response.send_message(
                 f"Panel admin hanya boleh dikirim di <#{STAFF_LOG_CHANNEL_ID}>.", ephemeral=False
             )
-        embed = discord.Embed(
-            title="ADMIN PANEL",
-            description="Assign tugas, review hasil, rekap gaji, dan pantau statistik staff.",
-            color=discord.Color.red(),
+        return await interaction.response.send_message(
+            embed=build_admin_panel_embed(), view=AdminPanelView(), ephemeral=False
         )
-        return await interaction.response.send_message(embed=embed, view=AdminPanelView(), ephemeral=False)
 
-    if not is_staff(interaction.user) or not interaction.guild or not isinstance(interaction.user, discord.Member):
-        return await interaction.response.send_message("Kamu bukan staff.", ephemeral=False)
-    ticket = await find_or_create_staff_ticket(interaction.guild, interaction.user)
-    embed = discord.Embed(
-        title="STAFF PANEL",
-        description="Lihat tugas, submit hasil, dan cek penghasilan dari tiket privat ini.",
-        color=discord.Color.blue(),
-    )
+    if not interaction.guild or not isinstance(interaction.user, discord.Member):
+        return await interaction.response.send_message("Command ini hanya tersedia di server.", ephemeral=False)
+
+    actor_is_admin = is_admin(interaction.user)
+    if actor_is_admin:
+        target = staff
+        if target is None:
+            return await interaction.response.send_message(
+                "Pilih staff tujuan pada parameter `staff`, contoh: `/panels staff staff:@nama`.",
+                ephemeral=False,
+            )
+    else:
+        if not is_staff(interaction.user):
+            return await interaction.response.send_message("Kamu bukan staff.", ephemeral=False)
+        if staff and staff.id != interaction.user.id:
+            return await interaction.response.send_message(
+                "Staff hanya dapat membuat panel untuk dirinya sendiri.", ephemeral=False
+            )
+        target = interaction.user
+
+    if not is_staff(target):
+        return await interaction.response.send_message(
+            "Member tujuan belum memiliki role Staff.", ephemeral=False
+        )
+    ticket = await find_or_create_staff_ticket(interaction.guild, target)
+    embed = build_staff_panel_embed(target)
     await ticket.send(embed=embed, view=StaffPanelView())
     await interaction.response.send_message(
-        f"Panel staff dikirim ke tiket privat kamu: {ticket.mention}", ephemeral=False
+        f"Staff Panel untuk {target.mention} berhasil dikirim ke {ticket.mention}.", ephemeral=False
     )
+
+
+@bot.tree.command(name="panduan", description="Tampilkan panduan lengkap Ryukomik Bot")
+async def guide_command(interaction: discord.Interaction):
+    audience = "admin" if is_admin(interaction.user) else "staff" if is_staff(interaction.user) else "all"
+    await interaction.response.send_message(embed=build_guide_embed(audience), ephemeral=False)
 
 @bot.tree.command(name="update-payrate", description="Update base rate untuk role tertentu")
 async def update_payrate_command(
@@ -282,64 +312,36 @@ async def raw_update_command(interaction: discord.Interaction, query: str = ""):
 # ==================== MESSAGE COMMANDS ====================
 
 @bot.command(name="panel")
-async def panel_command(ctx: commands.Context):
+async def panel_command(ctx: commands.Context, panel: str = "auto", staff: discord.Member = None):
     """Send one panel to the correct private/moderation channel."""
-    if is_admin(ctx.author):
+    selected = panel.casefold()
+    if selected == "auto":
+        selected = "admin" if is_admin(ctx.author) else "staff"
+    if selected == "admin" and is_admin(ctx.author):
         if ctx.channel.id != STAFF_LOG_CHANNEL_ID:
             return await ctx.send(f"Panel admin hanya boleh dikirim di <#{STAFF_LOG_CHANNEL_ID}>.")
-        embed = discord.Embed(title="ADMIN PANEL", description="Kelola tugas dan pembayaran staff.", color=discord.Color.red())
-        return await ctx.send(embed=embed, view=AdminPanelView())
-    if is_staff(ctx.author):
-        ticket = await find_or_create_staff_ticket(ctx.guild, ctx.author)
-        embed = discord.Embed(title="STAFF PANEL", description="Kelola tugas dan penghasilan dari tiket privat ini.", color=discord.Color.blue())
-        await ticket.send(embed=embed, view=StaffPanelView())
-        return await ctx.send(f"Panel staff dikirim ke tiket privat kamu: {ticket.mention}")
+        return await ctx.send(embed=build_admin_panel_embed(), view=AdminPanelView())
+    if selected == "staff":
+        if is_admin(ctx.author):
+            target = staff
+            if target is None:
+                return await ctx.send("Gunakan `!panel staff @nama` untuk memilih staff tujuan.")
+        elif is_staff(ctx.author):
+            target = ctx.author
+        else:
+            return await ctx.send("Kamu tidak memiliki akses ke panel ini.")
+        if not is_staff(target):
+            return await ctx.send("Member tujuan belum memiliki role Staff.")
+        ticket = await find_or_create_staff_ticket(ctx.guild, target)
+        await ticket.send(embed=build_staff_panel_embed(target), view=StaffPanelView())
+        return await ctx.send(f"Staff Panel untuk {target.mention} dikirim ke {ticket.mention}.")
     await ctx.send("Kamu tidak memiliki akses ke panel ini.")
 
 @bot.command(name="help-ryukomik")
 async def help_command(ctx: commands.Context):
     """Show help for Ryukomik bot."""
-    embed = discord.Embed(
-        title="ðŸ“š Ryukomik Bot - Help",
-        description="Bot untuk mengelola tugas dan pembayaran staff Ryukomik.",
-        color=discord.Color.gold()
-    )
-    
-    embed.add_field(
-        name="ðŸ“‹ Slash Commands",
-        value=(
-            "`/panels` - Tampilkan panel admin/staff\n"
-            "`/update-payrate` - Update base rate\n"
-            "`/raw-update` - Cek update RAW terbaru\n"
-            "`/raw-search` - Cari manga\n"
-            "`/raw-chapters` - Lihat chapter\n"
-            "`/raw-download` - Download chapter RAW\n"
-            "`/raw-download-batch` - Batch download RAW"
-        ),
-        inline=False
-    )
-    
-    embed.add_field(
-        name="ðŸ’¬ Prefix Commands",
-        value=(
-            "`!panel` - Tampilkan panel\n"
-            "`!rekrut` - Kirim embed rekrutmen (admin)\n"
-            "`!close` - Tutup tiket rekrutmen\n"
-            "`!help-ryukomik` - Tampilkan help ini"
-        ),
-        inline=False
-    )
-    
-    embed.add_field(
-        name="ðŸ‘¥ Roles",
-        value=(
-            f"<@&{ROLE_ADMIN_ID}> - Admin (full access)\n"
-            f"<@&{ROLE_STAFF_ID}> - Staff (submit & view tasks)"
-        ),
-        inline=False
-    )
-    
-    await ctx.send(embed=embed)
+    audience = "admin" if is_admin(ctx.author) else "staff" if is_staff(ctx.author) else "all"
+    await ctx.send(embed=build_guide_embed(audience))
 
 
 # ==================== ERROR HANDLING ====================

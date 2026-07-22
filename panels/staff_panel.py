@@ -2,6 +2,7 @@ import discord
 
 import database as db
 from helpers.utils import STATUS_EMOJI, format_currency, get_current_period, is_staff
+from helpers.panel_content import build_guide_embed
 from views.select_views import SubmitSelectView
 
 
@@ -79,3 +80,7 @@ class StaffPanelView(discord.ui.View):
         embed.add_field(name="Sudah Dibayar", value=format_currency(stats["total_paid"]), inline=True)
         embed.add_field(name="Menunggu", value=str(stats["pending"]), inline=True)
         await interaction.followup.send(embed=embed)
+
+    @discord.ui.button(label="Panduan", emoji="📚", style=discord.ButtonStyle.secondary, custom_id="staff_guide")
+    async def guide_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(embed=build_guide_embed("staff"), ephemeral=False)

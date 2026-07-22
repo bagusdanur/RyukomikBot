@@ -1,6 +1,6 @@
 import discord
 from typing import Optional, Union
-from config import ROLE_ADMIN_ID, ROLE_STAFF_ID
+from config import REKRUT_CAT_ID, ROLE_ADMIN_ID, ROLE_STAFF_ID
 
 # Popular series with bonus multiplier
 POPULAR_SERIES = [
@@ -103,7 +103,10 @@ async def find_ticket(guild: discord.Guild, staff_id: int) -> Optional[discord.T
     
     # Search for channel with staff name
     for channel in guild.text_channels:
-        if staff.name.lower() in channel.name.lower() or str(staff.id) in channel.name:
+        if channel.category_id == REKRUT_CAT_ID or (channel.topic or "").startswith("Tiket rekrutmen"):
+            continue
+        topic = channel.topic or ""
+        if str(staff.id) in topic or str(staff.id) in channel.name:
             return channel
     
     return None

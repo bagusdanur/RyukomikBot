@@ -2,6 +2,7 @@ import discord
 
 import database as db
 from helpers.utils import STATUS_EMOJI, format_currency, is_admin
+from helpers.panel_content import build_guide_embed
 from views.select_views import ReviewSelectView
 
 
@@ -85,3 +86,7 @@ class AdminPanelView(discord.ui.View):
         embed.add_field(name="Sudah Disetujui", value=format_currency(total_earnings), inline=True)
         embed.add_field(name="Sedang Diproses", value=format_currency(pending_earnings), inline=True)
         await interaction.followup.send(embed=embed)
+
+    @discord.ui.button(label="Panduan", emoji="📚", style=discord.ButtonStyle.secondary, custom_id="admin_guide")
+    async def guide_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(embed=build_guide_embed("admin"), ephemeral=False)
