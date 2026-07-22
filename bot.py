@@ -18,7 +18,7 @@ from modals.revisi_modal import RevisiModal
 from modals.rekap_modal import RekapModal
 from recruitment.ticket import setup_recruitment, RecruitmentView
 from raw_downloader import get_downloader
-from helpers.utils import find_or_create_staff_ticket, is_admin, is_staff
+from helpers.utils import ROLE_PAYRATES, find_or_create_staff_ticket, is_admin, is_staff
 from helpers.panel_content import build_admin_panel_embed, build_guide_embed, build_staff_panel_embed
 import database as db
 
@@ -189,9 +189,11 @@ async def update_payrate_command(
         return await interaction.response.send_message(
             "Role harus TL, TS, atau TL+TS.", ephemeral=False
         )
-    if new_rate < 0 or new_rate > 1_000_000:
+    maximum_rate = ROLE_PAYRATES[normalized_role]["max"]
+    if new_rate < 0 or new_rate > maximum_rate:
         return await interaction.response.send_message(
-            "Rate harus antara Rp 0 dan Rp 1.000.000.", ephemeral=False
+            f"Base rate {normalized_role} harus antara Rp 0 dan Rp {maximum_rate:,.0f}.".replace(",", "."),
+            ephemeral=False,
         )
 
     await db.set_role_payrate(normalized_role, new_rate)
