@@ -1,77 +1,1026 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
-import Button from 'primevue/button'
-import Column from 'primevue/column'
-import DataTable from 'primevue/datatable'
-import InputNumber from 'primevue/inputnumber'
-import InputText from 'primevue/inputtext'
-import Tag from 'primevue/tag'
-import JSZip from 'jszip'
-import { api, putFile, type Assignment, type Invoice, type Recap, type Staff, type Submission, type User } from './api'
+import { computed, onMounted, ref, watch } from "vue";
+import Button from "primevue/button";
+import Column from "primevue/column";
+import DataTable from "primevue/datatable";
+import InputNumber from "primevue/inputnumber";
+import InputText from "primevue/inputtext";
+import Tag from "primevue/tag";
+import {
+  api,
+  type Assignment,
+  type Invoice,
+  type Recap,
+  type Staff,
+  type Submission,
+  type User,
+} from "./api";
 
-type Page = 'overview' | 'tasks' | 'staff' | 'payrates' | 'deadlines' | 'recap' | 'audit'
-const user=ref<User|null>(null), authChecked=ref(false), loading=ref(false), error=ref(''), success=ref(''), page=ref<Page>('overview')
-const overview=ref({counts:{} as Record<string,number>,total_value:0,urgent_deadlines:0}), assignments=ref<Assignment[]>([]), staff=ref<Staff[]>([])
-const payrates=ref<Array<{role:string;base_rate:number;updated_at:string}>>([]), deadlines=ref<Assignment[]>([]), recap=ref<Recap[]>([]), invoices=ref<Invoice[]>([]), audit=ref<Array<Record<string,string|number|null>>>([])
-const search=ref(''), status=ref(''), staffFilter=ref(''), groupBy=ref('none'), period=ref(new Date().toISOString().slice(0,7)), showTask=ref(false)
-const task=ref({manga:'',chapter:'',staff_id:'',role:'TL',final_rate:3000,deadline_at:''})
-const submissions=ref<Submission[]>([]), uploadTask=ref<Assignment|null>(null), uploadFile=ref<File|null>(null), selectedImages=ref<File[]>([]), uploadProgress=ref(0), uploadStage=ref('')
+type Page =
+  "overview" | "tasks" | "staff" | "payrates" | "deadlines" | "recap" | "audit";
+const user = ref<User | null>(null),
+  authChecked = ref(false),
+  loading = ref(false),
+  error = ref(""),
+  success = ref(""),
+  page = ref<Page>("overview");
+const overview = ref({
+    counts: {} as Record<string, number>,
+    total_value: 0,
+    urgent_deadlines: 0,
+  }),
+  assignments = ref<Assignment[]>([]),
+  staff = ref<Staff[]>([]);
+const payrates = ref<
+    Array<{ role: string; base_rate: number; updated_at: string }>
+  >([]),
+  deadlines = ref<Assignment[]>([]),
+  recap = ref<Recap[]>([]),
+  invoices = ref<Invoice[]>([]),
+  audit = ref<Array<Record<string, string | number | null>>>([]);
+const search = ref(""),
+  status = ref(""),
+  staffFilter = ref(""),
+  groupBy = ref("none"),
+  period = ref(new Date().toISOString().slice(0, 7)),
+  showTask = ref(false);
+const task = ref({
+  manga: "",
+  chapter: "",
+  staff_id: "",
+  role: "TL",
+  final_rate: 3000,
+  deadline_at: "",
+});
+const submissions = ref<Submission[]>([]);
+// Compatibility state for an old cached modal. No new dashboard uploads are accepted.
+const uploadTask = ref<Assignment | null>(null),
+  selectedImages = ref<File[]>([]),
+  uploadProgress = ref(0),
+  uploadStage = ref("");
 
-const navItems=computed(()=>[
-  {id:'overview',label:'Ringkasan',icon:'pi pi-home'}, {id:'tasks',label:'Tugas',icon:'pi pi-list-check'},
-  ...(user.value?.role==='admin'?[{id:'staff',label:'Tim Staff',icon:'pi pi-users'},{id:'payrates',label:'Payrate',icon:'pi pi-wallet'},{id:'recap',label:'Gaji & Invoice',icon:'pi pi-receipt'},{id:'audit',label:'Audit Log',icon:'pi pi-shield'}]:[]),
-  {id:'deadlines',label:'Deadline',icon:'pi pi-clock'},
-])
-const money=(v:number)=>new Intl.NumberFormat('id-ID',{style:'currency',currency:'IDR',maximumFractionDigits:0}).format(v||0)
-const statusLabel:Record<string,string>={open:'Tersedia',claimed:'Dikerjakan',submitted:'Menunggu Review',revision:'Perlu Revisi',approved:'Disetujui',paid:'Dibayar'}
-const severity=(v:string)=>({open:'info',claimed:'warn',submitted:'secondary',revision:'danger',approved:'success',paid:'contrast'}[v]||'secondary') as any
-const avatar=(id:string,hash:string|null|undefined)=>hash?`https://cdn.discordapp.com/avatars/${id}/${hash}.png?size=128`:''
-const initials=(name:string)=>(name||'?').slice(0,2).toUpperCase()
-const filteredAssignments=computed(()=>assignments.value.filter(a=>(!staffFilter.value||String(a.staff_id)===staffFilter.value)))
-const groupedAssignments=computed(()=>{
-  if(groupBy.value==='none') return [{label:'Semua tugas',items:filteredAssignments.value}]
-  const groups=new Map<string,Assignment[]>()
-  for(const item of filteredAssignments.value){const key=groupBy.value==='staff'?(item.staff_name||'Belum ditentukan'):(statusLabel[item.status]||item.status);groups.set(key,[...(groups.get(key)||[]),item])}
-  return [...groups].map(([label,items])=>({label,items}))
-})
-const recapTotal=computed(()=>recap.value.reduce((n,x)=>n+x.total_amount,0)), pendingTotal=computed(()=>recap.value.reduce((n,x)=>n+x.pending_amount,0))
-const submissionByTask=computed(()=>new Map(submissions.value.map(item=>[item.assignment_id,item])))
+const navItems = computed(() => [
+  { id: "overview", label: "Ringkasan", icon: "pi pi-home" },
+  { id: "tasks", label: "Tugas", icon: "pi pi-list-check" },
+  ...(user.value?.role === "admin"
+    ? [
+        { id: "staff", label: "Tim Staff", icon: "pi pi-users" },
+        { id: "payrates", label: "Payrate", icon: "pi pi-wallet" },
+        { id: "recap", label: "Gaji & Invoice", icon: "pi pi-receipt" },
+        { id: "audit", label: "Audit Log", icon: "pi pi-shield" },
+      ]
+    : []),
+  { id: "deadlines", label: "Deadline", icon: "pi pi-clock" },
+]);
+const money = (v: number) =>
+  new Intl.NumberFormat("id-ID", {
+    style: "currency",
+    currency: "IDR",
+    maximumFractionDigits: 0,
+  }).format(v || 0);
+const statusLabel: Record<string, string> = {
+  open: "Tersedia",
+  claimed: "Dikerjakan",
+  submitted: "Menunggu Review",
+  revision: "Perlu Revisi",
+  approved: "Disetujui",
+  paid: "Dibayar",
+};
+const severity = (v: string) =>
+  (({
+    open: "info",
+    claimed: "warn",
+    submitted: "secondary",
+    revision: "danger",
+    approved: "success",
+    paid: "contrast",
+  })[v] || "secondary") as any;
+const avatar = (id: string, hash: string | null | undefined) =>
+  hash ? `https://cdn.discordapp.com/avatars/${id}/${hash}.png?size=128` : "";
+const initials = (name: string) => (name || "?").slice(0, 2).toUpperCase();
+const filteredAssignments = computed(() =>
+  assignments.value.filter(
+    (a) => !staffFilter.value || String(a.staff_id) === staffFilter.value,
+  ),
+);
+const groupedAssignments = computed(() => {
+  if (groupBy.value === "none")
+    return [{ label: "Semua tugas", items: filteredAssignments.value }];
+  const groups = new Map<string, Assignment[]>();
+  for (const item of filteredAssignments.value) {
+    const key =
+      groupBy.value === "staff"
+        ? item.staff_name || "Belum ditentukan"
+        : statusLabel[item.status] || item.status;
+    groups.set(key, [...(groups.get(key) || []), item]);
+  }
+  return [...groups].map(([label, items]) => ({ label, items }));
+});
+const recapTotal = computed(() =>
+    recap.value.reduce((n, x) => n + x.total_amount, 0),
+  ),
+  pendingTotal = computed(() =>
+    recap.value.reduce((n, x) => n + x.pending_amount, 0),
+  );
+const submissionByTask = computed(
+  () => new Map(submissions.value.map((item) => [item.assignment_id, item])),
+);
 
-async function run<T>(op:()=>Promise<T>,target:{value:T}){loading.value=true;error.value='';try{target.value=await op()}catch(e){error.value=e instanceof Error?e.message:'Terjadi kesalahan.'}finally{loading.value=false}}
-async function loadPage(){if(!user.value)return;if(page.value==='overview')await run(api.overview,overview);if(page.value==='tasks'){if(user.value.role==='admin'&&!staff.value.length)staff.value=await api.staff();await Promise.all([run(()=>api.assignments(status.value,search.value),assignments),run(()=>api.submissions(),submissions)])}if(page.value==='staff')await run(api.staff,staff);if(page.value==='payrates')await run(api.payrates,payrates);if(page.value==='deadlines')await run(api.deadlines,deadlines);if(page.value==='recap'){if(!staff.value.length)staff.value=await api.staff();await Promise.all([run(()=>api.recap(period.value),recap),run(()=>api.invoices(period.value),invoices)])}if(page.value==='audit')await run(api.audit,audit)}
-async function saveRate(item:{role:string;base_rate:number}){try{loading.value=true;await api.updatePayrate(item.role,item.base_rate);success.value=`Rate ${item.role} tersimpan.`}catch(e){error.value=e instanceof Error?e.message:'Gagal menyimpan.'}finally{loading.value=false}}
-async function createTask(){if(!task.value.staff_id)return error.value='Pilih staf tujuan.';try{loading.value=true;const result=await api.createAssignment({...task.value,staff_id:task.value.staff_id,deadline_at:task.value.deadline_at||null});success.value=`Tugas #${result.id} dibuat${result.notified?' dan staf sudah diberi notifikasi.':', tetapi notifikasi Discord gagal.'}`;showTask.value=false;task.value={manga:'',chapter:'',staff_id:'',role:'TL',final_rate:3000,deadline_at:''};await loadPage()}catch(e){error.value=e instanceof Error?e.message:'Gagal membuat tugas.'}finally{loading.value=false}}
-async function openTask(staffId?:string){error.value='';if(!staff.value.length){loading.value=true;try{staff.value=await api.staff()}catch(e){error.value=e instanceof Error?e.message:'Gagal mengambil daftar staf.'}finally{loading.value=false}}if(staffId)task.value.staff_id=staffId;if(!staff.value.length){error.value='Daftar staf kosong. Pastikan anggota memiliki role Staff atau Admin di Discord.';return}showTask.value=true}
-function openUpload(item:Assignment){uploadTask.value=item;uploadFile.value=null;selectedImages.value=[];uploadProgress.value=0;uploadStage.value=''}
-function selectImages(event:Event){const files=[...((event.target as HTMLInputElement).files||[])].filter(file=>file.type.startsWith('image/'));if(files.length>500){error.value='Maksimal 500 gambar per chapter.';selectedImages.value=[];return}selectedImages.value=files.sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true,sensitivity:'base'}));uploadFile.value=null;uploadProgress.value=0}
-async function submitUpload(){if(!uploadTask.value||!selectedImages.value.length)return;try{loading.value=true;error.value='';uploadStage.value='Menyiapkan dan mengurutkan gambar';const totalSize=selectedImages.value.reduce((sum,file)=>sum+file.size,0);if(totalSize>1.5*1024*1024*1024)throw new Error('Total gambar maksimal 1,5 GB agar dapat diproses aman di browser.');const zip=new JSZip();selectedImages.value.forEach((file,index)=>{const extension=file.name.includes('.')?'.'+file.name.split('.').pop()!.toLowerCase():'.jpg';zip.file(`${String(index+1).padStart(3,'0')}${extension}`,file,{compression:'STORE'})});const blob=await zip.generateAsync({type:'blob',compression:'STORE'},meta=>uploadProgress.value=Math.round(meta.percent*.2));const safeTitle=uploadTask.value.manga.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');uploadFile.value=new File([blob],`${safeTitle}-chapter-${uploadTask.value.chapter}-images.zip`,{type:'application/zip'});uploadStage.value='Mengupload langsung ke R2';const signed=await api.presignUpload(uploadTask.value.id,uploadFile.value);await putFile(signed.upload_url,uploadFile.value,value=>uploadProgress.value=20+Math.round(value*.8));uploadStage.value='Memverifikasi hasil';await api.completeUpload(signed.upload_id);success.value=`${selectedImages.value.length} gambar berhasil diupload dan dikirim untuk review.`;uploadTask.value=null;await loadPage()}catch(e){error.value=e instanceof Error?e.message:'Upload gagal.'}finally{loading.value=false}}
-async function downloadResult(item:Submission){try{const result=await api.downloadSubmission(item.id);window.open(result.download_url,'_blank','noopener')}catch(e){error.value=e instanceof Error?e.message:'Download gagal.'}}
-async function createInvoice(item:Recap){try{loading.value=true;await api.createInvoice(item.staff_id,period.value);success.value=`Invoice ${item.staff_name} berhasil diterbitkan.`;await loadPage()}catch(e){error.value=e instanceof Error?e.message:'Gagal membuat invoice.'}finally{loading.value=false}}
-async function payInvoice(item:Invoice){if(!confirm(`Tandai invoice ${item.invoice_number} sebesar ${money(item.total_amount)} sebagai dibayar?`))return;try{loading.value=true;await api.payInvoice(item.id);success.value='Pembayaran dikonfirmasi dan tugas ditandai paid.';await loadPage()}catch(e){error.value=e instanceof Error?e.message:'Gagal memproses pembayaran.'}finally{loading.value=false}}
-async function deleteInvoice(item:Invoice){if(!confirm(`Hapus invoice ${item.invoice_number}? Tugas tetap approved dan dapat dibuatkan invoice baru.`))return;try{loading.value=true;await api.deleteInvoice(item.id);success.value=`Invoice ${item.invoice_number} berhasil dihapus.`;await loadPage()}catch(e){error.value=e instanceof Error?e.message:'Gagal menghapus invoice.'}finally{loading.value=false}}
-const safeHtml=(value:unknown)=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[char]!))
-const invoiceDate=(value:string|null)=>value?new Date(value).toLocaleDateString('id-ID',{day:'2-digit',month:'long',year:'numeric'}):'—'
-async function printInvoice(item:Invoice){const w=window.open('','_blank','width=900,height=900');if(!w)return;w.document.write('<p style="font:15px Arial;padding:32px">Menyiapkan invoice…</p>');try{const detail=await api.invoice(item.id);const rows=detail.items.map((task,index)=>`<tr><td>${index+1}</td><td><b>${safeHtml(task.manga)}</b><small>Task #${task.assignment_id}</small></td><td>${safeHtml(task.chapter)}</td><td>${safeHtml(task.role)}</td><td>${invoiceDate(task.approved_at)}</td><td class="money">${money(task.amount)}</td></tr>`).join('');w.document.open();w.document.write(`<html><head><title>${safeHtml(detail.invoice_number)}</title><style>@page{size:A4;margin:16mm}*{box-sizing:border-box}body{font:13px Arial,sans-serif;margin:0;color:#162033}.sheet{max-width:900px;margin:auto;padding:34px}.top{display:flex;justify-content:space-between;gap:24px;border-bottom:3px solid #6574f7;padding-bottom:22px}.brand h1{margin:0;font-size:29px;letter-spacing:1px}.brand small,.muted{color:#68748a}.number{text-align:right}.number strong{display:block;font-size:15px;margin-bottom:7px}.status{display:inline-block;padding:6px 10px;border-radius:20px;background:${detail.status==='paid'?'#daf7e9':'#fff1cf'};color:${detail.status==='paid'?'#087443':'#8a5b00'};font-weight:700}.info{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:28px 0}.card{padding:17px;border:1px solid #dde2eb;border-radius:10px}.card p{margin:7px 0}.card h3{margin:0 0 10px;font-size:12px;text-transform:uppercase;color:#68748a}table{width:100%;border-collapse:collapse;margin-top:12px}th{background:#f1f3f8;text-align:left;padding:11px 9px;font-size:11px;text-transform:uppercase;color:#5d687d}td{padding:12px 9px;border-bottom:1px solid #e4e8ef;vertical-align:top}td small{display:block;color:#8892a4;margin-top:4px}.money{text-align:right;white-space:nowrap}.summary{margin:24px 0 0 auto;width:310px}.summary div{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #e3e7ee}.summary .total{font-size:19px;font-weight:800;border-bottom:3px double #6574f7}.footer{margin-top:45px;padding-top:18px;border-top:1px solid #dde2eb;display:flex;justify-content:space-between;color:#778196;font-size:11px}@media print{.sheet{padding:0}}</style></head><body><main class="sheet"><header class="top"><div class="brand"><h1>RYUKOMIK</h1><small>Staff Payment Invoice · Scanlation Operations</small></div><div class="number"><strong>${safeHtml(detail.invoice_number)}</strong><span class="status">${detail.status==='paid'?'LUNAS':'MENUNGGU PEMBAYARAN'}</span></div></header><section class="info"><div class="card"><h3>Penerima</h3><p><b>${safeHtml(detail.staff_name)}</b></p><p class="muted">Discord ID ${detail.staff_id}</p></div><div class="card"><h3>Informasi Periode</h3><p>Periode: <b>${safeHtml(detail.period)}</b></p><p>Rentang kerja: <b>${invoiceDate(detail.work_started_at)} – ${invoiceDate(detail.work_ended_at)}</b></p><p>Diterbitkan: ${invoiceDate(detail.issued_at)}</p><p>Dibayar: ${invoiceDate(detail.paid_at)}</p></div></section><h3>Rincian Pekerjaan</h3><table><thead><tr><th>No.</th><th>Judul / Task</th><th>Chapter</th><th>Role</th><th>Disetujui</th><th class="money">Bayaran</th></tr></thead><tbody>${rows||'<tr><td colspan="6">Rincian tugas tidak tersedia.</td></tr>'}</tbody></table><section class="summary"><div><span>Jumlah pekerjaan</span><b>${detail.chapter_count} chapter</b></div><div class="total"><span>Total gaji</span><span>${money(detail.total_amount)}</span></div></section><footer class="footer"><span>Dokumen dibuat otomatis oleh Ryukomik Staff Management.</span><span>${safeHtml(detail.invoice_number)}</span></footer></main><script>window.onload=()=>window.print()<\/script></body></html>`);w.document.close()}catch(e){w.document.body.innerHTML=`<p style="font:15px Arial;padding:32px;color:#b42318">${safeHtml(e instanceof Error?e.message:'Gagal membuat invoice.')}</p>`}}
-async function logout(){await api.logout();user.value=null}
-watch(page,loadPage);watch(status,()=>page.value==='tasks'&&loadPage());onMounted(async()=>{try{user.value=await api.me();await loadPage()}catch{user.value=null}finally{authChecked.value=true}})
+async function run<T>(op: () => Promise<T>, target: { value: T }) {
+  loading.value = true;
+  error.value = "";
+  try {
+    target.value = await op();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "Terjadi kesalahan.";
+  } finally {
+    loading.value = false;
+  }
+}
+async function loadPage() {
+  if (!user.value) return;
+  if (page.value === "overview") await run(api.overview, overview);
+  if (page.value === "tasks") {
+    if (user.value.role === "admin" && !staff.value.length)
+      staff.value = await api.staff();
+    await Promise.all([
+      run(() => api.assignments(status.value, search.value), assignments),
+      run(() => api.submissions(), submissions),
+    ]);
+  }
+  if (page.value === "staff") await run(api.staff, staff);
+  if (page.value === "payrates") await run(api.payrates, payrates);
+  if (page.value === "deadlines") await run(api.deadlines, deadlines);
+  if (page.value === "recap") {
+    if (!staff.value.length) staff.value = await api.staff();
+    await Promise.all([
+      run(() => api.recap(period.value), recap),
+      run(() => api.invoices(period.value), invoices),
+    ]);
+  }
+  if (page.value === "audit") await run(api.audit, audit);
+}
+async function saveRate(item: { role: string; base_rate: number }) {
+  try {
+    loading.value = true;
+    await api.updatePayrate(item.role, item.base_rate);
+    success.value = `Rate ${item.role} tersimpan.`;
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "Gagal menyimpan.";
+  } finally {
+    loading.value = false;
+  }
+}
+async function createTask() {
+  if (!task.value.staff_id) return (error.value = "Pilih staf tujuan.");
+  try {
+    loading.value = true;
+    const result = await api.createAssignment({
+      ...task.value,
+      staff_id: task.value.staff_id,
+      deadline_at: task.value.deadline_at || null,
+    });
+    success.value = `Tugas #${result.id} dibuat${result.notified ? " dan staf sudah diberi notifikasi." : ", tetapi notifikasi Discord gagal."}`;
+    showTask.value = false;
+    task.value = {
+      manga: "",
+      chapter: "",
+      staff_id: "",
+      role: "TL",
+      final_rate: 3000,
+      deadline_at: "",
+    };
+    await loadPage();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "Gagal membuat tugas.";
+  } finally {
+    loading.value = false;
+  }
+}
+async function openTask(staffId?: string) {
+  error.value = "";
+  if (!staff.value.length) {
+    loading.value = true;
+    try {
+      staff.value = await api.staff();
+    } catch (e) {
+      error.value =
+        e instanceof Error ? e.message : "Gagal mengambil daftar staf.";
+    } finally {
+      loading.value = false;
+    }
+  }
+  if (staffId) task.value.staff_id = staffId;
+  if (!staff.value.length) {
+    error.value =
+      "Daftar staf kosong. Pastikan anggota memiliki role Staff atau Admin di Discord.";
+    return;
+  }
+  showTask.value = true;
+}
+async function downloadResult(item: Submission) {
+  try {
+    const result = await api.downloadSubmission(item.id);
+    window.open(result.download_url, "_blank", "noopener");
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "Download gagal.";
+  }
+}
+function selectImages() {
+  selectedImages.value = [];
+}
+async function submitUpload() {
+  error.value =
+    "Upload dashboard dinonaktifkan. Submit link Google Drive melalui Discord.";
+  uploadTask.value = null;
+}
+async function approveTask(item: Assignment) {
+  if (!confirm(`Setujui ${item.manga} chapter ${item.chapter}?`)) return;
+  try {
+    loading.value = true;
+    await api.approveAssignment(item.id);
+    success.value = `Tugas #${item.id} disetujui dan staff diberi tahu di tiket.`;
+    await loadPage();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "Approve gagal.";
+  } finally {
+    loading.value = false;
+  }
+}
+async function reviseTask(item: Assignment) {
+  const notes = prompt(
+    `Catatan revisi untuk ${item.manga} chapter ${item.chapter}:`,
+  )?.trim();
+  if (!notes) return;
+  try {
+    loading.value = true;
+    await api.reviseAssignment(item.id, notes);
+    success.value = `Revisi tugas #${item.id} dikirim ke tiket staff.`;
+    await loadPage();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "Revisi gagal.";
+  } finally {
+    loading.value = false;
+  }
+}
+async function createInvoice(item: Recap) {
+  try {
+    loading.value = true;
+    await api.createInvoice(item.staff_id, period.value);
+    success.value = `Invoice ${item.staff_name} berhasil diterbitkan.`;
+    await loadPage();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "Gagal membuat invoice.";
+  } finally {
+    loading.value = false;
+  }
+}
+async function payInvoice(item: Invoice) {
+  if (
+    !confirm(
+      `Tandai invoice ${item.invoice_number} sebesar ${money(item.total_amount)} sebagai dibayar?`,
+    )
+  )
+    return;
+  try {
+    loading.value = true;
+    await api.payInvoice(item.id);
+    success.value = "Pembayaran dikonfirmasi dan tugas ditandai paid.";
+    await loadPage();
+  } catch (e) {
+    error.value =
+      e instanceof Error ? e.message : "Gagal memproses pembayaran.";
+  } finally {
+    loading.value = false;
+  }
+}
+async function deleteInvoice(item: Invoice) {
+  if (
+    !confirm(
+      `Hapus invoice ${item.invoice_number}? Tugas tetap approved dan dapat dibuatkan invoice baru.`,
+    )
+  )
+    return;
+  try {
+    loading.value = true;
+    await api.deleteInvoice(item.id);
+    success.value = `Invoice ${item.invoice_number} berhasil dihapus.`;
+    await loadPage();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "Gagal menghapus invoice.";
+  } finally {
+    loading.value = false;
+  }
+}
+async function refreshInvoice(item: Invoice) {
+  if (
+    !confirm(
+      `Hitung ulang invoice ${item.invoice_number} dari tugas approved terbaru?`,
+    )
+  )
+    return;
+  try {
+    loading.value = true;
+    await api.refreshInvoice(item.id);
+    success.value = "Invoice diperbarui tanpa mengganti nomor.";
+    await loadPage();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "Gagal memperbarui invoice.";
+  } finally {
+    loading.value = false;
+  }
+}
+async function correctionInvoice(item: Invoice) {
+  if (
+    !confirm(
+      `Buat invoice koreksi untuk tugas terlambat setelah ${item.invoice_number}?`,
+    )
+  )
+    return;
+  try {
+    loading.value = true;
+    await api.correctionInvoice(item.id);
+    success.value = "Invoice koreksi berhasil dibuat.";
+    await loadPage();
+  } catch (e) {
+    error.value =
+      e instanceof Error ? e.message : "Gagal membuat invoice koreksi.";
+  } finally {
+    loading.value = false;
+  }
+}
+const safeHtml = (value: unknown) =>
+  String(value ?? "").replace(
+    /[&<>"']/g,
+    (char) =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#039;",
+      })[char]!,
+  );
+const invoiceDate = (value: string | null) =>
+  value
+    ? new Date(value).toLocaleDateString("id-ID", {
+        day: "2-digit",
+        month: "long",
+        year: "numeric",
+      })
+    : "—";
+async function printInvoice(item: Invoice) {
+  const w = window.open("", "_blank", "width=900,height=900");
+  if (!w) return;
+  w.document.write(
+    '<p style="font:15px Arial;padding:32px">Menyiapkan invoice…</p>',
+  );
+  try {
+    const detail = await api.invoice(item.id);
+    const rows = detail.items
+      .map(
+        (task, index) =>
+          `<tr><td>${index + 1}</td><td><b>${safeHtml(task.manga)}</b><small>Task #${task.assignment_id}</small></td><td>${safeHtml(task.chapter)}</td><td>${safeHtml(task.role)}</td><td>${invoiceDate(task.approved_at)}</td><td class="money">${money(task.amount)}</td></tr>`,
+      )
+      .join("");
+    w.document.open();
+    w.document.write(
+      `<html><head><title>${safeHtml(detail.invoice_number)}</title><style>@page{size:A4;margin:16mm}*{box-sizing:border-box}body{font:13px Arial,sans-serif;margin:0;color:#162033}.sheet{max-width:900px;margin:auto;padding:34px}.top{display:flex;justify-content:space-between;gap:24px;border-bottom:3px solid #6574f7;padding-bottom:22px}.brand h1{margin:0;font-size:29px;letter-spacing:1px}.brand small,.muted{color:#68748a}.number{text-align:right}.number strong{display:block;font-size:15px;margin-bottom:7px}.status{display:inline-block;padding:6px 10px;border-radius:20px;background:${detail.status === "paid" ? "#daf7e9" : "#fff1cf"};color:${detail.status === "paid" ? "#087443" : "#8a5b00"};font-weight:700}.info{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:28px 0}.card{padding:17px;border:1px solid #dde2eb;border-radius:10px}.card p{margin:7px 0}.card h3{margin:0 0 10px;font-size:12px;text-transform:uppercase;color:#68748a}table{width:100%;border-collapse:collapse;margin-top:12px}th{background:#f1f3f8;text-align:left;padding:11px 9px;font-size:11px;text-transform:uppercase;color:#5d687d}td{padding:12px 9px;border-bottom:1px solid #e4e8ef;vertical-align:top}td small{display:block;color:#8892a4;margin-top:4px}.money{text-align:right;white-space:nowrap}.summary{margin:24px 0 0 auto;width:310px}.summary div{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #e3e7ee}.summary .total{font-size:19px;font-weight:800;border-bottom:3px double #6574f7}.footer{margin-top:45px;padding-top:18px;border-top:1px solid #dde2eb;display:flex;justify-content:space-between;color:#778196;font-size:11px}@media print{.sheet{padding:0}}</style></head><body><main class="sheet"><header class="top"><div class="brand"><h1>RYUKOMIK</h1><small>Staff Payment Invoice · Scanlation Operations</small></div><div class="number"><strong>${safeHtml(detail.invoice_number)}</strong><span class="status">${detail.status === "paid" ? "LUNAS" : "MENUNGGU PEMBAYARAN"}</span></div></header><section class="info"><div class="card"><h3>Penerima</h3><p><b>${safeHtml(detail.staff_name)}</b></p><p class="muted">Discord ID ${detail.staff_id}</p></div><div class="card"><h3>Informasi Periode</h3><p>Periode: <b>${safeHtml(detail.period)}</b></p><p>Rentang kerja: <b>${invoiceDate(detail.work_started_at)} – ${invoiceDate(detail.work_ended_at)}</b></p><p>Diterbitkan: ${invoiceDate(detail.issued_at)}</p><p>Dibayar: ${invoiceDate(detail.paid_at)}</p></div></section><h3>Rincian Pekerjaan</h3><table><thead><tr><th>No.</th><th>Judul / Task</th><th>Chapter</th><th>Role</th><th>Disetujui</th><th class="money">Bayaran</th></tr></thead><tbody>${rows || '<tr><td colspan="6">Rincian tugas tidak tersedia.</td></tr>'}</tbody></table><section class="summary"><div><span>Jumlah pekerjaan</span><b>${detail.chapter_count} chapter</b></div><div class="total"><span>Total gaji</span><span>${money(detail.total_amount)}</span></div></section><footer class="footer"><span>Dokumen dibuat otomatis oleh Ryukomik Staff Management.</span><span>${safeHtml(detail.invoice_number)}</span></footer></main><script>window.onload=()=>window.print()<\/script></body></html>`,
+    );
+    w.document.close();
+  } catch (e) {
+    w.document.body.innerHTML = `<p style="font:15px Arial;padding:32px;color:#b42318">${safeHtml(e instanceof Error ? e.message : "Gagal membuat invoice.")}</p>`;
+  }
+}
+async function logout() {
+  await api.logout();
+  user.value = null;
+}
+watch(page, loadPage);
+watch(status, () => page.value === "tasks" && loadPage());
+onMounted(async () => {
+  try {
+    user.value = await api.me();
+    await loadPage();
+  } catch {
+    user.value = null;
+  } finally {
+    authChecked.value = true;
+  }
+});
 </script>
 
 <template>
-  <div v-if="!authChecked" class="center-screen"><i class="pi pi-spin pi-spinner"></i></div>
-  <main v-else-if="!user" class="login-page"><section class="login-card"><div class="brand-mark">R</div><p class="eyebrow">RYUKOMIK OPERATIONS</p><h1>Satu ruang kerja untuk<br><span>administrator Ryukomik.</span></h1><p class="login-copy">Kelola tugas, review hasil, gaji, dan invoice yang terhubung langsung dengan Discord.</p><a class="discord-login" href="/auth/login"><i class="pi pi-discord"></i> Masuk dengan Discord</a><p class="security-note"><i class="pi pi-lock"></i> Khusus Administrator Ryukomik</p></section></main>
-  <div v-else class="app-shell app-dark">
-    <aside class="sidebar"><div class="brand"><div class="brand-mark small">R</div><div><strong>Ryukomik</strong><span>Operations Center</span></div></div><nav><button v-for="item in navItems" :key="item.id" :class="{active:page===item.id}" @click="page=item.id as Page"><i :class="item.icon"></i><span>{{item.label}}</span></button></nav><div class="profile"><img v-if="avatar(user.id,user.avatar)" :src="avatar(user.id,user.avatar)"/><div v-else class="avatar">{{initials(user.username)}}</div><div><strong>{{user.username}}</strong><span>{{user.role==='admin'?'Administrator':'Staff'}}</span></div><button title="Keluar" @click="logout"><i class="pi pi-sign-out"></i></button></div></aside>
-    <section class="content"><header><div><p class="eyebrow">RYUKOMIK WORKSPACE</p><h2>{{navItems.find(i=>i.id===page)?.label}}</h2></div><div class="header-actions"><Button v-if="user.role==='admin'" label="Buat tugas" icon="pi pi-plus" @click="openTask()"/><div class="live"><span></span>Sistem aktif</div></div></header>
-      <div v-if="error" class="notice error"><i class="pi pi-exclamation-circle"></i>{{error}}<button @click="error=''">×</button></div><div v-if="success" class="notice success"><i class="pi pi-check-circle"></i>{{success}}<button @click="success=''">×</button></div>
-      <template v-if="page==='overview'"><div class="hero-card"><div><p>Selamat datang kembali,</p><h3>{{user.username}}</h3><span>{{user.role==='admin'?'Kelola tim, pekerjaan, dan pembayaran dari satu tempat.':'Semua pekerjaan dan penghasilanmu ada di sini.'}}</span></div><i class="pi pi-sparkles"></i></div><div class="stats-grid"><article><span class="stat-icon blue"><i class="pi pi-inbox"></i></span><div><small>Tersedia</small><strong>{{overview.counts.open||0}}</strong></div></article><article><span class="stat-icon amber"><i class="pi pi-hourglass"></i></span><div><small>Dikerjakan</small><strong>{{overview.counts.claimed||0}}</strong></div></article><article><span class="stat-icon violet"><i class="pi pi-eye"></i></span><div><small>Menunggu review</small><strong>{{overview.counts.submitted||0}}</strong></div></article><article><span class="stat-icon red"><i class="pi pi-clock"></i></span><div><small>Deadline dekat</small><strong>{{overview.urgent_deadlines}}</strong></div></article></div><div class="summary-grid"><article class="panel"><p class="eyebrow">NILAI PEKERJAAN</p><h3>{{money(overview.total_value)}}</h3><p>Total nilai tugas yang dapat Anda akses.</p></article><article class="panel next"><p class="eyebrow">AKSI CEPAT</p><h3>{{overview.counts.revision?'Ada revisi yang perlu ditangani':'Operasional tim dalam kondisi baik'}}</h3><div class="button-row"><Button label="Lihat tugas" icon="pi pi-arrow-right" @click="page='tasks'"/><Button v-if="user.role==='admin'" label="Assign baru" severity="secondary" icon="pi pi-plus" @click="openTask()"/></div></article></div></template>
-      <template v-if="page==='tasks'"><div class="toolbar"><span class="search"><i class="pi pi-search"></i><InputText v-model="search" placeholder="Cari manga atau chapter" @keyup.enter="loadPage"/></span><select v-model="status"><option value="">Semua status</option><option v-for="(label,key) in statusLabel" :value="key">{{label}}</option></select><select v-if="user.role==='admin'" v-model="staffFilter"><option value="">Semua staf</option><option v-for="s in staff" :value="String(s.id)">{{s.username}}</option></select><select v-model="groupBy"><option value="none">Tanpa grup</option><option value="staff">Grup per staf</option><option value="status">Grup per status</option></select><Button icon="pi pi-search" label="Cari" @click="loadPage"/></div><section v-for="group in groupedAssignments" :key="group.label" class="table-section"><div class="section-title"><div><span>{{group.label}}</span><small>{{group.items.length}} tugas</small></div></div><div class="table-card"><DataTable :value="group.items" :loading="loading" paginator :rows="10" responsiveLayout="scroll"><Column field="id" header="#" sortable/><Column header="Proyek"><template #body="{data}"><strong>{{data.manga}}</strong><small class="subline">Chapter {{data.chapter}}</small></template></Column><Column v-if="user.role==='admin'" header="Staff"><template #body="{data}"><div class="person"><img v-if="data.staff_avatar" :src="data.staff_avatar"/><span v-else class="mini-avatar">{{initials(data.staff_name)}}</span><span>{{data.staff_name}}</span></div></template></Column><Column field="role" header="Role"/><Column header="Status"><template #body="{data}"><Tag :value="statusLabel[data.status]||data.status" :severity="severity(data.status)"/></template></Column><Column header="Bayaran"><template #body="{data}">{{money(data.final_rate)}}</template></Column><Column header="Deadline"><template #body="{data}">{{data.deadline_at||'—'}}</template></Column><Column header="Hasil"><template #body="{data}"><Button v-if="submissionByTask.get(data.id)" label="Download" icon="pi pi-download" size="small" severity="secondary" @click="downloadResult(submissionByTask.get(data.id)!)"/><Button v-else-if="user.role==='staff'&&['claimed','revision'].includes(data.status)" label="Upload hasil" icon="pi pi-upload" size="small" @click="openUpload(data)"/><span v-else class="muted">Belum ada</span></template></Column></DataTable></div></section></template>
-      <template v-if="page==='staff'"><div class="people-grid"><article v-for="s in staff" :key="s.id" class="person-card"><div class="person-head"><img v-if="s.avatar" :src="s.avatar"/><span v-else class="large-avatar">{{initials(s.username)}}</span><div><h3>{{s.username}}</h3><small>{{s.active_count}} tugas aktif</small></div><Button icon="pi pi-plus" rounded text title="Beri tugas" @click="openTask(s.id)"/></div><div class="person-stats"><span><small>Total tugas</small><b>{{s.task_count}}</b></span><span><small>Belum dibayar</small><b>{{money(s.approved_amount)}}</b></span><span><small>Sudah dibayar</small><b>{{money(s.paid_amount)}}</b></span></div></article></div></template>
-      <template v-if="page==='payrates'"><div class="payrate-grid"><article v-for="item in payrates" :key="item.role" class="panel rate-card"><span>{{item.role}}</span><h3>{{item.role==='TL'?'Translator':item.role==='TS'?'Typesetter':'TL + TS'}}</h3><InputNumber v-model="item.base_rate" mode="currency" currency="IDR" locale="id-ID" :min="0"/><Button label="Simpan rate" icon="pi pi-check" :loading="loading" @click="saveRate(item)"/><small>Berlaku untuk tugas baru.</small></article></div></template>
-      <template v-if="page==='deadlines'"><div class="table-card"><DataTable :value="deadlines" :loading="loading"><Column field="deadline_at" header="Deadline" sortable/><Column field="manga" header="Manga"/><Column field="chapter" header="Chapter"/><Column field="staff_name" header="Staff"/><Column header="Status"><template #body="{data}"><Tag :value="statusLabel[data.status]" :severity="severity(data.status)"/></template></Column></DataTable></div></template>
-      <template v-if="page==='recap'"><div class="toolbar recap-toolbar"><label>Periode<input v-model="period" type="month"/></label><Button label="Tampilkan" icon="pi pi-filter" @click="loadPage"/></div><div class="salary-summary"><article><small>Total periode</small><strong>{{money(recapTotal)}}</strong></article><article><small>Menunggu pembayaran</small><strong>{{money(pendingTotal)}}</strong></article><article><small>Invoice diterbitkan</small><strong>{{invoices.length}}</strong></article></div><div class="recap-layout"><section><div class="section-title"><div><span>Rekap per staf</span><small>Dikelompokkan berdasarkan username Discord</small></div></div><div class="recap-list"><article v-for="r in recap" :key="r.staff_id"><div class="person"><img v-if="r.staff_avatar" :src="r.staff_avatar"/><span v-else class="mini-avatar">{{initials(r.staff_name)}}</span><div><b>{{r.staff_name}}</b><small>{{r.chapter_count}} chapter</small></div></div><div><small>Belum dibayar</small><b>{{money(r.pending_amount)}}</b></div><div><small>Total periode</small><b>{{money(r.total_amount)}}</b></div><Button label="Buat invoice" icon="pi pi-file" :disabled="!r.pending_amount" @click="createInvoice(r)"/></article><p v-if="!recap.length" class="empty">Belum ada tugas approved/paid pada periode ini.</p></div></section><section><div class="section-title"><div><span>Invoice</span><small>Riwayat pembayaran</small></div></div><div class="invoice-list"><article v-for="inv in invoices" :key="inv.id"><div><Tag :value="inv.status==='paid'?'Lunas':'Terbit'" :severity="inv.status==='paid'?'success':'warn'"/><h4>{{inv.invoice_number}}</h4><p>{{inv.staff_name}} · {{inv.chapter_count}} chapter</p></div><strong>{{money(inv.total_amount)}}</strong><div class="invoice-actions"><Button icon="pi pi-print" text rounded title="Cetak" @click="printInvoice(inv)"/><Button v-if="inv.status!=='paid'" icon="pi pi-trash" severity="danger" text rounded title="Hapus invoice" @click="deleteInvoice(inv)"/><Button v-if="inv.status!=='paid'" label="Bayar" size="small" @click="payInvoice(inv)"/></div></article><p v-if="!invoices.length" class="empty">Belum ada invoice untuk periode ini.</p></div></section></div></template>
-      <template v-if="page==='audit'"><div class="table-card"><DataTable :value="audit" :loading="loading" paginator :rows="15"><Column field="created_at" header="Waktu"/><Column field="actor_id" header="Pelaku"/><Column field="action" header="Aktivitas"/><Column field="target_type" header="Target"/><Column field="target_id" header="ID"/></DataTable></div></template>
+  <div v-if="!authChecked" class="center-screen">
+    <i class="pi pi-spin pi-spinner"></i>
+  </div>
+  <main v-else-if="!user" class="login-page">
+    <section class="login-card">
+      <div class="brand-mark">R</div>
+      <p class="eyebrow">RYUKOMIK OPERATIONS</p>
+      <h1>Satu ruang kerja untuk<br /><span>administrator Ryukomik.</span></h1>
+      <p class="login-copy">
+        Kelola tugas, review hasil, gaji, dan invoice yang terhubung langsung
+        dengan Discord.
+      </p>
+      <a class="discord-login" href="/auth/login"
+        ><i class="pi pi-discord"></i> Masuk dengan Discord</a
+      >
+      <p class="security-note">
+        <i class="pi pi-lock"></i> Khusus Administrator Ryukomik
+      </p>
     </section>
-    <div v-if="showTask" class="modal-backdrop" @click.self="showTask=false"><form class="modal-card" @submit.prevent="createTask"><div class="modal-head"><div><p class="eyebrow">ASSIGNMENT</p><h3>Buat tugas baru</h3></div><button type="button" @click="showTask=false">×</button></div><div class="form-grid"><label class="wide">Judul manga<InputText v-model="task.manga" required placeholder="Contoh: Let's Do It After Work"/></label><label>Chapter<InputText v-model="task.chapter" required placeholder="20"/></label><label>Role<select v-model="task.role"><option>TL</option><option>TS</option><option>TL+TS</option></select></label><label class="wide">Staff tujuan<select v-model="task.staff_id" required><option value="" disabled>Pilih staf Discord</option><option v-for="s in staff" :value="String(s.id)">{{s.username}}</option></select></label><label>Bayaran<InputNumber v-model="task.final_rate" mode="currency" currency="IDR" locale="id-ID" :min="0"/></label><label>Deadline<input v-model="task.deadline_at" type="date"/></label></div><div class="modal-actions"><Button type="button" label="Batal" severity="secondary" @click="showTask=false"/><Button type="submit" label="Kirim tugas" icon="pi pi-send" :loading="loading"/></div></form></div>
-    <div v-if="uploadTask" class="modal-backdrop" @click.self="uploadTask=null"><form class="modal-card upload-card" @submit.prevent="submitUpload"><div class="modal-head"><div><p class="eyebrow">SUBMIT HASIL GAMBAR</p><h3>{{uploadTask.manga}} · Ch. {{uploadTask.chapter}}</h3></div><button type="button" @click="uploadTask=null">×</button></div><div class="upload-drop"><i class="pi pi-images"></i><strong>Pilih semua gambar chapter</strong><p>Pilih sekaligus dari halaman pertama sampai terakhir. Dashboard mengurutkan, mengganti nama menjadi 001, 002, dst., lalu membuat ZIP otomatis.</p><input type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple required @change="selectImages"/><span v-if="selectedImages.length"><b>{{selectedImages.length}} gambar</b> · {{(selectedImages.reduce((sum,file)=>sum+file.size,0)/1024/1024).toFixed(1)}} MB<br>{{selectedImages[0]?.name}} → {{selectedImages[selectedImages.length-1]?.name}}</span></div><div v-if="uploadProgress" class="progress"><span :style="{width:`${uploadProgress}%`}"></span><b>{{uploadStage}} · {{uploadProgress}}%</b></div><div class="upload-tip"><i class="pi pi-info-circle"></i><span>Pastikan nama gambar memiliki nomor halaman. Urutan natural digunakan sehingga `10.jpg` berada setelah `9.jpg`, bukan setelah `1.jpg`.</span></div><div class="modal-actions"><Button type="button" label="Batal" severity="secondary" @click="uploadTask=null"/><Button type="submit" label="Upload gambar & kirim review" icon="pi pi-send" :loading="loading" :disabled="!selectedImages.length"/></div></form></div>
+  </main>
+  <div v-else class="app-shell app-dark">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark small">R</div>
+        <div><strong>Ryukomik</strong><span>Operations Center</span></div>
+      </div>
+      <nav>
+        <button
+          v-for="item in navItems"
+          :key="item.id"
+          :class="{ active: page === item.id }"
+          @click="page = item.id as Page"
+        >
+          <i :class="item.icon"></i><span>{{ item.label }}</span>
+        </button>
+      </nav>
+      <div class="profile">
+        <img
+          v-if="avatar(user.id, user.avatar)"
+          :src="avatar(user.id, user.avatar)"
+        />
+        <div v-else class="avatar">{{ initials(user.username) }}</div>
+        <div>
+          <strong>{{ user.username }}</strong
+          ><span>{{ user.role === "admin" ? "Administrator" : "Staff" }}</span>
+        </div>
+        <button title="Keluar" @click="logout">
+          <i class="pi pi-sign-out"></i>
+        </button>
+      </div>
+    </aside>
+    <section class="content">
+      <header>
+        <div>
+          <p class="eyebrow">RYUKOMIK WORKSPACE</p>
+          <h2>{{ navItems.find((i) => i.id === page)?.label }}</h2>
+        </div>
+        <div class="header-actions">
+          <Button
+            v-if="user.role === 'admin'"
+            label="Buat tugas"
+            icon="pi pi-plus"
+            @click="openTask()"
+          />
+          <div class="live"><span></span>Sistem aktif</div>
+        </div>
+      </header>
+      <div v-if="error" class="notice error">
+        <i class="pi pi-exclamation-circle"></i>{{ error
+        }}<button @click="error = ''">×</button>
+      </div>
+      <div v-if="success" class="notice success">
+        <i class="pi pi-check-circle"></i>{{ success
+        }}<button @click="success = ''">×</button>
+      </div>
+      <template v-if="page === 'overview'"
+        ><div class="hero-card">
+          <div>
+            <p>Selamat datang kembali,</p>
+            <h3>{{ user.username }}</h3>
+            <span>{{
+              user.role === "admin"
+                ? "Kelola tim, pekerjaan, dan pembayaran dari satu tempat."
+                : "Semua pekerjaan dan penghasilanmu ada di sini."
+            }}</span>
+          </div>
+          <i class="pi pi-sparkles"></i>
+        </div>
+        <div class="stats-grid">
+          <article>
+            <span class="stat-icon blue"><i class="pi pi-inbox"></i></span>
+            <div>
+              <small>Tersedia</small
+              ><strong>{{ overview.counts.open || 0 }}</strong>
+            </div>
+          </article>
+          <article>
+            <span class="stat-icon amber"><i class="pi pi-hourglass"></i></span>
+            <div>
+              <small>Dikerjakan</small
+              ><strong>{{ overview.counts.claimed || 0 }}</strong>
+            </div>
+          </article>
+          <article>
+            <span class="stat-icon violet"><i class="pi pi-eye"></i></span>
+            <div>
+              <small>Menunggu review</small
+              ><strong>{{ overview.counts.submitted || 0 }}</strong>
+            </div>
+          </article>
+          <article>
+            <span class="stat-icon red"><i class="pi pi-clock"></i></span>
+            <div>
+              <small>Deadline dekat</small
+              ><strong>{{ overview.urgent_deadlines }}</strong>
+            </div>
+          </article>
+        </div>
+        <div class="summary-grid">
+          <article class="panel">
+            <p class="eyebrow">NILAI PEKERJAAN</p>
+            <h3>{{ money(overview.total_value) }}</h3>
+            <p>Total nilai tugas yang dapat Anda akses.</p>
+          </article>
+          <article class="panel next">
+            <p class="eyebrow">AKSI CEPAT</p>
+            <h3>
+              {{
+                overview.counts.revision
+                  ? "Ada revisi yang perlu ditangani"
+                  : "Operasional tim dalam kondisi baik"
+              }}
+            </h3>
+            <div class="button-row">
+              <Button
+                label="Lihat tugas"
+                icon="pi pi-arrow-right"
+                @click="page = 'tasks'"
+              /><Button
+                v-if="user.role === 'admin'"
+                label="Assign baru"
+                severity="secondary"
+                icon="pi pi-plus"
+                @click="openTask()"
+              />
+            </div>
+          </article></div
+      ></template>
+      <template v-if="page === 'tasks'"
+        ><div class="toolbar">
+          <span class="search"
+            ><i class="pi pi-search"></i
+            ><InputText
+              v-model="search"
+              placeholder="Cari manga atau chapter"
+              @keyup.enter="loadPage" /></span
+          ><select v-model="status">
+            <option value="">Semua status</option>
+            <option v-for="(label, key) in statusLabel" :value="key">
+              {{ label }}
+            </option></select
+          ><select v-if="user.role === 'admin'" v-model="staffFilter">
+            <option value="">Semua staf</option>
+            <option v-for="s in staff" :value="String(s.id)">
+              {{ s.username }}
+            </option></select
+          ><select v-model="groupBy">
+            <option value="none">Tanpa grup</option>
+            <option value="staff">Grup per staf</option>
+            <option value="status">Grup per status</option></select
+          ><Button icon="pi pi-search" label="Cari" @click="loadPage" />
+        </div>
+        <section
+          v-for="group in groupedAssignments"
+          :key="group.label"
+          class="table-section"
+        >
+          <div class="section-title">
+            <div>
+              <span>{{ group.label }}</span
+              ><small>{{ group.items.length }} tugas</small>
+            </div>
+          </div>
+          <div class="table-card">
+            <DataTable
+              :value="group.items"
+              :loading="loading"
+              paginator
+              :rows="10"
+              responsiveLayout="scroll"
+              ><Column field="id" header="#" sortable /><Column header="Proyek"
+                ><template #body="{ data }"
+                  ><strong>{{ data.manga }}</strong
+                  ><small class="subline"
+                    >Chapter {{ data.chapter }}</small
+                  ></template
+                ></Column
+              ><Column v-if="user.role === 'admin'" header="Staff"
+                ><template #body="{ data }"
+                  ><div class="person">
+                    <img
+                      v-if="data.staff_avatar"
+                      :src="data.staff_avatar"
+                    /><span v-else class="mini-avatar">{{
+                      initials(data.staff_name)
+                    }}</span
+                    ><span>{{ data.staff_name }}</span>
+                  </div></template
+                ></Column
+              ><Column field="role" header="Role" /><Column header="Status"
+                ><template #body="{ data }"
+                  ><Tag
+                    :value="statusLabel[data.status] || data.status"
+                    :severity="severity(data.status)" /></template></Column
+              ><Column header="Bayaran"
+                ><template #body="{ data }">{{
+                  money(data.final_rate)
+                }}</template></Column
+              ><Column header="Deadline"
+                ><template #body="{ data }">{{
+                  data.deadline_at || "—"
+                }}</template></Column
+              ><Column header="Hasil / Review"
+                ><template #body="{ data }"
+                  ><div class="button-row">
+                    <a
+                      v-if="data.gdrive_link"
+                      :href="data.gdrive_link"
+                      target="_blank"
+                      rel="noopener"
+                      class="p-button p-button-sm p-button-secondary"
+                      >Buka Drive</a
+                    >
+                    <Button
+                      v-if="submissionByTask.get(data.id)"
+                      label="Arsip R2"
+                      icon="pi pi-download"
+                      size="small"
+                      severity="secondary"
+                      @click="downloadResult(submissionByTask.get(data.id)!)"
+                    />
+                    <Button
+                      v-if="data.status === 'submitted'"
+                      label="Setujui"
+                      icon="pi pi-check"
+                      size="small"
+                      @click="approveTask(data)"
+                    />
+                    <Button
+                      v-if="data.status === 'submitted'"
+                      label="Revisi"
+                      icon="pi pi-refresh"
+                      size="small"
+                      severity="danger"
+                      @click="reviseTask(data)"
+                    />
+                    <span
+                      v-if="
+                        !data.gdrive_link &&
+                        !submissionByTask.get(data.id) &&
+                        data.status !== 'submitted'
+                      "
+                      class="muted"
+                      >Belum ada</span
+                    >
+                  </div></template
+                ></Column
+              ></DataTable
+            >
+          </div>
+        </section></template
+      >
+      <template v-if="page === 'staff'"
+        ><div class="people-grid">
+          <article v-for="s in staff" :key="s.id" class="person-card">
+            <div class="person-head">
+              <img v-if="s.avatar" :src="s.avatar" /><span
+                v-else
+                class="large-avatar"
+                >{{ initials(s.username) }}</span
+              >
+              <div>
+                <h3>{{ s.username }}</h3>
+                <small>{{ s.active_count }} tugas aktif</small>
+              </div>
+              <Button
+                icon="pi pi-plus"
+                rounded
+                text
+                title="Beri tugas"
+                @click="openTask(s.id)"
+              />
+            </div>
+            <div class="person-stats">
+              <span
+                ><small>Total tugas</small><b>{{ s.task_count }}</b></span
+              ><span
+                ><small>Belum dibayar</small
+                ><b>{{ money(s.approved_amount) }}</b></span
+              ><span
+                ><small>Sudah dibayar</small
+                ><b>{{ money(s.paid_amount) }}</b></span
+              >
+            </div>
+          </article>
+        </div></template
+      >
+      <template v-if="page === 'payrates'"
+        ><div class="payrate-grid">
+          <article
+            v-for="item in payrates"
+            :key="item.role"
+            class="panel rate-card"
+          >
+            <span>{{ item.role }}</span>
+            <h3>
+              {{
+                item.role === "TL"
+                  ? "Translator"
+                  : item.role === "TS"
+                    ? "Typesetter"
+                    : "TL + TS"
+              }}
+            </h3>
+            <InputNumber
+              v-model="item.base_rate"
+              mode="currency"
+              currency="IDR"
+              locale="id-ID"
+              :min="0"
+            /><Button
+              label="Simpan rate"
+              icon="pi pi-check"
+              :loading="loading"
+              @click="saveRate(item)"
+            /><small>Berlaku untuk tugas baru.</small>
+          </article>
+        </div></template
+      >
+      <template v-if="page === 'deadlines'"
+        ><div class="table-card">
+          <DataTable :value="deadlines" :loading="loading"
+            ><Column field="deadline_at" header="Deadline" sortable /><Column
+              field="manga"
+              header="Manga" /><Column
+              field="chapter"
+              header="Chapter" /><Column
+              field="staff_name"
+              header="Staff" /><Column header="Status"
+              ><template #body="{ data }"
+                ><Tag
+                  :value="statusLabel[data.status]"
+                  :severity="severity(data.status)" /></template></Column
+          ></DataTable></div
+      ></template>
+      <template v-if="page === 'recap'"
+        ><div class="toolbar recap-toolbar">
+          <label>Periode<input v-model="period" type="month" /></label
+          ><Button label="Tampilkan" icon="pi pi-filter" @click="loadPage" />
+        </div>
+        <div class="salary-summary">
+          <article>
+            <small>Total periode</small><strong>{{ money(recapTotal) }}</strong>
+          </article>
+          <article>
+            <small>Menunggu pembayaran</small
+            ><strong>{{ money(pendingTotal) }}</strong>
+          </article>
+          <article>
+            <small>Invoice diterbitkan</small
+            ><strong>{{ invoices.length }}</strong>
+          </article>
+        </div>
+        <div class="recap-layout">
+          <section>
+            <div class="section-title">
+              <div>
+                <span>Rekap per staf</span
+                ><small>Dikelompokkan berdasarkan username Discord</small>
+              </div>
+            </div>
+            <div class="recap-list">
+              <article v-for="r in recap" :key="r.staff_id">
+                <div class="person">
+                  <img v-if="r.staff_avatar" :src="r.staff_avatar" /><span
+                    v-else
+                    class="mini-avatar"
+                    >{{ initials(r.staff_name) }}</span
+                  >
+                  <div>
+                    <b>{{ r.staff_name }}</b
+                    ><small>{{ r.chapter_count }} chapter</small>
+                  </div>
+                </div>
+                <div>
+                  <small>Belum dibayar</small
+                  ><b>{{ money(r.pending_amount) }}</b>
+                </div>
+                <div>
+                  <small>Total periode</small><b>{{ money(r.total_amount) }}</b>
+                </div>
+                <Button
+                  label="Buat invoice"
+                  icon="pi pi-file"
+                  :disabled="!r.pending_amount"
+                  @click="createInvoice(r)"
+                />
+              </article>
+              <p v-if="!recap.length" class="empty">
+                Belum ada tugas approved/paid pada periode ini.
+              </p>
+            </div>
+          </section>
+          <section>
+            <div class="section-title">
+              <div><span>Invoice</span><small>Riwayat pembayaran</small></div>
+            </div>
+            <div class="invoice-list">
+              <article v-for="inv in invoices" :key="inv.id">
+                <div>
+                  <Tag
+                    :value="inv.status === 'paid' ? 'Lunas' : 'Terbit'"
+                    :severity="inv.status === 'paid' ? 'success' : 'warn'"
+                  />
+                  <h4>{{ inv.invoice_number }}</h4>
+                  <p>{{ inv.staff_name }} · {{ inv.chapter_count }} chapter</p>
+                </div>
+                <strong>{{ money(inv.total_amount) }}</strong>
+                <div class="invoice-actions">
+                  <Button
+                    icon="pi pi-print"
+                    text
+                    rounded
+                    title="Cetak"
+                    @click="printInvoice(inv)"
+                  /><Button
+                    v-if="inv.status === 'issued'"
+                    icon="pi pi-sync"
+                    text
+                    rounded
+                    title="Hitung ulang"
+                    @click="refreshInvoice(inv)"
+                  /><Button
+                    v-if="inv.status === 'issued'"
+                    icon="pi pi-trash"
+                    severity="danger"
+                    text
+                    rounded
+                    title="Hapus invoice"
+                    @click="deleteInvoice(inv)"
+                  /><Button
+                    v-if="inv.status === 'issued'"
+                    label="Bayar"
+                    size="small"
+                    @click="payInvoice(inv)"
+                  /><Button
+                    v-if="inv.status === 'paid'"
+                    label="Koreksi"
+                    severity="secondary"
+                    size="small"
+                    @click="correctionInvoice(inv)"
+                  />
+                </div>
+              </article>
+              <p v-if="!invoices.length" class="empty">
+                Belum ada invoice untuk periode ini.
+              </p>
+            </div>
+          </section>
+        </div></template
+      >
+      <template v-if="page === 'audit'"
+        ><div class="table-card">
+          <DataTable :value="audit" :loading="loading" paginator :rows="15"
+            ><Column field="created_at" header="Waktu" /><Column
+              field="actor_id"
+              header="Pelaku" /><Column
+              field="action"
+              header="Aktivitas" /><Column
+              field="target_type"
+              header="Target" /><Column field="target_id" header="ID"
+          /></DataTable></div
+      ></template>
+    </section>
+    <div v-if="showTask" class="modal-backdrop" @click.self="showTask = false">
+      <form class="modal-card" @submit.prevent="createTask">
+        <div class="modal-head">
+          <div>
+            <p class="eyebrow">ASSIGNMENT</p>
+            <h3>Buat tugas baru</h3>
+          </div>
+          <button type="button" @click="showTask = false">×</button>
+        </div>
+        <div class="form-grid">
+          <label class="wide"
+            >Judul manga<InputText
+              v-model="task.manga"
+              required
+              placeholder="Contoh: Let's Do It After Work" /></label
+          ><label
+            >Chapter<InputText
+              v-model="task.chapter"
+              required
+              placeholder="20" /></label
+          ><label
+            >Role<select v-model="task.role">
+              <option>TL</option>
+              <option>TS</option>
+              <option>TL+TS</option>
+            </select></label
+          ><label class="wide"
+            >Staff tujuan<select v-model="task.staff_id" required>
+              <option value="" disabled>Pilih staf Discord</option>
+              <option v-for="s in staff" :value="String(s.id)">
+                {{ s.username }}
+              </option>
+            </select></label
+          ><label
+            >Bayaran<InputNumber
+              v-model="task.final_rate"
+              mode="currency"
+              currency="IDR"
+              locale="id-ID"
+              :min="0" /></label
+          ><label
+            >Deadline<input v-model="task.deadline_at" type="date"
+          /></label>
+        </div>
+        <div class="modal-actions">
+          <Button
+            type="button"
+            label="Batal"
+            severity="secondary"
+            @click="showTask = false"
+          /><Button
+            type="submit"
+            label="Kirim tugas"
+            icon="pi pi-send"
+            :loading="loading"
+          />
+        </div>
+      </form>
+    </div>
+    <div
+      v-if="uploadTask"
+      class="modal-backdrop"
+      @click.self="uploadTask = null"
+    >
+      <form class="modal-card upload-card" @submit.prevent="submitUpload">
+        <div class="modal-head">
+          <div>
+            <p class="eyebrow">SUBMIT HASIL GAMBAR</p>
+            <h3>{{ uploadTask.manga }} · Ch. {{ uploadTask.chapter }}</h3>
+          </div>
+          <button type="button" @click="uploadTask = null">×</button>
+        </div>
+        <div class="upload-drop">
+          <i class="pi pi-images"></i
+          ><strong>Pilih semua gambar chapter</strong>
+          <p>
+            Pilih sekaligus dari halaman pertama sampai terakhir. Dashboard
+            mengurutkan, mengganti nama menjadi 001, 002, dst., lalu membuat ZIP
+            otomatis.
+          </p>
+          <input
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            multiple
+            required
+            @change="selectImages"
+          /><span v-if="selectedImages.length"
+            ><b>{{ selectedImages.length }} gambar</b> ·
+            {{
+              (
+                selectedImages.reduce((sum, file) => sum + file.size, 0) /
+                1024 /
+                1024
+              ).toFixed(1)
+            }}
+            MB<br />{{ selectedImages[0]?.name }} →
+            {{ selectedImages[selectedImages.length - 1]?.name }}</span
+          >
+        </div>
+        <div v-if="uploadProgress" class="progress">
+          <span :style="{ width: `${uploadProgress}%` }"></span
+          ><b>{{ uploadStage }} · {{ uploadProgress }}%</b>
+        </div>
+        <div class="upload-tip">
+          <i class="pi pi-info-circle"></i
+          ><span
+            >Pastikan nama gambar memiliki nomor halaman. Urutan natural
+            digunakan sehingga `10.jpg` berada setelah `9.jpg`, bukan setelah
+            `1.jpg`.</span
+          >
+        </div>
+        <div class="modal-actions">
+          <Button
+            type="button"
+            label="Batal"
+            severity="secondary"
+            @click="uploadTask = null"
+          /><Button
+            type="submit"
+            label="Upload gambar & kirim review"
+            icon="pi pi-send"
+            :loading="loading"
+            :disabled="!selectedImages.length"
+          />
+        </div>
+      </form>
+    </div>
   </div>
 </template>

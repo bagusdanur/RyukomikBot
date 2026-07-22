@@ -5,15 +5,20 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Literal
 import secrets
+import time
+from collections import defaultdict, deque
 
 import aiohttp
 import aiosqlite
-import boto3
+try:
+    import boto3
+except ImportError:  # Legacy R2 downloads are optional in local/test environments.
+    boto3 = None
 from authlib.integrations.starlette_client import OAuth
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -49,6 +54,7 @@ async def dashboard_db():
 async def setup_dashboard_tables():
     connection = await dashboard_db()
     try:
+        await connection.execute("PRAGMA foreign_keys=OFF")
         await connection.execute("""
             CREATE TABLE IF NOT EXISTS dashboard_audit_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -73,7 +79,12 @@ async def setup_dashboard_tables():
                 issued_by INTEGER NOT NULL,
                 issued_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 paid_at DATETIME,
-                UNIQUE(staff_id, period)
+                invoice_type TEXT NOT NULL DEFAULT 'standard',
+                parent_invoice_id INTEGER,
+                revised_at DATETIME,
+                revised_by INTEGER,
+                voided_at DATETIME,
+                voided_by INTEGER
             )
         """)
         await connection.execute("""
@@ -114,7 +125,55 @@ async def setup_dashboard_tables():
                 FOREIGN KEY(assignment_id) REFERENCES assignments(id)
             )
         """)
+        await connection.execute("""
+            CREATE TABLE IF NOT EXISTS dashboard_schema_migrations (
+                version INTEGER PRIMARY KEY, applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        invoice_sql_row = await (await connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='dashboard_invoices'"
+        )).fetchone()
+        if invoice_sql_row and "UNIQUE(staff_id, period)" in (invoice_sql_row["sql"] or ""):
+            await connection.executescript("""
+                CREATE TABLE dashboard_invoices_v2 (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, invoice_number TEXT NOT NULL UNIQUE,
+                    staff_id INTEGER NOT NULL, period TEXT NOT NULL, chapter_count INTEGER NOT NULL,
+                    total_amount INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'issued', issued_by INTEGER NOT NULL,
+                    issued_at DATETIME DEFAULT CURRENT_TIMESTAMP, paid_at DATETIME,
+                    invoice_type TEXT NOT NULL DEFAULT 'standard', parent_invoice_id INTEGER,
+                    revised_at DATETIME, revised_by INTEGER, voided_at DATETIME, voided_by INTEGER
+                );
+                INSERT INTO dashboard_invoices_v2
+                    (id,invoice_number,staff_id,period,chapter_count,total_amount,status,issued_by,issued_at,paid_at)
+                SELECT id,invoice_number,staff_id,period,chapter_count,total_amount,status,issued_by,issued_at,paid_at
+                FROM dashboard_invoices;
+                DROP TABLE dashboard_invoices;
+                ALTER TABLE dashboard_invoices_v2 RENAME TO dashboard_invoices;
+            """)
+        columns = {row["name"] for row in await (await connection.execute("PRAGMA table_info(dashboard_invoices)")).fetchall()}
+        for name, definition in (
+            ("invoice_type", "TEXT NOT NULL DEFAULT 'standard'"),
+            ("parent_invoice_id", "INTEGER"),
+            ("revised_at", "DATETIME"), ("revised_by", "INTEGER"),
+            ("voided_at", "DATETIME"), ("voided_by", "INTEGER"),
+        ):
+            if name not in columns:
+                await connection.execute(f"ALTER TABLE dashboard_invoices ADD COLUMN {name} {definition}")
+        await connection.execute("""
+            CREATE TABLE IF NOT EXISTS dashboard_assignment_billing (
+                assignment_id INTEGER PRIMARY KEY,
+                invoice_id INTEGER NOT NULL,
+                FOREIGN KEY(invoice_id) REFERENCES dashboard_invoices(id)
+            )
+        """)
+        await connection.execute("""
+            INSERT OR IGNORE INTO dashboard_assignment_billing(assignment_id, invoice_id)
+            SELECT i.assignment_id, i.invoice_id FROM dashboard_invoice_items i
+            JOIN dashboard_invoices v ON v.id=i.invoice_id WHERE v.status!='void'
+        """)
+        await connection.execute("INSERT OR IGNORE INTO dashboard_schema_migrations(version) VALUES(2)")
         await connection.commit()
+        await connection.execute("PRAGMA foreign_keys=ON")
     finally:
         await connection.close()
 
@@ -138,8 +197,43 @@ app.add_middleware(
     allow_origins=[DASHBOARD_ORIGIN],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE"],
-    allow_headers=["Content-Type"],
+    allow_headers=["Content-Type", "X-CSRF-Token"],
 )
+
+_rate_windows: dict[str, deque] = defaultdict(deque)
+MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+@app.middleware("http")
+async def security_middleware(request: Request, call_next):
+    if int(request.headers.get("content-length", "0") or 0) > 2 * 1024 * 1024:
+        return JSONResponse({"detail": "Ukuran request melebihi batas 2 MB."}, status_code=413)
+    if request.method in MUTATING_METHODS:
+        origin = request.headers.get("origin")
+        if origin and origin.rstrip("/") != DASHBOARD_ORIGIN:
+            return JSONResponse({"detail": "Origin request tidak diizinkan."}, status_code=403)
+    category = "login" if request.url.path.startswith("/auth/") else "mutation" if request.method in MUTATING_METHODS else "read"
+    limit = 10 if category == "login" else 60 if category == "mutation" else 300
+    key = f"{request.client.host if request.client else 'unknown'}:{category}"
+    now = time.monotonic()
+    window = _rate_windows[key]
+    while window and window[0] < now - 60:
+        window.popleft()
+    if len(window) >= limit:
+        return JSONResponse({"detail": "Terlalu banyak request. Coba lagi sebentar."}, status_code=429)
+    window.append(now)
+    try:
+        response = await call_next(request)
+    except HTTPException:
+        raise
+    except Exception:
+        return JSONResponse({"detail": "Terjadi kesalahan internal."}, status_code=500)
+    response.headers.update({
+        "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY",
+        "Referrer-Policy": "same-origin", "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+        "Content-Security-Policy": "default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; script-src 'self'",
+    })
+    return response
 
 oauth = OAuth()
 if DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET:
@@ -177,12 +271,23 @@ def role_from_member(member: dict):
 
 async def current_user(request: Request):
     if DEV_BYPASS:
-        return {"id": 1, "username": "Development Admin", "avatar": None, "role": "admin"}
+        request.session.setdefault("csrf_token", secrets.token_urlsafe(32))
+        user = {"id": 1, "username": "Development Admin", "avatar": None, "role": "admin"}
+        if request.method in MUTATING_METHODS and not secrets.compare_digest(
+            request.headers.get("x-csrf-token", ""), request.session["csrf_token"]
+        ):
+            raise HTTPException(status_code=403, detail="Token keamanan tidak valid. Muat ulang dashboard.")
+        return user
     user = request.session.get("user")
     if not user:
         raise HTTPException(status_code=401, detail="Silakan masuk dengan Discord.")
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Dashboard hanya tersedia untuk administrator.")
+    request.session.setdefault("csrf_token", secrets.token_urlsafe(32))
+    if request.method in MUTATING_METHODS and not secrets.compare_digest(
+        request.headers.get("x-csrf-token", ""), request.session["csrf_token"]
+    ):
+        raise HTTPException(status_code=403, detail="Token keamanan tidak valid. Muat ulang dashboard.")
     return user
 
 
@@ -226,6 +331,10 @@ class InvoiceCreate(BaseModel):
     period: str = Field(pattern=r"^\d{4}-\d{2}$")
 
 
+class RevisionRequest(BaseModel):
+    notes: str = Field(min_length=3, max_length=1500)
+
+
 class UploadRequest(BaseModel):
     assignment_id: int
     filename: str = Field(min_length=1, max_length=180)
@@ -236,6 +345,8 @@ class UploadRequest(BaseModel):
 def r2_client():
     if not all((R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME)):
         raise HTTPException(status_code=503, detail="Penyimpanan R2 belum dikonfigurasi.")
+    if boto3 is None:
+        raise HTTPException(status_code=503, detail="Dukungan arsip R2 tidak terpasang.")
     return boto3.client("s3", endpoint_url=R2_ENDPOINT, aws_access_key_id=R2_ACCESS_KEY_ID,
                         aws_secret_access_key=R2_SECRET_ACCESS_KEY, region_name="auto")
 
@@ -400,9 +511,47 @@ async def send_submission_notice(upload, username: str):
     return bool(await discord_api("POST", f"/channels/{STAFF_LOG_CHANNEL_ID}/messages", message))
 
 
+async def send_ticket_review_notice(assignment: dict, approved: bool, notes: str | None = None):
+    """Notify only the private staff ticket; never DM review results."""
+    channel_id = assignment.get("ticket_channel_id")
+    if DEV_BYPASS:
+        return True
+    if not channel_id:
+        return False
+    title = "✅ Tugas Selesai" if approved else "🔄 Tugas Perlu Revisi"
+    description = (f"**{assignment['manga']}** chapter **{assignment['chapter']}** " +
+                   ("telah disetujui. Bayaran masuk rekap gaji." if approved else "perlu diperbaiki sebelum dikirim ulang."))
+    fields = [{"name": "Status", "value": "Approved" if approved else "Revision", "inline": True}]
+    if notes:
+        fields.append({"name": "Catatan Admin", "value": notes[:1024], "inline": False})
+    return bool(await discord_api("POST", f"/channels/{channel_id}/messages", {
+        "content": f"<@{assignment['staff_id']}>",
+        "embeds": [{"title": title, "description": description, "color": 5763719 if approved else 16753920, "fields": fields}],
+    }))
+
+
 @app.get("/health")
 async def health():
-    return {"status": "ok", "time": datetime.now().isoformat()}
+    database_status = "ok"
+    try:
+        connection = await dashboard_db()
+        await connection.execute("SELECT 1")
+        await connection.close()
+    except Exception:
+        database_status = "error"
+    discord_status = "not_configured"
+    if TOKEN:
+        try:
+            result = await discord_api("GET", "/users/@me")
+            discord_status = "ok" if result and result.get("id") else "error"
+        except Exception:
+            discord_status = "error"
+    return {
+        "status": "ok" if database_status == "ok" else "degraded",
+        "time": datetime.now().isoformat(),
+        "components": {"database": database_status, "discord": discord_status,
+                       "oauth": "ok" if DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET else "not_configured"},
+    }
 
 
 @app.get("/auth/login")
@@ -443,13 +592,16 @@ async def auth_callback(request: Request):
 
 @app.post("/auth/logout")
 async def logout(request: Request):
+    expected = request.session.get("csrf_token", "")
+    if not expected or not secrets.compare_digest(request.headers.get("x-csrf-token", ""), expected):
+        raise HTTPException(status_code=403, detail="Token keamanan tidak valid.")
     request.session.clear()
     return {"ok": True}
 
 
 @app.get("/api/me")
-async def me(user=Depends(current_user)):
-    return user
+async def me(request: Request, user=Depends(current_user)):
+    return {**user, "id": str(user["id"]), "csrf_token": request.session["csrf_token"]}
 
 
 @app.get("/api/overview")
@@ -522,6 +674,44 @@ async def create_dashboard_assignment(payload: AssignmentCreate, user=Depends(ad
     notified = await send_assignment_notice(payload.staff_id, assignment_id, payload)
     await audit(user["id"], "assignment.create", "assignment", assignment_id, after={**payload.model_dump(), "notified": notified})
     return {"id": assignment_id, "notified": notified}
+
+
+@app.post("/api/assignments/{assignment_id}/approve")
+async def dashboard_approve_assignment(assignment_id: int, user=Depends(admin_user)):
+    connection = await dashboard_db()
+    try:
+        before = await (await connection.execute("SELECT * FROM assignments WHERE id=?", (assignment_id,))).fetchone()
+    finally:
+        await connection.close()
+    if not before:
+        raise HTTPException(status_code=404, detail="Tugas tidak ditemukan.")
+    if before["status"] != "submitted":
+        raise HTTPException(status_code=409, detail=f"Tugas berstatus {before['status']}, bukan submitted.")
+    if not await staff_db.approve_assignment(assignment_id):
+        raise HTTPException(status_code=409, detail="Status tugas berubah. Muat ulang dashboard.")
+    after = await staff_db.get_assignment(assignment_id)
+    notified = await send_ticket_review_notice(after, True)
+    await audit(user["id"], "assignment.approve", "assignment", assignment_id, dict(before), {**after, "notified": notified})
+    return {"ok": True, "notified": notified}
+
+
+@app.post("/api/assignments/{assignment_id}/revision")
+async def dashboard_revision_assignment(assignment_id: int, payload: RevisionRequest, user=Depends(admin_user)):
+    connection = await dashboard_db()
+    try:
+        before = await (await connection.execute("SELECT * FROM assignments WHERE id=?", (assignment_id,))).fetchone()
+    finally:
+        await connection.close()
+    if not before:
+        raise HTTPException(status_code=404, detail="Tugas tidak ditemukan.")
+    if before["status"] != "submitted":
+        raise HTTPException(status_code=409, detail=f"Tugas berstatus {before['status']}, bukan submitted.")
+    if not await staff_db.revise_assignment(assignment_id, payload.notes.strip()):
+        raise HTTPException(status_code=409, detail="Status tugas berubah. Muat ulang dashboard.")
+    after = await staff_db.get_assignment(assignment_id)
+    notified = await send_ticket_review_notice(after, False, payload.notes.strip())
+    await audit(user["id"], "assignment.revision", "assignment", assignment_id, dict(before), {**after, "notified": notified})
+    return {"ok": True, "notified": notified}
 
 
 @app.get("/api/staff")
@@ -668,7 +858,8 @@ async def create_invoice(payload: InvoiceCreate, user=Depends(admin_user)):
     try:
         items = await (await connection.execute("""
             SELECT id,manga,chapter,role,final_rate,assigned_at,approved_at
-            FROM assignments WHERE staff_id=? AND status='approved' AND approved_at LIKE ?
+            FROM assignments a WHERE staff_id=? AND status='approved' AND approved_at LIKE ?
+              AND NOT EXISTS (SELECT 1 FROM dashboard_assignment_billing b WHERE b.assignment_id=a.id)
             ORDER BY id
         """, (payload.staff_id, f"{payload.period}%"))).fetchall()
         if not items:
@@ -691,13 +882,105 @@ async def create_invoice(payload: InvoiceCreate, user=Depends(admin_user)):
                 invoice_id, item["id"], item["manga"], item["chapter"], item["role"],
                 item["final_rate"], item["assigned_at"], item["approved_at"]
             ) for item in items])
+            await connection.executemany(
+                "INSERT INTO dashboard_assignment_billing(assignment_id,invoice_id) VALUES(?,?)",
+                [(item["id"], invoice_id) for item in items],
+            )
             await connection.commit()
         except aiosqlite.IntegrityError:
-            raise HTTPException(status_code=409, detail="Invoice staf untuk periode ini sudah dibuat.")
+            await connection.rollback()
+            raise HTTPException(status_code=409, detail="Salah satu tugas sudah masuk invoice lain. Muat ulang data.")
     finally:
         await connection.close()
     await audit(user["id"], "invoice.create", "invoice", invoice_id, after={"invoice_number": invoice_number})
     return {"id": invoice_id, "invoice_number": invoice_number}
+
+
+async def _replace_invoice_items(connection, invoice, items, actor_id: int):
+    if invoice["status"] != "issued":
+        raise HTTPException(status_code=409, detail="Hanya invoice berstatus issued yang dapat direvisi.")
+    if not items:
+        raise HTTPException(status_code=422, detail="Tidak ada tugas approved yang dapat dimasukkan ke invoice.")
+    old_ids = [row["assignment_id"] for row in await (await connection.execute(
+        "SELECT assignment_id FROM dashboard_invoice_items WHERE invoice_id=?", (invoice["id"],)
+    )).fetchall()]
+    await connection.execute("DELETE FROM dashboard_assignment_billing WHERE invoice_id=?", (invoice["id"],))
+    await connection.execute("DELETE FROM dashboard_invoice_items WHERE invoice_id=?", (invoice["id"],))
+    try:
+        await connection.executemany("""INSERT INTO dashboard_invoice_items
+            (invoice_id,assignment_id,manga,chapter,role,amount,assigned_at,approved_at)
+            VALUES(?,?,?,?,?,?,?,?)""", [(invoice["id"], item["id"], item["manga"], item["chapter"], item["role"],
+                                           item["final_rate"], item["assigned_at"], item["approved_at"]) for item in items])
+        await connection.executemany("INSERT INTO dashboard_assignment_billing(assignment_id,invoice_id) VALUES(?,?)",
+                                     [(item["id"], invoice["id"]) for item in items])
+    except aiosqlite.IntegrityError:
+        raise HTTPException(status_code=409, detail="Salah satu tugas sudah ditagihkan pada invoice lain.")
+    await connection.execute("""UPDATE dashboard_invoices SET chapter_count=?,total_amount=?,
+        revised_at=CURRENT_TIMESTAMP,revised_by=? WHERE id=?""",
+        (len(items), sum(item["final_rate"] for item in items), actor_id, invoice["id"]))
+    return old_ids
+
+
+@app.post("/api/invoices/{invoice_id}/refresh")
+async def refresh_invoice(invoice_id: int, user=Depends(admin_user)):
+    connection = await dashboard_db()
+    try:
+        invoice = await (await connection.execute("SELECT * FROM dashboard_invoices WHERE id=?", (invoice_id,))).fetchone()
+        if not invoice:
+            raise HTTPException(status_code=404, detail="Invoice tidak ditemukan.")
+        items = await (await connection.execute("""
+            SELECT a.id,a.manga,a.chapter,a.role,a.final_rate,a.assigned_at,a.approved_at
+            FROM assignments a WHERE a.staff_id=? AND a.status='approved' AND a.approved_at LIKE ?
+              AND (NOT EXISTS (SELECT 1 FROM dashboard_assignment_billing b WHERE b.assignment_id=a.id)
+                   OR EXISTS (SELECT 1 FROM dashboard_assignment_billing b WHERE b.assignment_id=a.id AND b.invoice_id=?))
+            ORDER BY a.id
+        """, (invoice["staff_id"], f"{invoice['period']}%", invoice_id))).fetchall()
+        before_items = await _replace_invoice_items(connection, invoice, items, user["id"])
+        await connection.commit()
+        after = {"chapter_count": len(items), "total_amount": sum(item["final_rate"] for item in items),
+                 "assignment_ids": [item["id"] for item in items]}
+    except Exception:
+        await connection.rollback()
+        raise
+    finally:
+        await connection.close()
+    await audit(user["id"], "invoice.refresh", "invoice", invoice_id, {"assignment_ids": before_items}, after)
+    return {"ok": True, **after}
+
+
+@app.post("/api/invoices/{invoice_id}/correction", status_code=201)
+async def create_correction_invoice(invoice_id: int, user=Depends(admin_user)):
+    connection = await dashboard_db()
+    try:
+        parent = await (await connection.execute("SELECT * FROM dashboard_invoices WHERE id=?", (invoice_id,))).fetchone()
+        if not parent or parent["status"] != "paid":
+            raise HTTPException(status_code=409, detail="Invoice koreksi hanya dapat dibuat dari invoice yang sudah lunas.")
+        items = await (await connection.execute("""SELECT a.id,a.manga,a.chapter,a.role,a.final_rate,a.assigned_at,a.approved_at
+            FROM assignments a WHERE a.staff_id=? AND a.status='approved' AND a.approved_at LIKE ?
+              AND NOT EXISTS (SELECT 1 FROM dashboard_assignment_billing b WHERE b.assignment_id=a.id) ORDER BY a.id""",
+            (parent["staff_id"], f"{parent['period']}%"))).fetchall()
+        if not items:
+            raise HTTPException(status_code=422, detail="Tidak ada tugas terlambat yang belum ditagihkan.")
+        count = (await (await connection.execute("SELECT COUNT(*) n FROM dashboard_invoices WHERE parent_invoice_id=?", (invoice_id,))).fetchone())["n"] + 1
+        number = f"{parent['invoice_number']}-C{count:02d}"
+        cursor = await connection.execute("""INSERT INTO dashboard_invoices
+            (invoice_number,staff_id,period,chapter_count,total_amount,status,issued_by,invoice_type,parent_invoice_id)
+            VALUES(?,?,?,?,?,'issued',?,'correction',?)""",
+            (number, parent["staff_id"], parent["period"], len(items), sum(i["final_rate"] for i in items), user["id"], invoice_id))
+        correction_id = cursor.lastrowid
+        await connection.executemany("""INSERT INTO dashboard_invoice_items
+            (invoice_id,assignment_id,manga,chapter,role,amount,assigned_at,approved_at) VALUES(?,?,?,?,?,?,?,?)""",
+            [(correction_id,i["id"],i["manga"],i["chapter"],i["role"],i["final_rate"],i["assigned_at"],i["approved_at"]) for i in items])
+        await connection.executemany("INSERT INTO dashboard_assignment_billing(assignment_id,invoice_id) VALUES(?,?)",
+                                     [(i["id"], correction_id) for i in items])
+        await connection.commit()
+    except Exception:
+        await connection.rollback()
+        raise
+    finally:
+        await connection.close()
+    await audit(user["id"], "invoice.correction", "invoice", correction_id, after={"parent_invoice_id": invoice_id, "invoice_number": number})
+    return {"id": correction_id, "invoice_number": number}
 
 
 @app.post("/api/invoices/{invoice_id}/pay")
@@ -749,17 +1032,20 @@ async def delete_invoice(invoice_id: int, user=Depends(admin_user)):
             raise HTTPException(status_code=404, detail="Invoice tidak ditemukan.")
         if invoice["status"] == "paid":
             raise HTTPException(status_code=409, detail="Invoice yang sudah lunas tidak dapat dihapus.")
-        await connection.execute("DELETE FROM dashboard_invoice_items WHERE invoice_id=?", (invoice_id,))
-        await connection.execute("DELETE FROM dashboard_invoices WHERE id=?", (invoice_id,))
+        if invoice["status"] == "void":
+            raise HTTPException(status_code=409, detail="Invoice sudah dibatalkan.")
+        await connection.execute("DELETE FROM dashboard_assignment_billing WHERE invoice_id=?", (invoice_id,))
+        await connection.execute("UPDATE dashboard_invoices SET status='void',voided_at=CURRENT_TIMESTAMP,voided_by=? WHERE id=?", (user["id"], invoice_id))
         await connection.commit()
     finally:
         await connection.close()
-    await audit(user["id"], "invoice.delete", "invoice", invoice_id, before=dict(invoice))
-    return {"ok": True}
+    await audit(user["id"], "invoice.void", "invoice", invoice_id, before=dict(invoice), after={"status": "void"})
+    return {"ok": True, "status": "void"}
 
 
 @app.post("/api/uploads/presign")
 async def presign_upload(payload: UploadRequest, user=Depends(current_user)):
+    raise HTTPException(status_code=410, detail="Upload baru melalui dashboard dinonaktifkan. Staff submit link Google Drive melalui Discord.")
     extension = os.path.splitext(payload.filename)[1].lower()
     if extension not in {".zip", ".7z", ".rar", ".psd", ".clip", ".txt", ".docx"}:
         raise HTTPException(status_code=422, detail="Gunakan ZIP, 7Z, RAR, PSD, CLIP, TXT, atau DOCX.")

@@ -4,7 +4,6 @@ import os
 import sqlite3
 import tempfile
 import unittest
-from unittest.mock import patch
 
 
 class DashboardApiTests(unittest.TestCase):
@@ -99,29 +98,38 @@ class DashboardApiTests(unittest.TestCase):
         user = {"id": 1, "username": "Admin", "role": "admin"}
         created = asyncio.run(self.module.create_invoice(self.module.InvoiceCreate(staff_id=100, period="2026-07"), user))
         self.assertTrue(asyncio.run(self.module.delete_invoice(created["id"], user))["ok"])
-        self.assertEqual(asyncio.run(self.module.invoices(period="2026-07", _user=user)), [])
+        voided = asyncio.run(self.module.invoices(period="2026-07", _user=user))
+        self.assertEqual(voided[0]["status"], "void")
         recreated = asyncio.run(self.module.create_invoice(self.module.InvoiceCreate(staff_id=100, period="2026-07"), user))
         self.assertNotEqual(created["invoice_number"], recreated["invoice_number"])
 
-    def test_staff_can_upload_and_submit_result(self):
-        class FakeR2:
-            def generate_presigned_url(self, *_args, **_kwargs):
-                return "https://upload.example/signed"
-
-            def head_object(self, **_kwargs):
-                return {"ContentLength": 1234}
-
+    def test_new_dashboard_upload_is_disabled(self):
         user = {"id": 100, "username": "Staff 100", "role": "staff"}
         payload = self.module.UploadRequest(
             assignment_id=1, filename="hasil-chapter.zip",
             content_type="application/zip", size_bytes=1234,
         )
-        with patch.object(self.module, "r2_client", return_value=FakeR2()):
-            signed = asyncio.run(self.module.presign_upload(payload, user))
-            result = asyncio.run(self.module.complete_upload(signed["upload_id"], user))
-        self.assertTrue(result["ok"])
-        submitted = asyncio.run(self.module.assignments(status="submitted", search="Project A", user=user))
-        self.assertEqual(len(submitted), 1)
+        with self.assertRaises(self.module.HTTPException) as raised:
+            asyncio.run(self.module.presign_upload(payload, user))
+        self.assertEqual(raised.exception.status_code, 410)
+
+    def test_invoice_refresh_and_correction_prevent_double_billing(self):
+        user = {"id": 1, "username": "Admin", "role": "admin"}
+        created = asyncio.run(self.module.create_invoice(self.module.InvoiceCreate(staff_id=100, period="2026-07"), user))
+        connection = sqlite3.connect(self.db_path)
+        connection.execute("INSERT INTO assignments VALUES (5,'Late','5',100,'TL',3000,4000,1,'approved',NULL,'2026-07-05','2026-07-06',NULL,NULL,NULL,NULL,NULL,NULL,NULL)")
+        connection.commit(); connection.close()
+        refreshed = asyncio.run(self.module.refresh_invoice(created["id"], user))
+        self.assertEqual(refreshed["total_amount"], 11000)
+        asyncio.run(self.module.pay_invoice(created["id"], user))
+        connection = sqlite3.connect(self.db_path)
+        connection.execute("INSERT INTO assignments VALUES (6,'Very Late','6',100,'TL',3000,9000,1,'approved',NULL,'2026-07-07','2026-07-08',NULL,NULL,NULL,NULL,NULL,NULL,NULL)")
+        connection.commit(); connection.close()
+        correction = asyncio.run(self.module.create_correction_invoice(created["id"], user))
+        detail = asyncio.run(self.module.invoice_detail(correction["id"], user))
+        self.assertEqual(detail["invoice_type"], "correction")
+        with self.assertRaises(self.module.HTTPException):
+            asyncio.run(self.module.create_invoice(self.module.InvoiceCreate(staff_id=100, period="2026-07"), user))
 
 
 if __name__ == "__main__":

@@ -1,161 +1,201 @@
+import logging
+import re
+
 import discord
 
 import database as db
 from config import STAFF_LOG_CHANNEL_ID
 from helpers.utils import is_admin, is_staff
 
+logger = logging.getLogger(__name__)
+TASK_ID_PATTERN = re.compile(r"#(\d+)")
 
-class TicketSubmitView(discord.ui.View):
-    def __init__(self, assignment_id: int):
-        super().__init__(timeout=None)
-        self.assignment_id = assignment_id
 
-    @discord.ui.button(label="Submit Hasil", style=discord.ButtonStyle.success, custom_id="ticket_submit")
-    async def submit_button(self, interaction: discord.Interaction, _button: discord.ui.Button):
-        assignment = await db.get_assignment(self.assignment_id)
-        if not assignment:
-            return await interaction.response.send_message("Tugas tidak ditemukan!", ephemeral=False)
-        if assignment["status"] not in ("claimed", "revision"):
-            return await interaction.response.send_message("Tugas ini belum bisa di-submit!", ephemeral=False)
-        if assignment["staff_id"] != interaction.user.id:
-            return await interaction.response.send_message("Kamu hanya bisa submit tugas milikmu sendiri!", ephemeral=False)
-        await interaction.response.send_modal(TicketSubmitModal(assignment))
+def task_id_from_message(message: discord.Message | None) -> int | None:
+    """Recover an assignment id from a legacy task/review message."""
+    if not message:
+        return None
+    candidates = [message.content]
+    for embed in message.embeds:
+        candidates.extend([embed.title or "", embed.description or "", embed.footer.text or ""])
+    for value in candidates:
+        match = TASK_ID_PATTERN.search(value or "")
+        if match:
+            return int(match.group(1))
+    return None
+
+
+async def _validated_assignment(interaction: discord.Interaction, assignment_id: int, statuses: tuple[str, ...], admin=False):
+    assignment = await db.get_assignment(assignment_id)
+    if not assignment:
+        await interaction.response.send_message("Tugas tidak ditemukan atau sudah dihapus.", ephemeral=True)
+        return None
+    if assignment["status"] not in statuses:
+        await interaction.response.send_message(
+            f"Aksi tidak tersedia karena status tugas sekarang **{assignment['status']}**.", ephemeral=True
+        )
+        return None
+    if admin:
+        if not is_admin(interaction.user):
+            await interaction.response.send_message("Hanya administrator yang dapat melakukan aksi ini.", ephemeral=True)
+            return None
+    elif not is_staff(interaction.user) or int(assignment["staff_id"] or 0) != interaction.user.id:
+        await interaction.response.send_message("Kamu hanya dapat mengirim tugas milikmu sendiri.", ephemeral=True)
+        return None
+    return assignment
+
+
+async def _notify_ticket(interaction: discord.Interaction, assignment: dict, embed: discord.Embed):
+    channel_id = assignment.get("ticket_channel_id")
+    channel = interaction.guild.get_channel(channel_id) if interaction.guild and channel_id else None
+    if isinstance(channel, discord.TextChannel):
+        staff = interaction.guild.get_member(int(assignment["staff_id"]))
+        await channel.send(content=staff.mention if staff else None, embed=embed)
 
 
 class TicketSubmitModal(discord.ui.Modal, title="Submit Hasil Kerja"):
-    gdrive_link = discord.ui.TextInput(
-        label="Link Google Drive",
-        placeholder="https://drive.google.com/...",
-        style=discord.TextStyle.short,
-        required=True,
-    )
-    catatan = discord.ui.TextInput(
-        label="Catatan (Opsional)",
-        placeholder="Catatan untuk admin...",
-        style=discord.TextStyle.paragraph,
-        required=False,
-    )
+    gdrive_link = discord.ui.TextInput(label="Link Google Drive", placeholder="https://drive.google.com/...", required=True)
+    catatan = discord.ui.TextInput(label="Catatan (Opsional)", placeholder="Catatan untuk admin...", style=discord.TextStyle.paragraph, required=False)
 
     def __init__(self, assignment: dict):
         super().__init__()
         self.assignment_id = assignment["id"]
 
     async def on_submit(self, interaction: discord.Interaction):
-        assignment = await db.get_assignment(self.assignment_id)
+        assignment = await _validated_assignment(interaction, self.assignment_id, ("claimed", "revision"))
         if not assignment:
-            return await interaction.response.send_message("Tugas tidak ditemukan!", ephemeral=False)
-        if not is_staff(interaction.user) or assignment["staff_id"] != interaction.user.id:
-            return await interaction.response.send_message("Kamu hanya bisa submit tugas milikmu sendiri!", ephemeral=False)
-        if assignment["status"] not in ("claimed", "revision"):
-            return await interaction.response.send_message("Tugas ini belum bisa di-submit!", ephemeral=False)
+            return
         link = self.gdrive_link.value.strip()
         if not link.startswith(("https://drive.google.com/", "http://drive.google.com/")):
-            return await interaction.response.send_message("Masukkan link Google Drive yang valid.", ephemeral=False)
-
+            return await interaction.response.send_message("Masukkan link Google Drive yang valid dan dapat diakses admin.", ephemeral=True)
         if not await db.submit_assignment(assignment["id"], link, self.catatan.value or None):
-            return await interaction.response.send_message("Gagal submit hasil!", ephemeral=False)
-
-        confirmation = discord.Embed(
-            title="Hasil Berhasil Dikirim",
-            description="Hasil tugas sudah dikirim ke administrator untuk direview.",
-            color=discord.Color.green(),
-        )
+            return await interaction.response.send_message("Submit gagal karena status tugas telah berubah. Coba buka panel terbaru.", ephemeral=True)
+        confirmation = discord.Embed(title="Hasil Berhasil Dikirim", description="Hasil tugas sudah dikirim ke administrator untuk direview.", color=discord.Color.green())
         confirmation.add_field(name="Manga", value=assignment["manga"], inline=True)
         confirmation.add_field(name="Chapter", value=assignment["chapter"], inline=True)
-        await interaction.response.send_message(embed=confirmation, ephemeral=False)
-
+        await interaction.response.send_message(embed=confirmation)
         log_channel = interaction.guild.get_channel(STAFF_LOG_CHANNEL_ID) if interaction.guild else None
         if log_channel:
-            review = discord.Embed(
-                title=f"Hasil Tugas #{assignment['id']} Siap Direview",
-                description=f"**{assignment['manga']}** · Chapter **{assignment['chapter']}**",
-                color=discord.Color.green(),
-            )
+            review = discord.Embed(title=f"Hasil Tugas #{assignment['id']} Siap Direview", description=f"**{assignment['manga']}** · Chapter **{assignment['chapter']}**", color=discord.Color.green())
             review.add_field(name="Staff", value=interaction.user.mention, inline=True)
             review.add_field(name="Role", value=assignment["role"], inline=True)
             review.add_field(name="Google Drive", value=link, inline=False)
             if self.catatan.value:
                 review.add_field(name="Catatan Staff", value=self.catatan.value, inline=False)
-            review.set_footer(text="Periksa izin akses Google Drive sebelum menyetujui tugas.")
+            review.set_footer(text=f"Task #{assignment['id']} · Periksa izin Google Drive sebelum review.")
             await log_channel.send(embed=review, view=TicketReviewView(assignment["id"]))
 
+    async def on_error(self, interaction: discord.Interaction, error: Exception):
+        logger.exception("Submit interaction failed for task %s", self.assignment_id, exc_info=error)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("Terjadi kesalahan saat memproses hasil. Silakan coba lagi.", ephemeral=True)
 
-class TicketReviewView(discord.ui.View):
-    def __init__(self, assignment_id: int):
-        super().__init__(timeout=None)
-        self.assignment_id = assignment_id
 
-    @discord.ui.button(label="Setuju", style=discord.ButtonStyle.success, custom_id="ticket_approve")
-    async def approve_button(self, interaction: discord.Interaction, _button: discord.ui.Button):
-        if not is_admin(interaction.user):
-            return await interaction.response.send_message("Hanya admin yang bisa approve!", ephemeral=False)
-        if not await db.approve_assignment(self.assignment_id):
-            return await interaction.response.send_message("Gagal approve tugas!", ephemeral=False)
-        assignment = await db.get_assignment(self.assignment_id)
-        staff = interaction.guild.get_member(assignment["staff_id"]) if interaction.guild else None
-        embed = discord.Embed(
-            title="Tugas Disetujui",
-            description=f"**{assignment['manga']}** chapter **{assignment['chapter']}** telah disetujui.",
-            color=discord.Color.green(),
-        )
-        for child in self.children:
-            child.disabled = True
-        await interaction.response.edit_message(embed=embed, view=self)
-        ticket_channel = interaction.guild.get_channel(assignment["ticket_channel_id"]) if interaction.guild and assignment.get("ticket_channel_id") else None
-        if isinstance(ticket_channel, discord.TextChannel):
-            completed = discord.Embed(
-                title="✅ Tugas Selesai",
-                description=(
-                    f"Hasil **{assignment['manga']}** chapter **{assignment['chapter']}** sudah disetujui administrator.\n\n"
-                    "Status tugas menjadi **approved** dan bayarannya sudah masuk ke rekap gaji."
-                ),
-                color=discord.Color.green(),
-            )
-            completed.add_field(name="Role", value=assignment["role"], inline=True)
-            completed.add_field(name="Bayaran", value=f"Rp {assignment['final_rate']:,.0f}".replace(",", "."), inline=True)
-            await ticket_channel.send(content=staff.mention if staff else None, embed=completed)
-        if staff:
-            try:
-                await staff.send(f"Tugas **{assignment['manga']}** chapter **{assignment['chapter']}** telah disetujui!")
-            except discord.DiscordException:
-                pass
-
-    @discord.ui.button(label="Revisi", style=discord.ButtonStyle.danger, custom_id="ticket_revise")
-    async def revise_button(self, interaction: discord.Interaction, _button: discord.ui.Button):
-        if not is_admin(interaction.user):
-            return await interaction.response.send_message("Hanya admin yang bisa merevisi!", ephemeral=False)
-        await interaction.response.send_modal(TicketReviseModal(self.assignment_id))
+async def approve_task(interaction: discord.Interaction, assignment_id: int):
+    assignment = await _validated_assignment(interaction, assignment_id, ("submitted",), admin=True)
+    if not assignment:
+        return
+    if not await db.approve_assignment(assignment_id):
+        return await interaction.response.send_message("Approve gagal karena status tugas telah berubah.", ephemeral=True)
+    assignment = await db.get_assignment(assignment_id)
+    embed = discord.Embed(title="Tugas Disetujui", description=f"**{assignment['manga']}** chapter **{assignment['chapter']}** telah disetujui.", color=discord.Color.green())
+    await interaction.response.edit_message(embed=embed, view=None)
+    completed = discord.Embed(title="✅ Tugas Selesai", description=f"Hasil **{assignment['manga']}** chapter **{assignment['chapter']}** telah disetujui administrator. Bayaran sudah masuk rekap gaji.", color=discord.Color.green())
+    completed.add_field(name="Role", value=assignment["role"], inline=True)
+    completed.add_field(name="Bayaran", value=f"Rp {assignment['final_rate']:,.0f}".replace(",", "."), inline=True)
+    await _notify_ticket(interaction, assignment, completed)
 
 
 class TicketReviseModal(discord.ui.Modal, title="Revisi Tugas"):
-    catatan = discord.ui.TextInput(
-        label="Catatan Revisi",
-        placeholder="Jelaskan apa yang perlu diperbaiki...",
-        style=discord.TextStyle.paragraph,
-        required=True,
-    )
+    catatan = discord.ui.TextInput(label="Catatan Revisi", placeholder="Jelaskan bagian yang perlu diperbaiki...", style=discord.TextStyle.paragraph, required=True)
 
     def __init__(self, assignment_id: int):
         super().__init__()
         self.assignment_id = assignment_id
 
     async def on_submit(self, interaction: discord.Interaction):
+        assignment = await _validated_assignment(interaction, self.assignment_id, ("submitted",), admin=True)
+        if not assignment:
+            return
         if not await db.revise_assignment(self.assignment_id, self.catatan.value):
-            return await interaction.response.send_message("Gagal merevisi tugas!", ephemeral=False)
+            return await interaction.response.send_message("Revisi gagal karena status tugas telah berubah.", ephemeral=True)
         assignment = await db.get_assignment(self.assignment_id)
-        staff = interaction.guild.get_member(assignment["staff_id"]) if interaction.guild else None
-        embed = discord.Embed(
-            title="Perlu Revisi",
-            description=f"**{assignment['manga']}** chapter **{assignment['chapter']}** perlu revisi.",
-            color=discord.Color.orange(),
-        )
+        embed = discord.Embed(title="Perlu Revisi", description=f"**{assignment['manga']}** chapter **{assignment['chapter']}** perlu revisi.", color=discord.Color.orange())
         embed.add_field(name="Catatan", value=self.catatan.value, inline=False)
         await interaction.response.edit_message(embed=embed, view=None)
-        if staff:
-            try:
-                await staff.send(
-                    f"Tugas **{assignment['manga']}** chapter **{assignment['chapter']}** perlu revisi.\n"
-                    f"Catatan: {self.catatan.value}"
-                )
-            except discord.DiscordException:
-                pass
+        await _notify_ticket(interaction, assignment, embed)
+
+
+class SubmitDynamicItem(discord.ui.DynamicItem[discord.ui.Button], template=r"task:submit:(?P<assignment_id>\d+):v2"):
+    def __init__(self, assignment_id: int):
+        self.assignment_id = assignment_id
+        super().__init__(discord.ui.Button(label="Submit Hasil", style=discord.ButtonStyle.success, custom_id=f"task:submit:{assignment_id}:v2"))
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match):
+        return cls(int(match["assignment_id"]))
+
+    async def callback(self, interaction: discord.Interaction):
+        assignment = await _validated_assignment(interaction, self.assignment_id, ("claimed", "revision"))
+        if assignment:
+            await interaction.response.send_modal(TicketSubmitModal(assignment))
+
+
+class ApproveDynamicItem(discord.ui.DynamicItem[discord.ui.Button], template=r"task:approve:(?P<assignment_id>\d+):v2"):
+    def __init__(self, assignment_id: int):
+        self.assignment_id = assignment_id
+        super().__init__(discord.ui.Button(label="Setuju", style=discord.ButtonStyle.success, custom_id=f"task:approve:{assignment_id}:v2"))
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match): return cls(int(match["assignment_id"]))
+    async def callback(self, interaction): await approve_task(interaction, self.assignment_id)
+
+
+class ReviseDynamicItem(discord.ui.DynamicItem[discord.ui.Button], template=r"task:revise:(?P<assignment_id>\d+):v2"):
+    def __init__(self, assignment_id: int):
+        self.assignment_id = assignment_id
+        super().__init__(discord.ui.Button(label="Revisi", style=discord.ButtonStyle.danger, custom_id=f"task:revise:{assignment_id}:v2"))
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match): return cls(int(match["assignment_id"]))
+    async def callback(self, interaction):
+        assignment = await _validated_assignment(interaction, self.assignment_id, ("submitted",), admin=True)
+        if assignment:
+            await interaction.response.send_modal(TicketReviseModal(self.assignment_id))
+
+
+class TicketSubmitView(discord.ui.View):
+    def __init__(self, assignment_id: int):
+        super().__init__(timeout=None)
+        self.add_item(SubmitDynamicItem(assignment_id))
+
+
+class TicketReviewView(discord.ui.View):
+    def __init__(self, assignment_id: int):
+        super().__init__(timeout=None)
+        self.add_item(ApproveDynamicItem(assignment_id))
+        self.add_item(ReviseDynamicItem(assignment_id))
+
+
+class LegacyTaskView(discord.ui.View):
+    """Compatibility handler for messages created before v2 IDs."""
+    def __init__(self): super().__init__(timeout=None)
+
+    @discord.ui.button(label="Submit Hasil", style=discord.ButtonStyle.success, custom_id="ticket_submit")
+    async def legacy_submit(self, interaction, _button):
+        assignment_id = task_id_from_message(interaction.message)
+        if not assignment_id:
+            return await interaction.response.send_message("Tombol lama ini tidak memiliki ID tugas. Buka `/menu` untuk panel terbaru.", ephemeral=True)
+        assignment = await _validated_assignment(interaction, assignment_id, ("claimed", "revision"))
+        if assignment: await interaction.response.send_modal(TicketSubmitModal(assignment))
+
+    @discord.ui.button(label="Setuju", style=discord.ButtonStyle.success, custom_id="ticket_approve")
+    async def legacy_approve(self, interaction, _button):
+        assignment_id = task_id_from_message(interaction.message)
+        if assignment_id: await approve_task(interaction, assignment_id)
+        else: await interaction.response.send_message("ID tugas pada pesan lama tidak ditemukan.", ephemeral=True)
+
+    @discord.ui.button(label="Revisi", style=discord.ButtonStyle.danger, custom_id="ticket_revise")
+    async def legacy_revise(self, interaction, _button):
+        assignment_id = task_id_from_message(interaction.message)
+        if not assignment_id: return await interaction.response.send_message("ID tugas pada pesan lama tidak ditemukan.", ephemeral=True)
+        assignment = await _validated_assignment(interaction, assignment_id, ("submitted",), admin=True)
+        if assignment: await interaction.response.send_modal(TicketReviseModal(assignment_id))

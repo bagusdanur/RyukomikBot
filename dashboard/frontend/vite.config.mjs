@@ -3,6 +3,16 @@ import vue from '@vitejs/plugin-vue'
 
 export default defineConfig({
   plugins: [vue()],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('primevue') || id.includes('@primeuix')) return 'primevue'
+          if (id.includes('node_modules/vue')) return 'vue'
+        },
+      },
+    },
+  },
   server: {
     port: 5173,
     proxy: {

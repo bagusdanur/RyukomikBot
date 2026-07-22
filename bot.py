@@ -11,7 +11,9 @@ from database import get_assignments_by_status, setup_database
 from panels.admin_panel import AdminPanelView, upsert_admin_panel
 from panels.staff_panel import StaffPanelView, upsert_staff_panel
 from panels.claim_view import ClaimView
-from views.ticket_views import TicketSubmitView, TicketReviewView
+from views.ticket_views import (
+    ApproveDynamicItem, LegacyTaskView, ReviseDynamicItem, SubmitDynamicItem,
+)
 from views.select_views import ReviewSelectView, SubmitSelectView, ConfirmPayView
 from views.raw_views import RawSearchView, create_filebin_download
 from modals.assign_modal import AssignModal
@@ -55,21 +57,12 @@ class RyukomikBot(commands.Bot):
         self.recruitment.register_persistent_views()
         self.add_view(AdminPanelView())
         self.add_view(StaffPanelView())
+        self.add_view(LegacyTaskView())
+        self.add_dynamic_items(SubmitDynamicItem, ApproveDynamicItem, ReviseDynamicItem)
         open_assignments = await get_assignments_by_status("open")
         for assignment in open_assignments:
             if assignment.get("message_id"):
                 self.add_view(ClaimView(assignment["id"]), message_id=assignment["message_id"])
-        
-        for status in ("claimed", "revision"):
-            assignments = await get_assignments_by_status(status)
-            for assignment in assignments:
-                if assignment.get("ticket_channel_id"):
-                    self.add_view(TicketSubmitView(assignment["id"]))
-        
-        submitted_assignments = await get_assignments_by_status("submitted")
-        for assignment in submitted_assignments:
-            if assignment.get("ticket_channel_id"):
-                self.add_view(TicketReviewView(assignment["id"]))
         
         print("[OK] Bot setup complete!")
     
