@@ -170,7 +170,6 @@ async def update_payrate_command(
     await interaction.response.send_message(embed=embed, ephemeral=False)
 
 
-@bot.tree.command(name="search-manga", description="Cari manga dari Asura Scans")
 async def search_manga_command(interaction: discord.Interaction, query: str):
     """Search for manga on Asura Scans."""
     await interaction.response.defer(ephemeral=False)
@@ -203,7 +202,6 @@ async def search_manga_command(interaction: discord.Interaction, query: str):
     await interaction.followup.send(embed=embed, ephemeral=False)
 
 
-@bot.tree.command(name="download-raw", description="Download chapter RAW dari Asura Scans")
 async def download_raw_command(interaction: discord.Interaction, manga_id: str, chapter_id: str):
     """Download one RAW chapter."""
     if not is_staff(interaction.user):

@@ -254,28 +254,63 @@ class RecruitmentBot:
             await ctx.channel.delete()
 
         @self.bot.command(name="fix-rekrut")
-        async def fix_recruitment_permissions(ctx: commands.Context):
-            """Repair permissions for a recruitment ticket created by older code."""
-            if not ctx.guild or ctx.channel.category_id != REKRUT_CAT_ID:
-                return await ctx.send("Command ini hanya bisa digunakan di tiket rekrutmen.")
+        async def fix_recruitment_permissions(ctx: commands.Context, scope: str = "channel"):
+            """Repair one ticket, or every old recruitment ticket with `semua`."""
+            if not ctx.guild:
+                return
             if not ctx.author.guild_permissions.administrator:
                 return await ctx.send("Hanya administrator yang dapat memperbaiki permission tiket.")
 
-            topic = ctx.channel.topic or ""
-            applicant_id = next(
-                (int(part) for part in topic.replace("(", " ").replace(")", " ").split() if part.isdigit()),
-                None,
-            )
-            applicant = ctx.guild.get_member(applicant_id) if applicant_id else None
-            if not applicant:
-                return await ctx.send("Pemilik tiket tidak ditemukan dari topic channel.")
+            if scope.casefold() == "semua":
+                category = ctx.guild.get_channel(REKRUT_CAT_ID)
+                channels = list(category.text_channels) if isinstance(category, discord.CategoryChannel) else []
+            elif ctx.channel.category_id == REKRUT_CAT_ID:
+                channels = [ctx.channel]
+            else:
+                return await ctx.send(
+                    "Gunakan command ini di dalam tiket, atau jalankan `!fix-rekrut semua`."
+                )
 
-            await ctx.channel.edit(
-                overwrites=build_ticket_overwrites(ctx.guild, applicant),
-                sync_permissions=False,
-                reason=f"Permission tiket diperbaiki oleh {ctx.author}",
+            fixed = 0
+            skipped = 0
+            for channel in channels:
+                topic = channel.topic or ""
+                applicant_id = next(
+                    (
+                        int(part)
+                        for part in topic.replace("(", " ").replace(")", " ").split()
+                        if part.isdigit()
+                    ),
+                    None,
+                )
+                applicant = ctx.guild.get_member(applicant_id) if applicant_id else None
+                if not applicant:
+                    # Tickets from the first release did not store the member ID
+                    # in their topic. Recover the owner from the member overwrite.
+                    applicant = next(
+                        (
+                            target
+                            for target, overwrite in channel.overwrites.items()
+                            if isinstance(target, discord.Member)
+                            and target.id != self.bot.user.id
+                            and overwrite.view_channel is not False
+                        ),
+                        None,
+                    )
+                if not applicant:
+                    skipped += 1
+                    continue
+                await channel.edit(
+                    overwrites=build_ticket_overwrites(ctx.guild, applicant),
+                    sync_permissions=False,
+                    reason=f"Permission tiket diperbaiki oleh {ctx.author}",
+                )
+                fixed += 1
+
+            await ctx.send(
+                f"Permission selesai diperbaiki. Berhasil: **{fixed}**, dilewati: **{skipped}**. "
+                "Tiket kini hanya terlihat oleh pembuat tiket, administrator, dan bot."
             )
-            await ctx.send("Permission diperbaiki: hanya pelamar, administrator, dan bot yang dapat melihat tiket ini.")
 
 
 def setup_recruitment(bot: commands.Bot):
