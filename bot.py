@@ -8,7 +8,7 @@ from typing import Literal
 
 from config import TOKEN, GUILD_ID, STAFF_TASKS_CHANNEL_ID, STAFF_LOG_CHANNEL_ID, ROLE_STAFF_ID, ROLE_ADMIN_ID
 from database import get_assignments_by_status, setup_database
-from panels.admin_panel import AdminPanelView
+from panels.admin_panel import AdminPanelView, upsert_admin_panel
 from panels.staff_panel import StaffPanelView, upsert_staff_panel
 from panels.claim_view import ClaimView
 from views.ticket_views import TicketSubmitView, TicketReviewView
@@ -132,8 +132,10 @@ async def panels_command(
             return await interaction.response.send_message(
                 f"Panel admin hanya boleh dikirim di <#{STAFF_LOG_CHANNEL_ID}>.", ephemeral=False
             )
-        return await interaction.response.send_message(
-            embed=build_admin_panel_embed(), view=AdminPanelView(), ephemeral=False
+        await interaction.response.defer(ephemeral=False)
+        _, created = await upsert_admin_panel(interaction.channel)
+        return await interaction.followup.send(
+            f"Admin Panel berhasil {'dibuat' if created else 'diperbarui'} di channel ini."
         )
 
     if not interaction.guild or not isinstance(interaction.user, discord.Member):
@@ -361,7 +363,8 @@ async def panel_command(ctx: commands.Context, panel: str = "auto", staff: disco
     if selected == "admin" and is_admin(ctx.author):
         if ctx.channel.id != STAFF_LOG_CHANNEL_ID:
             return await ctx.send(f"Panel admin hanya boleh dikirim di <#{STAFF_LOG_CHANNEL_ID}>.")
-        return await ctx.send(embed=build_admin_panel_embed(), view=AdminPanelView())
+        _, created = await upsert_admin_panel(ctx.channel)
+        return await ctx.send(f"Admin Panel {'dibuat' if created else 'diperbarui'} di channel ini.")
     if selected == "staff":
         if is_admin(ctx.author):
             target = staff

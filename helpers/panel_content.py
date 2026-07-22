@@ -141,8 +141,8 @@ def build_guide_embed(audience: str = "all") -> discord.Embed:
         embed.add_field(
             name="🆘 Kalau Ada Masalah",
             value=(
-                "Jelaskan kendala di tiket privat dan tag administrator. Sertakan nomor tugas, "
-                "pesan error, dan screenshot agar cepat diperiksa. Jangan membuat tiket staff baru."
+                "Tekan **Bantuan Tugas**, pilih proyek, lalu gunakan **Laporkan Kendala** atau "
+                "**Minta Perpanjangan**. Detail tugas otomatis dikirim ke administrator."
             ),
             inline=False,
         )

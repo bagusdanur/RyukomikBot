@@ -2,7 +2,7 @@ import discord
 
 import database as db
 from helpers.utils import STATUS_EMOJI, format_currency, is_admin
-from helpers.panel_content import build_guide_embed
+from helpers.panel_content import build_admin_panel_embed, build_guide_embed
 from views.select_views import ReviewSelectView
 
 
@@ -98,6 +98,43 @@ class AdminPanelView(discord.ui.View):
         embed.add_field(name="Sedang Diproses", value=format_currency(pending_earnings), inline=True)
         await interaction.followup.send(embed=embed)
 
+    @discord.ui.button(label="Deadline", style=discord.ButtonStyle.primary, custom_id="admin_deadlines", row=1)
+    async def deadlines_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=False)
+        connection = await db.get_db()
+        try:
+            cursor = await connection.execute(
+                """SELECT * FROM assignments
+                   WHERE deadline_at IS NOT NULL
+                     AND status IN ('claimed', 'revision', 'submitted')
+                   ORDER BY date(deadline_at) ASC LIMIT 20"""
+            )
+            assignments = [dict(row) for row in await cursor.fetchall()]
+        finally:
+            await connection.close()
+        if not assignments:
+            return await interaction.followup.send("Tidak ada tugas aktif yang memiliki deadline.")
+        lines = []
+        for item in assignments:
+            staff = interaction.guild.get_member(item["staff_id"]) if interaction.guild else None
+            owner = staff.mention if staff else f"ID {item['staff_id']}"
+            lines.append(f"**{item['deadline_at']}** • #{item['id']} {item['manga']} Ch. {item['chapter']}\n└ {owner} • {item['status']}")
+        embed = discord.Embed(title="Deadline Tugas Aktif", description="\n".join(lines), color=discord.Color.orange())
+        embed.set_footer(text="Urutan paling dekat ditampilkan terlebih dahulu.")
+        await interaction.followup.send(embed=embed)
+
     @discord.ui.button(label="Panduan", emoji="📚", style=discord.ButtonStyle.secondary, custom_id="admin_guide")
     async def guide_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(embed=build_guide_embed("admin"), ephemeral=False)
+
+
+async def upsert_admin_panel(channel: discord.TextChannel):
+    embed = build_admin_panel_embed()
+    async for message in channel.history(limit=50):
+        if message.author.id != channel.guild.me.id or not message.embeds:
+            continue
+        current = message.embeds[0]
+        if "Pusat Kontrol Administrator" in (current.title or "") or "Administrator Panel" in (current.footer.text or ""):
+            await message.edit(embed=embed, view=AdminPanelView())
+            return message, False
+    return await channel.send(embed=embed, view=AdminPanelView()), True
