@@ -42,6 +42,7 @@ class RyukomikBot(commands.Bot):
         
         # Raw downloader
         self.downloader = AsuraDownloader()
+        self.commands_synced = False
     
     async def setup_hook(self):
         """Called when the bot is starting up."""
@@ -74,10 +75,17 @@ class RyukomikBot(commands.Bot):
         print(f"[OK] Logged in as {self.user} (ID: {self.user.id})")
         print(f"[INFO] Connected to {len(self.guilds)} guild(s)")
         
-        # Sync slash commands
+        # Remove stale guild-scoped commands first. Having the same command both
+        # globally and per-guild makes Discord display duplicate entries.
         try:
-            synced = await self.tree.sync()
-            print(f"[OK] Synced {len(synced)} slash command(s)")
+            if not self.commands_synced:
+                guild_scope = discord.Object(id=GUILD_ID)
+                self.tree.clear_commands(guild=guild_scope)
+                await self.tree.sync(guild=guild_scope)
+                synced = await self.tree.sync()
+                self.commands_synced = True
+                print(f"[OK] Cleared stale guild commands for {GUILD_ID}")
+                print(f"[OK] Synced {len(synced)} slash command(s)")
         except Exception as e:
             print(f"[ERROR] Failed to sync commands: {e}")
         
