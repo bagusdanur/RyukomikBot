@@ -57,7 +57,7 @@ class DashboardApiTests(unittest.TestCase):
     def test_staff_can_only_see_own_assignments(self):
         user = {"id": 100, "username": "Staff", "role": "staff"}
         assignments = asyncio.run(self.module.assignments(status=None, search=None, user=user))
-        self.assertEqual({item["staff_id"] for item in assignments}, {100})
+        self.assertEqual({item["staff_id"] for item in assignments}, {"100"})
         self.assertEqual(len(assignments), 3)
 
     def test_payrate_update_creates_audit_log(self):

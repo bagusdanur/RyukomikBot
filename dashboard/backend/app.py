@@ -336,6 +336,8 @@ async def enrich_staff(rows):
         profile = profiles.get(item.get("staff_id"), {})
         item["staff_name"] = profile.get("username") or f"Staff {item.get('staff_id') or 'belum dipilih'}"
         item["staff_avatar"] = profile.get("avatar")
+        if item.get("staff_id") is not None:
+            item["staff_id"] = str(item["staff_id"])
         enriched.append(item)
     return enriched
 
@@ -538,11 +540,16 @@ async def staff(_user=Depends(admin_user)):
     finally:
         await connection.close()
     directory = await staff_directory()
-    return [{
-        **profile,
-        "staff_id": profile["id"],
-        **stats.get(profile["id"], {"task_count": 0, "active_count": 0, "approved_amount": 0, "paid_amount": 0}),
-    } for profile in directory]
+    result = []
+    for profile in directory:
+        staff_id = profile["id"]
+        result.append({
+            **profile,
+            "id": str(staff_id),
+            "staff_id": str(staff_id),
+            **stats.get(staff_id, {"task_count": 0, "active_count": 0, "approved_amount": 0, "paid_amount": 0}),
+        })
+    return result
 
 
 @app.get("/api/payrates")
