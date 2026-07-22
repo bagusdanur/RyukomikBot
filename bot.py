@@ -174,6 +174,46 @@ async def guide_command(interaction: discord.Interaction):
     audience = "admin" if is_admin(interaction.user) else "staff" if is_staff(interaction.user) else "all"
     await interaction.response.send_message(embed=build_guide_embed(audience), ephemeral=False)
 
+
+@bot.tree.command(name="menu", description="Pindahkan panel kerja ke pesan paling baru")
+async def menu_command(interaction: discord.Interaction):
+    """Move the user's canonical panel to the bottom without leaving duplicates."""
+    if not interaction.guild or not isinstance(interaction.channel, discord.TextChannel):
+        return await interaction.response.send_message("Command ini hanya dapat digunakan di channel server.", ephemeral=False)
+
+    if is_admin(interaction.user) and interaction.channel_id == STAFF_LOG_CHANNEL_ID:
+        old_panel, _ = await upsert_admin_panel(interaction.channel)
+        try:
+            await old_panel.delete()
+        except (discord.Forbidden, discord.HTTPException):
+            return await interaction.response.send_message(
+                "Panel tidak dapat dipindahkan. Pastikan bot memiliki izin **Manage Messages**; panel lama tetap tersedia melalui pesan pin.",
+                ephemeral=False,
+            )
+        await interaction.response.send_message("Panel administrator dipindahkan ke bawah.", ephemeral=False)
+        await upsert_admin_panel(interaction.channel)
+        return
+
+    if not isinstance(interaction.user, discord.Member) or not is_staff(interaction.user):
+        return await interaction.response.send_message("Command ini hanya untuk staff atau administrator.", ephemeral=False)
+
+    ticket = await find_or_create_staff_ticket(interaction.guild, interaction.user)
+    if interaction.channel_id != ticket.id:
+        return await interaction.response.send_message(
+            f"Gunakan `/menu` di tiket staff milikmu: {ticket.mention}", ephemeral=False
+        )
+
+    old_panel, _ = await upsert_staff_panel(ticket, interaction.user)
+    try:
+        await old_panel.delete()
+    except (discord.Forbidden, discord.HTTPException):
+        return await interaction.response.send_message(
+            "Panel tidak dapat dipindahkan. Pastikan bot memiliki izin **Manage Messages**; panel lama tetap tersedia melalui pesan pin.",
+            ephemeral=False,
+        )
+    await interaction.response.send_message("Panel kerjamu dipindahkan ke bawah.", ephemeral=False)
+    await upsert_staff_panel(ticket, interaction.user)
+
 @bot.tree.command(name="update-payrate", description="Ubah base rate untuk tugas baru")
 @discord.app_commands.describe(role="Role TL, TS, atau TL+TS", new_rate="Base rate baru dalam Rupiah")
 async def update_payrate_command(
