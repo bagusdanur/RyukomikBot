@@ -280,6 +280,19 @@ async def get_rekap(period: str) -> List[Dict[str, Any]]:
         await db.close()
 
 
+async def clear_assignment_message(assignment_id: int) -> None:
+    """Forget a task announcement after it has been removed from the public channel."""
+    db = await get_db()
+    try:
+        await db.execute(
+            "UPDATE assignments SET message_id = NULL WHERE id = ?",
+            (assignment_id,),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
 async def get_role_payrate(role: str) -> int:
     """Return the persisted base rate for an assignment role."""
     defaults = {"TL": 3000, "TS": 3000, "TL+TS": 5000}

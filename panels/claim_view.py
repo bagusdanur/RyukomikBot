@@ -38,6 +38,8 @@ class ClaimView(discord.ui.View):
                 ephemeral=False,
             )
 
+        await interaction.response.defer()
+
         ticket_channel = None
         if interaction.guild and isinstance(interaction.user, discord.Member):
             ticket_channel = await find_or_create_staff_ticket(interaction.guild, interaction.user)
@@ -59,8 +61,7 @@ class ClaimView(discord.ui.View):
         for child in self.children:
             child.disabled = True
 
-        await interaction.response.edit_message(embed=embed, view=self)
-
+        ticket_delivered = False
         if ticket_channel:
             ticket_embed = discord.Embed(
                 title=f"Tugas #{assignment['id']}",
@@ -70,16 +71,41 @@ class ClaimView(discord.ui.View):
             ticket_embed.add_field(name="Role", value=assignment["role"], inline=True)
             ticket_embed.add_field(name="Rate", value=format_currency(assignment["final_rate"]), inline=True)
             ticket_embed.add_field(name="Status", value="claimed", inline=True)
-            await ticket_channel.send(
-                content=interaction.user.mention,
-                embed=ticket_embed,
-                view=TicketSubmitView(self.assignment_id),
-            )
+            try:
+                await ticket_channel.send(
+                    content=interaction.user.mention,
+                    embed=ticket_embed,
+                    view=TicketSubmitView(self.assignment_id),
+                )
+                ticket_delivered = True
+            except (discord.Forbidden, discord.HTTPException):
+                embed.add_field(
+                    name="Tiket Belum Terkirim",
+                    value="Hubungi administrator untuk memeriksa izin channel bot.",
+                    inline=False,
+                )
 
         if interaction.guild:
             log_channel = interaction.guild.get_channel(STAFF_LOG_CHANNEL_ID)
             if log_channel:
-                await log_channel.send(
-                    f"**{interaction.user.display_name}** claim tugas "
-                    f"**{assignment['manga']}** chapter **{assignment['chapter']}** ({assignment['role']})."
-                )
+                try:
+                    await log_channel.send(
+                        f"**{interaction.user.display_name}** claim tugas "
+                        f"**{assignment['manga']}** chapter **{assignment['chapter']}** ({assignment['role']})."
+                    )
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+
+        # A claimed task is no longer available, so keep #staff-tasks focused
+        # on open work only. The database record and private ticket remain.
+        if ticket_delivered:
+            try:
+                await interaction.message.delete()
+            except (discord.Forbidden, discord.HTTPException):
+                # Missing Manage Messages must not reopen or duplicate the task.
+                await interaction.edit_original_response(embed=embed, view=self)
+            else:
+                await db.clear_assignment_message(self.assignment_id)
+        else:
+            # Keep a visible, disabled error state when the private handoff failed.
+            await interaction.edit_original_response(embed=embed, view=self)
