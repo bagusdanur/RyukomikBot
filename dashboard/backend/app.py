@@ -16,7 +16,8 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from config import GUILD_ID, ROLE_ADMIN_ID, ROLE_STAFF_ID, TOKEN
 from database import DB_PATH, setup_database
-from helpers.utils import ROLE_PAYRATES
+
+ROLE_RATE_LIMITS = {"TL": 8000, "TS": 12000, "TL+TS": 15000}
 
 load_dotenv()
 
@@ -280,7 +281,7 @@ async def payrates(_user=Depends(current_user)):
 async def update_payrate(
     role: Literal["TL", "TS", "TL+TS"], payload: PayrateUpdate, user=Depends(admin_user)
 ):
-    maximum = ROLE_PAYRATES[role]["max"]
+    maximum = ROLE_RATE_LIMITS[role]
     if payload.base_rate > maximum:
         raise HTTPException(status_code=422, detail=f"Maksimum rate {role} adalah {maximum}.")
     connection = await dashboard_db()
