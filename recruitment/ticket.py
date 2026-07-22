@@ -18,10 +18,49 @@ from panels.staff_panel import upsert_staff_panel
 POSITIONS = ("TL", "TS", "TL+TS")
 POSITION_IDS = {"TL": "tl", "TS": "ts", "TL+TS": "tl_ts"}
 TEST_MATERIALS = {
-    "TL": "Terjemahkan 1-2 halaman sampel ke Bahasa Indonesia, lalu unggah hasilnya ke Google Drive.",
-    "TS": "Kerjakan cleaning, redrawing, dan typesetting untuk 1-2 halaman sampel, lalu unggah ke Google Drive.",
-    "TL+TS": "Terjemahkan sekaligus typeset 1-2 halaman sampel, lalu unggah hasilnya ke Google Drive.",
+    "TL": "Unduh paket **Tes TL** dan instruksinya dari website Ryukomik, lalu terjemahkan sesuai petunjuk.",
+    "TS": "Unduh paket **Tes TS**, instruksi, dan referensi terjemahan dari website Ryukomik, lalu kerjakan sesuai petunjuk.",
+    "TL+TS": "Kerjakan kedua paket **Tes TL** dan **Tes TS** dari website Ryukomik sesuai instruksi masing-masing.",
 }
+RECRUITMENT_FILES_URL = "https://ryukomik.web.id/files/rekrutmen"
+TEST_LINKS = {
+    "TL": (
+        ("Download Tes TL", f"{RECRUITMENT_FILES_URL}/TL_Test.zip", "📦"),
+        ("Instruksi TL", f"{RECRUITMENT_FILES_URL}/instruksi_tl.txt", "📄"),
+    ),
+    "TS": (
+        ("Download Tes TS", f"{RECRUITMENT_FILES_URL}/TS_Test.zip", "📦"),
+        ("Instruksi TS", f"{RECRUITMENT_FILES_URL}/instruksi_ts.txt", "📄"),
+        ("Referensi Terjemahan", f"{RECRUITMENT_FILES_URL}/terjemahan_ts.txt", "📝"),
+    ),
+    "TL+TS": (
+        ("Download Tes TL", f"{RECRUITMENT_FILES_URL}/TL_Test.zip", "📦"),
+        ("Instruksi TL", f"{RECRUITMENT_FILES_URL}/instruksi_tl.txt", "📄"),
+        ("Download Tes TS", f"{RECRUITMENT_FILES_URL}/TS_Test.zip", "📦"),
+        ("Instruksi TS", f"{RECRUITMENT_FILES_URL}/instruksi_ts.txt", "📄"),
+        ("Referensi TS", f"{RECRUITMENT_FILES_URL}/terjemahan_ts.txt", "📝"),
+    ),
+}
+
+
+def build_test_embed(position: str) -> discord.Embed:
+    embed = discord.Embed(
+        title=f"Bahan Tes {position}",
+        description=TEST_MATERIALS[position],
+        color=discord.Color.blue(),
+    )
+    embed.add_field(
+        name="Cara Mengerjakan",
+        value=(
+            "1. Tekan tombol download di bawah.\n"
+            "2. Baca file instruksi sampai selesai.\n"
+            "3. Kerjakan bahan tes sesuai posisi yang dipilih.\n"
+            "4. Unggah hasil ke Google Drive, lalu tekan **Submit Hasil Tes**."
+        ),
+        inline=False,
+    )
+    embed.set_footer(text="Bahan resmi berasal dari website Ryukomik")
+    return embed
 
 
 def build_recruitment_panel_embed() -> discord.Embed:
@@ -222,17 +261,9 @@ class RecruitmentPositionSelect(discord.ui.Select):
             topic=build_ticket_topic(owner.id, position),
             reason=f"Posisi rekrutmen dipilih: {position}",
         )
-        embed = discord.Embed(
-            title=f"Bahan Tes {position}",
-            description=TEST_MATERIALS[position],
-            color=discord.Color.blue(),
+        await interaction.response.send_message(
+            embed=build_test_embed(position), view=RecruitmentSubmitView(position), ephemeral=False
         )
-        embed.add_field(
-            name="Cara Mengirim",
-            value="Selesaikan tes, unggah ke Google Drive, lalu tekan **Submit Hasil Tes**.",
-            inline=False,
-        )
-        await interaction.response.send_message(embed=embed, view=RecruitmentSubmitView(position), ephemeral=False)
 
 
 class RecruitmentSubmitView(RecruitmentBaseView):
@@ -244,9 +275,12 @@ class RecruitmentSubmitView(RecruitmentBaseView):
             emoji="📤",
             style=discord.ButtonStyle.success,
             custom_id=f"recruitment:submit:{POSITION_IDS[position]}:v1",
+            row=1,
         )
         button.callback = self.submit_button
         self.add_item(button)
+        for label, url, emoji in TEST_LINKS[position]:
+            self.add_item(discord.ui.Button(label=label, url=url, emoji=emoji, row=0))
 
     async def submit_button(self, interaction: discord.Interaction):
         if not isinstance(interaction.channel, discord.TextChannel):
@@ -374,6 +408,26 @@ class RecruitmentBot:
             await interaction.followup.send(
                 f"Panel rekrutmen aktif: {message.jump_url}. Panel lama dinonaktifkan: **{disabled}**.",
                 ephemeral=False,
+            )
+
+        @self.bot.tree.command(name="ambil-test", description="Tampilkan kembali bahan tes rekrutmen")
+        async def get_recruitment_test_command(interaction: discord.Interaction):
+            if not isinstance(interaction.channel, discord.TextChannel):
+                return await interaction.response.send_message("Gunakan command ini di tiket rekrutmen.", ephemeral=False)
+            owner = get_ticket_owner(interaction.channel)
+            position = get_topic_position(interaction.channel)
+            if interaction.channel.category_id != REKRUT_CAT_ID or not owner:
+                return await interaction.response.send_message("Command ini hanya tersedia di tiket rekrutmen.", ephemeral=False)
+            if interaction.user.id != owner.id and not is_admin(interaction.user):
+                return await interaction.response.send_message(
+                    "Hanya pemilik tiket atau administrator yang dapat mengambil tes.", ephemeral=False
+                )
+            if position not in POSITIONS:
+                return await interaction.response.send_message(
+                    "Pilih posisi TL, TS, atau TL+TS terlebih dahulu.", ephemeral=False
+                )
+            await interaction.response.send_message(
+                embed=build_test_embed(position), view=RecruitmentSubmitView(position), ephemeral=False
             )
 
         @self.bot.command(name="close")
