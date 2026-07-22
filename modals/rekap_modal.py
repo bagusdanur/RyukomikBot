@@ -1,6 +1,6 @@
 import discord
 
-from helpers.utils import is_admin, format_currency, get_current_period
+from helpers.utils import is_admin, format_currency, get_current_period, get_or_fetch_member
 from views.select_views import ConfirmPayView
 import database as db
 
@@ -50,7 +50,8 @@ class RekapModal(discord.ui.Modal, title="Rekap Pembayaran"):
         except ValueError:
             return await interaction.response.send_message("Staff ID harus berupa angka!", ephemeral=False)
 
-        staff = interaction.guild.get_member(staff_id) if interaction.guild else None
+        staff = await get_or_fetch_member(interaction.guild, staff_id) if interaction.guild else None
+
         if not staff:
             return await interaction.response.send_message("Staff tidak ditemukan di server!", ephemeral=False)
 

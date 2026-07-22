@@ -4,6 +4,12 @@ from typing import Optional, Dict, List, Any
 from config import ASURA_API
 
 
+def _create_session() -> aiohttp.ClientSession:
+    """Create a ClientSession using ThreadedResolver for reliable DNS resolution across environments."""
+    connector = aiohttp.TCPConnector(resolver=aiohttp.ThreadedResolver())
+    return aiohttp.ClientSession(connector=connector)
+
+
 class AsuraDownloader:
     """Downloader for Asura Scans manga chapters."""
     
@@ -12,7 +18,7 @@ class AsuraDownloader:
     
     async def search_manga(self, query: str) -> List[Dict[str, Any]]:
         """Search for manga by title."""
-        async with aiohttp.ClientSession() as session:
+        async with _create_session() as session:
             try:
                 async with session.get(
                     f"{self.api_url}/search",
@@ -29,7 +35,7 @@ class AsuraDownloader:
     
     async def get_manga_info(self, manga_id: str) -> Optional[Dict[str, Any]]:
         """Get manga information."""
-        async with aiohttp.ClientSession() as session:
+        async with _create_session() as session:
             try:
                 async with session.get(
                     f"{self.api_url}/manga/{manga_id}",
@@ -44,7 +50,7 @@ class AsuraDownloader:
     
     async def get_chapter_list(self, manga_id: str) -> List[Dict[str, Any]]:
         """Get list of chapters for a manga."""
-        async with aiohttp.ClientSession() as session:
+        async with _create_session() as session:
             try:
                 async with session.get(
                     f"{self.api_url}/manga/{manga_id}/chapters",
@@ -60,7 +66,7 @@ class AsuraDownloader:
     
     async def get_chapter_images(self, manga_id: str, chapter_id: str) -> List[str]:
         """Get image URLs for a specific chapter."""
-        async with aiohttp.ClientSession() as session:
+        async with _create_session() as session:
             try:
                 async with session.get(
                     f"{self.api_url}/manga/{manga_id}/chapter/{chapter_id}",
@@ -76,7 +82,7 @@ class AsuraDownloader:
     
     async def download_image(self, url: str, save_path: str) -> bool:
         """Download a single image."""
-        async with aiohttp.ClientSession() as session:
+        async with _create_session() as session:
             try:
                 async with session.get(
                     url,
@@ -104,7 +110,7 @@ class AsuraDownloader:
         if not images:
             return None
         
-        chapter_dir = os.path.join(save_dir, f"{manga_id}_{chapter_id}")
+        chapter_dir = os.path.join(save_dir, "asura", f"{manga_id}_{chapter_id}")
         os.makedirs(chapter_dir, exist_ok=True)
         
         downloaded = 0

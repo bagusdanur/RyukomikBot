@@ -67,19 +67,22 @@ class AssignModal(discord.ui.Modal, title="Assign Tugas Baru"):
                 ephemeral=False,
             )
 
+        has_override = False
         base_rate = calculate_rate(role, self.manga.value)
         if self.rate_override.value:
             try:
-                override = int(self.rate_override.value)
-                if override < 0 or override > 50000:
+                clean_override = self.rate_override.value.replace(".", "").replace(",", "").strip()
+                override = int(clean_override)
+                if override < 0 or override > 1000000:
                     return await interaction.response.send_message(
-                        "Rate override harus antara 0 dan 50000!",
+                        "Rate override harus antara 0 dan Rp 1.000.000!",
                         ephemeral=False,
                     )
                 base_rate = override
+                has_override = True
             except ValueError:
                 return await interaction.response.send_message(
-                    "Rate override harus berupa angka!",
+                    "Rate override harus berupa angka (contoh: 15000 atau 15.000)!",
                     ephemeral=False,
                 )
 
@@ -110,7 +113,13 @@ class AssignModal(discord.ui.Modal, title="Assign Tugas Baru"):
             multiplier += 0.1
             bonuses.append("Deadline ketat (+10%)")
 
-        final_rate = calculate_final_rate(base_rate, role, multiplier)
+        if has_override:
+            final_rate = base_rate
+            multiplier = 1.0
+            bonuses = ["Manual Override"]
+        else:
+            final_rate = calculate_final_rate(base_rate, role, multiplier)
+
 
         assignment_id = await db.create_assignment(
             manga=self.manga.value,

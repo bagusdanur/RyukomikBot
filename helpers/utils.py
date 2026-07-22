@@ -95,9 +95,22 @@ def is_popular_series(manga: str) -> bool:
     return any(title.casefold() == normalized for title in POPULAR_SERIES)
 
 
+async def get_or_fetch_member(guild: discord.Guild, user_id: int) -> Optional[discord.Member]:
+    """Get member from cache or fetch from Discord API if uncached."""
+    if not guild or not user_id:
+        return None
+    member = guild.get_member(user_id)
+    if member:
+        return member
+    try:
+        return await guild.fetch_member(user_id)
+    except (discord.NotFound, discord.HTTPException):
+        return None
+
+
 async def find_ticket(guild: discord.Guild, staff_id: int) -> Optional[discord.TextChannel]:
     """Find ticket channel by staff member's name or ID."""
-    staff = guild.get_member(staff_id)
+    staff = await get_or_fetch_member(guild, staff_id)
     if not staff:
         return None
     

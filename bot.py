@@ -1,4 +1,4 @@
-﻿import discord
+import discord
 from discord.ext import commands
 import asyncio
 import os
@@ -16,14 +16,9 @@ from modals.submit_modal import SubmitModal
 from modals.revisi_modal import RevisiModal
 from modals.rekap_modal import RekapModal
 from recruitment.ticket import setup_recruitment, RecruitmentView
-from raw_downloader.asura import AsuraDownloader
+from raw_downloader import get_downloader
 from helpers.utils import find_or_create_staff_ticket, is_admin, is_staff
 from helpers.panel_content import build_admin_panel_embed, build_guide_embed, build_staff_panel_embed
-
-
-# Intents
-intents = discord.Intents.default()
-intents.message_content = True
 intents.guilds = True
 intents.members = True
 
@@ -201,6 +196,19 @@ async def update_payrate_command(
     # For now, we'll just acknowledge it
     embed = discord.Embed(
         title="âœ… Payrate Diupdate",
+            ephemeral=False
+        )
+    
+    if new_rate < 0 or new_rate > 50000:
+        return await interaction.response.send_message(
+            "❌ Rate harus antara 0 dan 50000!",
+            ephemeral=False
+        )
+    
+    # In a real implementation, this would update a config file or database
+    # For now, we'll just acknowledge it
+    embed = discord.Embed(
+        title="✅ Payrate Diupdate",
         description=f"Base rate untuk **{role}** telah diupdate ke **Rp {new_rate:,}**",
         color=discord.Color.green()
     )
@@ -209,20 +217,20 @@ async def update_payrate_command(
     await interaction.response.send_message(embed=embed, ephemeral=False)
 
 
-async def search_manga_command(interaction: discord.Interaction, query: str):
-    """Search for manga on Asura Scans."""
+async def search_manga_command(interaction: discord.Interaction, query: str, source: str = "asura"):
+    """Search for manga on Asura Scans or Doujiva."""
     await interaction.response.defer(ephemeral=False)
-    
-    results = await bot.downloader.search_manga(query)
+    downloader = get_downloader(source)
+    results = await downloader.search_manga(query)
     
     if not results:
         return await interaction.followup.send(
-            f"ðŸ” Tidak ditemukan manga dengan query: **{query}**",
+            f"🔍 Tidak ditemukan manga di **{source.title()}** dengan query: **{query}**",
             ephemeral=False
         )
     
     embed = discord.Embed(
-        title="ðŸ” Hasil Pencarian",
+        title=f"🔍 Hasil Pencarian ({source.title()})",
         description=f"Query: **{query}**",
         color=discord.Color.blue()
     )
@@ -231,7 +239,7 @@ async def search_manga_command(interaction: discord.Interaction, query: str):
         embed.add_field(
             name=f"{i}. {manga.get('title', 'Unknown')}",
             value=(
-                f"**ID:** {manga.get('id', 'N/A')}\n"
+                f"**ID:** `{manga.get('id', 'N/A')}`\n"
                 f"**Status:** {manga.get('status', 'N/A')}\n"
                 f"**Chapters:** {manga.get('chapter_count', 'N/A')}"
             ),
@@ -241,35 +249,39 @@ async def search_manga_command(interaction: discord.Interaction, query: str):
     await interaction.followup.send(embed=embed, ephemeral=False)
 
 
-async def download_raw_command(interaction: discord.Interaction, manga_id: str, chapter_id: str):
+async def download_raw_command(interaction: discord.Interaction, manga_id: str, chapter_id: str, source: str = "asura"):
     """Download one RAW chapter."""
     if not is_staff(interaction.user):
         return await interaction.response.send_message("Hanya staff yang bisa download RAW!", ephemeral=False)
     await interaction.response.defer(ephemeral=False)
+    downloader = get_downloader(source)
     save_dir = os.path.join(os.path.dirname(__file__), "data", "raw")
     os.makedirs(save_dir, exist_ok=True)
-    result = await bot.downloader.download_chapter(manga_id, chapter_id, save_dir)
+    result = await downloader.download_chapter(manga_id, chapter_id, save_dir)
     if not result:
-        return await interaction.followup.send("Gagal download chapter. Periksa manga ID dan chapter ID.", ephemeral=False)
-    embed = discord.Embed(title="Download Berhasil", color=discord.Color.green())
+        return await interaction.followup.send(f"Gagal download chapter dari **{source.title()}**. Periksa manga ID dan chapter ID.", ephemeral=False)
+    embed = discord.Embed(title=f"Download Berhasil ({source.title()})", color=discord.Color.green())
     embed.add_field(name="Manga ID", value=manga_id, inline=True)
     embed.add_field(name="Chapter ID", value=chapter_id, inline=True)
     embed.add_field(name="Lokasi", value=f"`{result}`", inline=False)
     await interaction.followup.send(embed=embed, ephemeral=False)
 
 
-@bot.tree.command(name="raw-search", description="Cari komik RAW dari Asura Scans")
-async def raw_search_command(interaction: discord.Interaction, query: str):
-    await search_manga_command(interaction, query)
+@bot.tree.command(name="raw-search", description="Cari komik RAW dari Asura Scans atau Doujiva")
+@discord.app_commands.describe(query="Judul atau kata kunci komik", source="Sumber RAW (asura atau doujiva)")
+async def raw_search_command(interaction: discord.Interaction, query: str, source: Literal["asura", "doujiva"] = "asura"):
+    await search_manga_command(interaction, query, source)
 
 
 @bot.tree.command(name="raw-chapters", description="Lihat daftar chapter RAW")
-async def raw_chapters_command(interaction: discord.Interaction, manga_id: str):
+@discord.app_commands.describe(manga_id="ID komik", source="Sumber RAW (asura atau doujiva)")
+async def raw_chapters_command(interaction: discord.Interaction, manga_id: str, source: Literal["asura", "doujiva"] = "asura"):
     await interaction.response.defer(ephemeral=False)
-    chapters = await bot.downloader.get_chapter_list(manga_id)
+    downloader = get_downloader(source)
+    chapters = await downloader.get_chapter_list(manga_id)
     if not chapters:
-        return await interaction.followup.send(f"Tidak ada chapter untuk manga ID **{manga_id}**.", ephemeral=False)
-    embed = discord.Embed(title="Daftar Chapter RAW", description=f"Manga ID: **{manga_id}**", color=discord.Color.blue())
+        return await interaction.followup.send(f"Tidak ada chapter untuk manga ID **{manga_id}** di **{source.title()}**.", ephemeral=False)
+    embed = discord.Embed(title=f"Daftar Chapter RAW ({source.title()})", description=f"Manga ID: **{manga_id}**", color=discord.Color.blue())
     for chapter in chapters[:20]:
         chapter_id = chapter.get("id", chapter.get("chapter_id", "N/A"))
         title = chapter.get("title", chapter.get("name", f"Chapter {chapter_id}"))
@@ -277,35 +289,40 @@ async def raw_chapters_command(interaction: discord.Interaction, manga_id: str):
     await interaction.followup.send(embed=embed, ephemeral=False)
 
 
-@bot.tree.command(name="raw-download", description="Download chapter RAW dari Asura Scans")
-async def raw_download_command(interaction: discord.Interaction, manga_id: str, chapter_id: str):
-    await download_raw_command(interaction, manga_id, chapter_id)
+@bot.tree.command(name="raw-download", description="Download chapter RAW dari Asura Scans atau Doujiva")
+@discord.app_commands.describe(manga_id="ID komik", chapter_id="ID chapter", source="Sumber RAW (asura atau doujiva)")
+async def raw_download_command(interaction: discord.Interaction, manga_id: str, chapter_id: str, source: Literal["asura", "doujiva"] = "asura"):
+    await download_raw_command(interaction, manga_id, chapter_id, source)
 
 
 @bot.tree.command(name="raw-download-batch", description="Batch download chapter RAW")
-async def raw_download_batch_command(interaction: discord.Interaction, manga_id: str, chapter_ids: str):
+@discord.app_commands.describe(manga_id="ID komik", chapter_ids="Daftar ID chapter dipisah koma", source="Sumber RAW (asura atau doujiva)")
+async def raw_download_batch_command(interaction: discord.Interaction, manga_id: str, chapter_ids: str, source: Literal["asura", "doujiva"] = "asura"):
     if not is_staff(interaction.user):
         return await interaction.response.send_message("Hanya staff yang bisa download RAW!", ephemeral=False)
     await interaction.response.defer(ephemeral=False)
+    downloader = get_downloader(source)
     save_dir = os.path.join(os.path.dirname(__file__), "data", "raw")
     os.makedirs(save_dir, exist_ok=True)
     ids = [item.strip() for item in chapter_ids.split(",") if item.strip()][:10]
     if not ids:
         return await interaction.followup.send("Isi minimal satu chapter ID.", ephemeral=False)
-    embed = discord.Embed(title="Batch Download RAW", color=discord.Color.green())
+    embed = discord.Embed(title=f"Batch Download RAW ({source.title()})", color=discord.Color.green())
     for chapter_id in ids:
-        result = await bot.downloader.download_chapter(manga_id, chapter_id, save_dir)
+        result = await downloader.download_chapter(manga_id, chapter_id, save_dir)
         embed.add_field(name=f"Chapter {chapter_id}", value=f"OK: `{result}`" if result else "Gagal", inline=False)
     await interaction.followup.send(embed=embed, ephemeral=False)
 
 
 @bot.tree.command(name="raw-update", description="Cek update RAW terbaru")
-async def raw_update_command(interaction: discord.Interaction, query: str = ""):
+@discord.app_commands.describe(query="Kata kunci komik (opsional)", source="Sumber RAW (asura atau doujiva)")
+async def raw_update_command(interaction: discord.Interaction, query: str = "", source: Literal["asura", "doujiva"] = "asura"):
     await interaction.response.defer(ephemeral=False)
-    results = await bot.downloader.search_manga(query or "latest")
+    downloader = get_downloader(source)
+    results = await downloader.search_manga(query or "latest")
     if not results:
-        return await interaction.followup.send("Belum bisa mengambil update RAW terbaru dari API.", ephemeral=False)
-    embed = discord.Embed(title="Update RAW Terbaru", color=discord.Color.blue())
+        return await interaction.followup.send(f"Belum bisa mengambil update RAW terbaru dari API {source.title()}.", ephemeral=False)
+    embed = discord.Embed(title=f"Update RAW Terbaru ({source.title()})", color=discord.Color.blue())
     for manga in results[:10]:
         embed.add_field(name=manga.get("title", "Unknown"), value=f"ID: `{manga.get('id', 'N/A')}`", inline=False)
     await interaction.followup.send(embed=embed, ephemeral=False)
