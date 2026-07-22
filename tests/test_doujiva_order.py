@@ -1,26 +1,26 @@
 import unittest
 
-from raw_downloader.doujiva import _image_extension, _sort_chapter_images
+from raw_downloader.doujiva import _image_extension, _normalize_chapter_images
 
 
 class DoujivaImageOrderTests(unittest.TestCase):
-    def test_proxy_urls_are_sorted_by_upstream_page_number(self):
+    def test_api_array_order_is_kept_exactly(self):
         base = "https://api.example/image?url=https%3A%2F%2Fcdn.example%2Fchapter%2F"
         images = [base + name for name in ("10-hash.jpg", "2-hash.jpg", "1-hash.jpg")]
 
-        ordered = _sort_chapter_images(images)
+        ordered = _normalize_chapter_images(images)
 
-        self.assertIn("1-hash.jpg", ordered[0])
+        self.assertIn("10-hash.jpg", ordered[0])
         self.assertIn("2-hash.jpg", ordered[1])
-        self.assertIn("10-hash.jpg", ordered[2])
+        self.assertIn("1-hash.jpg", ordered[2])
 
-    def test_object_page_metadata_takes_priority(self):
+    def test_object_entries_also_keep_api_order(self):
         images = [
             {"url": "https://cdn.example/unknown-b.webp", "page": 2},
             {"url": "https://cdn.example/unknown-a.webp", "page": 1},
         ]
 
-        self.assertTrue(_sort_chapter_images(images)[0].endswith("unknown-a.webp"))
+        self.assertTrue(_normalize_chapter_images(images)[0].endswith("unknown-b.webp"))
 
     def test_extension_comes_from_url_inside_proxy(self):
         url = "https://api.example/image?url=https%3A%2F%2Fcdn.example%2F10-page.webp"
