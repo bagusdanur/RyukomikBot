@@ -130,11 +130,26 @@ class AdminPanelView(discord.ui.View):
 
 async def upsert_admin_panel(channel: discord.TextChannel):
     embed = build_admin_panel_embed()
-    async for message in channel.history(limit=50):
+    candidates = list(await channel.pins())
+    known_ids = {message.id for message in candidates}
+    async for message in channel.history(limit=100):
+        if message.id not in known_ids:
+            candidates.append(message)
+    for message in candidates:
         if message.author.id != channel.guild.me.id or not message.embeds:
             continue
         current = message.embeds[0]
         if "Pusat Kontrol Administrator" in (current.title or "") or "Administrator Panel" in (current.footer.text or ""):
             await message.edit(embed=embed, view=AdminPanelView())
+            if not message.pinned:
+                try:
+                    await message.pin(reason="Panel administrator agar selalu mudah ditemukan")
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
             return message, False
-    return await channel.send(embed=embed, view=AdminPanelView()), True
+    message = await channel.send(embed=embed, view=AdminPanelView())
+    try:
+        await message.pin(reason="Panel administrator agar selalu mudah ditemukan")
+    except (discord.Forbidden, discord.HTTPException):
+        pass
+    return message, True

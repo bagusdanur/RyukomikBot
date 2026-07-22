@@ -6,14 +6,13 @@ import discord
 from discord.ext import commands
 
 from config import REKRUT_CAT_ID, ROLE_STAFF_ID
-from helpers.panel_content import build_staff_panel_embed
 from helpers.utils import (
     build_private_ticket_name,
     build_private_ticket_overwrites,
     find_or_create_staff_ticket,
     is_admin,
 )
-from panels.staff_panel import StaffPanelView
+from panels.staff_panel import upsert_staff_panel
 
 
 POSITIONS = ("TL", "TS", "TL+TS")
@@ -333,11 +332,8 @@ class RecruitmentReviewView(RecruitmentBaseView):
         for child in self.children:
             child.disabled = True
         await interaction.response.edit_message(view=self)
-        await ticket.send(
-            content=f"Selamat {applicant.mention}, kamu diterima sebagai staff posisi **{self.position}**.",
-            embed=build_staff_panel_embed(applicant),
-            view=StaffPanelView(),
-        )
+        await ticket.send(content=f"Selamat {applicant.mention}, kamu diterima sebagai staff posisi **{self.position}**.")
+        await upsert_staff_panel(ticket, applicant)
 
 
 class RecruitmentBot:

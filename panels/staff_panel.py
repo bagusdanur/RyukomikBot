@@ -117,13 +117,28 @@ class StaffPanelView(discord.ui.View):
 
 
 async def upsert_staff_panel(channel: discord.TextChannel, staff: discord.Member):
-    """Update the latest staff panel in place, creating it only when missing."""
+    """Update and pin the sole staff panel so chat history cannot bury it."""
     embed = build_staff_panel_embed(staff)
-    async for message in channel.history(limit=50):
+    candidates = list(await channel.pins())
+    known_ids = {message.id for message in candidates}
+    async for message in channel.history(limit=100):
+        if message.id not in known_ids:
+            candidates.append(message)
+    for message in candidates:
         if message.author.id != channel.guild.me.id or not message.embeds:
             continue
         current = message.embeds[0]
         if "Ruang Kerja Staff" in (current.title or "") or "Private Staff Panel" in (current.footer.text or ""):
             await message.edit(embed=embed, view=StaffPanelView())
+            if not message.pinned:
+                try:
+                    await message.pin(reason="Panel staff agar selalu mudah ditemukan")
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
             return message, False
-    return await channel.send(embed=embed, view=StaffPanelView()), True
+    message = await channel.send(embed=embed, view=StaffPanelView())
+    try:
+        await message.pin(reason="Panel staff agar selalu mudah ditemukan")
+    except (discord.Forbidden, discord.HTTPException):
+        pass
+    return message, True
