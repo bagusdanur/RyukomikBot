@@ -7,6 +7,7 @@ export type Assignment = {
 export type Staff = { id: number; staff_id: number; username: string; avatar: string | null; task_count: number; active_count: number; approved_amount: number; paid_amount: number }
 export type Recap = { staff_id: number; staff_name: string; staff_avatar: string | null; chapter_count: number; total_amount: number; pending_amount: number; paid_amount: number }
 export type Invoice = { id: number; invoice_number: string; staff_id: number; staff_name: string; staff_avatar: string | null; period: string; chapter_count: number; total_amount: number; status: string; issued_at: string; paid_at: string | null }
+export type Submission = { id:number;assignment_id:number;staff_id:number;original_name:string;size_bytes:number;uploaded_at:string;manga:string;chapter:string;role:string }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -34,6 +35,10 @@ const liveApi = {
   invoices: (period: string) => request<Invoice[]>(`/api/invoices?period=${period}`),
   createInvoice: (staff_id: number, period: string) => request('/api/invoices', { method: 'POST', body: JSON.stringify({ staff_id, period }) }),
   payInvoice: (id: number) => request(`/api/invoices/${id}/pay`, { method: 'POST' }),
+  presignUpload: (assignment_id:number,file:File) => request<{upload_id:number;upload_url:string}>('/api/uploads/presign', { method:'POST', body:JSON.stringify({assignment_id,filename:file.name,content_type:file.type||'application/zip',size_bytes:file.size}) }),
+  completeUpload: (id:number) => request<{ok:boolean;assignment_id:number}>(`/api/uploads/${id}/complete`, {method:'POST'}),
+  submissions: (assignmentId?:number) => request<Submission[]>(`/api/submissions${assignmentId?`?assignment_id=${assignmentId}`:''}`),
+  downloadSubmission: (id:number) => request<{download_url:string}>(`/api/submissions/${id}/download`),
   audit: () => request<Array<Record<string, string | number | null>>>('/api/audit'),
   logout: () => request('/auth/logout', { method: 'POST' }),
 }
@@ -59,8 +64,16 @@ const demoApi = {
   invoices: async () => [{ id:1,invoice_number:'RYU-202607-1001-A1B2',staff_id:1001,staff_name:'Aira',staff_avatar:null,period:'2026-07',chapter_count:6,total_amount:68000,status:'issued',issued_at:'2026-07-22',paid_at:null }],
   createInvoice: async () => ({ id: 2 }),
   payInvoice: async () => ({ ok: true }),
+  presignUpload: async () => ({upload_id:1,upload_url:'demo'}),
+  completeUpload: async () => ({ok:true,assignment_id:24}),
+  submissions: async () => [],
+  downloadSubmission: async () => ({download_url:'#'}),
   audit: async () => [{ id: 1, created_at: '2026-07-22 14:20', actor_id: 1, action: 'payrate.update', target_type: 'payrate', target_id: 'TS' }],
   logout: async () => ({ ok: true }),
 }
 
 export const api = import.meta.env.VITE_DEMO_MODE === 'true' ? demoApi : liveApi
+
+export function putFile(url:string,file:File,onProgress:(value:number)=>void){
+  return new Promise<void>((resolve,reject)=>{const xhr=new XMLHttpRequest();xhr.open('PUT',url);xhr.setRequestHeader('Content-Type',file.type||'application/zip');xhr.upload.onprogress=e=>e.lengthComputable&&onProgress(Math.round(e.loaded/e.total*100));xhr.onload=()=>xhr.status>=200&&xhr.status<300?resolve():reject(new Error(`Upload R2 gagal (HTTP ${xhr.status}).`));xhr.onerror=()=>reject(new Error('Koneksi upload terputus.'));xhr.send(file)})
+}

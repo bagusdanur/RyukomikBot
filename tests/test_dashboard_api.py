@@ -4,6 +4,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 class DashboardApiTests(unittest.TestCase):
@@ -86,6 +87,26 @@ class DashboardApiTests(unittest.TestCase):
         asyncio.run(self.module.pay_invoice(created["id"], user))
         paid_rows = asyncio.run(self.module.invoices(period="2026-07", _user=user))
         self.assertEqual(paid_rows[0]["status"], "paid")
+
+    def test_staff_can_upload_and_submit_result(self):
+        class FakeR2:
+            def generate_presigned_url(self, *_args, **_kwargs):
+                return "https://upload.example/signed"
+
+            def head_object(self, **_kwargs):
+                return {"ContentLength": 1234}
+
+        user = {"id": 100, "username": "Staff 100", "role": "staff"}
+        payload = self.module.UploadRequest(
+            assignment_id=1, filename="hasil-chapter.zip",
+            content_type="application/zip", size_bytes=1234,
+        )
+        with patch.object(self.module, "r2_client", return_value=FakeR2()):
+            signed = asyncio.run(self.module.presign_upload(payload, user))
+            result = asyncio.run(self.module.complete_upload(signed["upload_id"], user))
+        self.assertTrue(result["ok"])
+        submitted = asyncio.run(self.module.assignments(status="submitted", search="Project A", user=user))
+        self.assertEqual(len(submitted), 1)
 
 
 if __name__ == "__main__":

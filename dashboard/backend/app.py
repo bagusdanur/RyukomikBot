@@ -1,5 +1,6 @@
 import json
 import os
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Literal
@@ -7,6 +8,7 @@ import secrets
 
 import aiohttp
 import aiosqlite
+import boto3
 from authlib.integrations.starlette_client import OAuth
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
@@ -29,6 +31,11 @@ SESSION_SECRET = os.getenv("DASHBOARD_SESSION_SECRET", "")
 DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", "")
 DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET", "")
 DEV_BYPASS = os.getenv("DASHBOARD_DEV_BYPASS", "false").lower() == "true"
+R2_ACCOUNT_ID = os.getenv("R2_ACCOUNT_ID", "")
+R2_ACCESS_KEY_ID = os.getenv("R2_ACCESS_KEY_ID", "")
+R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY", "")
+R2_BUCKET_NAME = os.getenv("R2_BUCKET_NAME", "ryukomik-staff-submissions")
+R2_ENDPOINT = os.getenv("R2_ENDPOINT", f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com" if R2_ACCOUNT_ID else "")
 
 
 async def dashboard_db():
@@ -75,6 +82,21 @@ async def setup_dashboard_tables():
                 username TEXT NOT NULL,
                 avatar TEXT,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await connection.execute("""
+            CREATE TABLE IF NOT EXISTS assignment_submissions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                assignment_id INTEGER NOT NULL,
+                staff_id INTEGER NOT NULL,
+                object_key TEXT NOT NULL UNIQUE,
+                original_name TEXT NOT NULL,
+                content_type TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                uploaded_at DATETIME,
+                FOREIGN KEY(assignment_id) REFERENCES assignments(id)
             )
         """)
         await connection.commit()
@@ -185,6 +207,25 @@ class AssignmentCreate(BaseModel):
 class InvoiceCreate(BaseModel):
     staff_id: int
     period: str = Field(pattern=r"^\d{4}-\d{2}$")
+
+
+class UploadRequest(BaseModel):
+    assignment_id: int
+    filename: str = Field(min_length=1, max_length=180)
+    content_type: str = Field(default="application/zip", max_length=100)
+    size_bytes: int = Field(gt=0, le=5 * 1024 * 1024 * 1024)
+
+
+def r2_client():
+    if not all((R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME)):
+        raise HTTPException(status_code=503, detail="Penyimpanan R2 belum dikonfigurasi.")
+    return boto3.client("s3", endpoint_url=R2_ENDPOINT, aws_access_key_id=R2_ACCESS_KEY_ID,
+                        aws_secret_access_key=R2_SECRET_ACCESS_KEY, region_name="auto")
+
+
+def safe_object_part(value: str) -> str:
+    cleaned = "".join(char.lower() if char.isalnum() else "-" for char in value.strip())
+    return "-".join(filter(None, cleaned.split("-")))[:80] or "file"
 
 
 async def discord_api(method: str, path: str, payload=None):
@@ -594,6 +635,118 @@ async def pay_invoice(invoice_id: int, user=Depends(admin_user)):
         await connection.close()
     await audit(user["id"], "invoice.pay", "invoice", invoice_id, before=dict(invoice), after={"status": "paid"})
     return {"ok": True}
+
+
+@app.post("/api/uploads/presign")
+async def presign_upload(payload: UploadRequest, user=Depends(current_user)):
+    extension = os.path.splitext(payload.filename)[1].lower()
+    if extension not in {".zip", ".7z", ".rar", ".psd", ".clip", ".txt", ".docx"}:
+        raise HTTPException(status_code=422, detail="Gunakan ZIP, 7Z, RAR, PSD, CLIP, TXT, atau DOCX.")
+    connection = await dashboard_db()
+    try:
+        assignment = await (await connection.execute(
+            "SELECT * FROM assignments WHERE id=?", (payload.assignment_id,)
+        )).fetchone()
+        if not assignment:
+            raise HTTPException(status_code=404, detail="Tugas tidak ditemukan.")
+        if user["role"] != "admin" and assignment["staff_id"] != user["id"]:
+            raise HTTPException(status_code=403, detail="Tugas ini bukan milik Anda.")
+        if assignment["status"] not in ("claimed", "revision"):
+            raise HTTPException(status_code=409, detail="Tugas ini tidak sedang dalam tahap pengerjaan/revisi.")
+        filename = safe_object_part(os.path.splitext(payload.filename)[0]) + extension
+        object_key = "/".join((
+            "submissions", safe_object_part(assignment["manga"]),
+            f"chapter-{safe_object_part(assignment['chapter'])}", assignment["role"].replace("+", "-"),
+            f"task-{assignment['id']}", f"{assignment['staff_id']}-{int(datetime.now().timestamp())}-{secrets.token_hex(3)}-{filename}",
+        ))
+        cursor = await connection.execute("""
+            INSERT INTO assignment_submissions
+                (assignment_id,staff_id,object_key,original_name,content_type,size_bytes,status)
+            VALUES(?,?,?,?,?,?,'pending')
+        """, (assignment["id"], assignment["staff_id"], object_key, payload.filename, payload.content_type, payload.size_bytes))
+        await connection.commit()
+        upload_id = cursor.lastrowid
+    finally:
+        await connection.close()
+    client = r2_client()
+    upload_url = await asyncio.to_thread(client.generate_presigned_url, "put_object", Params={
+        "Bucket": R2_BUCKET_NAME, "Key": object_key, "ContentType": payload.content_type,
+    }, ExpiresIn=1800)
+    return {"upload_id": upload_id, "upload_url": upload_url, "object_key": object_key, "expires_in": 1800}
+
+
+@app.post("/api/uploads/{upload_id}/complete")
+async def complete_upload(upload_id: int, user=Depends(current_user)):
+    connection = await dashboard_db()
+    try:
+        upload = await (await connection.execute("""
+            SELECT s.*, a.status assignment_status FROM assignment_submissions s
+            JOIN assignments a ON a.id=s.assignment_id WHERE s.id=?
+        """, (upload_id,))).fetchone()
+        if not upload:
+            raise HTTPException(status_code=404, detail="Upload tidak ditemukan.")
+        if user["role"] != "admin" and upload["staff_id"] != user["id"]:
+            raise HTTPException(status_code=403, detail="Upload ini bukan milik Anda.")
+        if upload["status"] == "uploaded":
+            return {"ok": True, "assignment_id": upload["assignment_id"]}
+        client = r2_client()
+        try:
+            metadata = await asyncio.to_thread(client.head_object, Bucket=R2_BUCKET_NAME, Key=upload["object_key"])
+        except Exception:
+            raise HTTPException(status_code=409, detail="File belum ditemukan di R2. Tunggu upload selesai lalu coba lagi.")
+        if int(metadata.get("ContentLength", 0)) != upload["size_bytes"]:
+            raise HTTPException(status_code=409, detail="Ukuran file di R2 tidak sesuai; upload ulang diperlukan.")
+        await connection.execute(
+            "UPDATE assignment_submissions SET status='uploaded', uploaded_at=CURRENT_TIMESTAMP WHERE id=?", (upload_id,)
+        )
+        await connection.execute("""
+            UPDATE assignments SET status='submitted', submitted_at=CURRENT_TIMESTAMP,
+                gdrive_link=? WHERE id=? AND status IN ('claimed','revision')
+        """, (f"r2://{R2_BUCKET_NAME}/{upload['object_key']}", upload["assignment_id"]))
+        await connection.commit()
+    finally:
+        await connection.close()
+    await audit(user["id"], "submission.upload", "assignment", upload["assignment_id"], after={"upload_id": upload_id, "size": upload["size_bytes"]})
+    return {"ok": True, "assignment_id": upload["assignment_id"]}
+
+
+@app.get("/api/submissions")
+async def submissions(assignment_id: int | None = None, user=Depends(current_user)):
+    clauses, params = ["s.status='uploaded'"], []
+    if assignment_id:
+        clauses.append("s.assignment_id=?"); params.append(assignment_id)
+    if user["role"] != "admin":
+        clauses.append("s.staff_id=?"); params.append(user["id"])
+    connection = await dashboard_db()
+    try:
+        rows = await (await connection.execute(f"""
+            SELECT s.*, a.manga, a.chapter, a.role FROM assignment_submissions s
+            JOIN assignments a ON a.id=s.assignment_id
+            WHERE {' AND '.join(clauses)} ORDER BY s.uploaded_at DESC LIMIT 200
+        """, params)).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        await connection.close()
+
+
+@app.get("/api/submissions/{submission_id}/download")
+async def submission_download(submission_id: int, user=Depends(current_user)):
+    connection = await dashboard_db()
+    try:
+        row = await (await connection.execute(
+            "SELECT * FROM assignment_submissions WHERE id=? AND status='uploaded'", (submission_id,)
+        )).fetchone()
+    finally:
+        await connection.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Submission tidak ditemukan.")
+    if user["role"] != "admin" and row["staff_id"] != user["id"]:
+        raise HTTPException(status_code=403, detail="Submission ini bukan milik Anda.")
+    client = r2_client()
+    url = await asyncio.to_thread(client.generate_presigned_url, "get_object", Params={
+        "Bucket": R2_BUCKET_NAME, "Key": row["object_key"], "ResponseContentDisposition": f'attachment; filename="{row["original_name"]}"',
+    }, ExpiresIn=900)
+    return {"download_url": url, "expires_in": 900}
 
 
 @app.get("/api/audit")
