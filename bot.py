@@ -9,7 +9,7 @@ from typing import Literal
 from config import TOKEN, GUILD_ID, STAFF_TASKS_CHANNEL_ID, STAFF_LOG_CHANNEL_ID, ROLE_STAFF_ID, ROLE_ADMIN_ID
 from database import get_assignments_by_status, setup_database
 from panels.admin_panel import AdminPanelView
-from panels.staff_panel import StaffPanelView
+from panels.staff_panel import StaffPanelView, upsert_staff_panel
 from panels.claim_view import ClaimView
 from views.ticket_views import TicketSubmitView, TicketReviewView
 from views.select_views import ReviewSelectView, SubmitSelectView, ConfirmPayView
@@ -161,10 +161,9 @@ async def panels_command(
             "Member tujuan belum memiliki role Staff.", ephemeral=False
         )
     ticket = await find_or_create_staff_ticket(interaction.guild, target)
-    embed = build_staff_panel_embed(target)
-    await ticket.send(embed=embed, view=StaffPanelView())
+    _, created = await upsert_staff_panel(ticket, target)
     await interaction.response.send_message(
-        f"Staff Panel untuk {target.mention} berhasil dikirim ke {ticket.mention}.", ephemeral=False
+        f"Staff Panel untuk {target.mention} berhasil {'dibuat' if created else 'diperbarui'} di {ticket.mention}.", ephemeral=False
     )
 
 
@@ -375,8 +374,8 @@ async def panel_command(ctx: commands.Context, panel: str = "auto", staff: disco
         if not is_staff(target):
             return await ctx.send("Member tujuan belum memiliki role Staff.")
         ticket = await find_or_create_staff_ticket(ctx.guild, target)
-        await ticket.send(embed=build_staff_panel_embed(target), view=StaffPanelView())
-        return await ctx.send(f"Staff Panel untuk {target.mention} dikirim ke {ticket.mention}.")
+        _, created = await upsert_staff_panel(ticket, target)
+        return await ctx.send(f"Staff Panel untuk {target.mention} {'dibuat' if created else 'diperbarui'} di {ticket.mention}.")
     await ctx.send("Kamu tidak memiliki akses ke panel ini.")
 
 @bot.command(name="help-ryukomik")

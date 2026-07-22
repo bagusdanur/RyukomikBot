@@ -2,7 +2,7 @@
 
 import database as db
 from helpers.utils import STATUS_EMOJI, format_currency, get_current_period, is_staff
-from helpers.panel_content import build_guide_embed
+from helpers.panel_content import build_guide_embed, build_staff_panel_embed
 from views.select_views import StaffTaskView, SubmitSelectView
 from views.raw_views import RawSearchModal
 
@@ -89,3 +89,16 @@ class StaffPanelView(discord.ui.View):
     @discord.ui.button(label="Panduan", style=discord.ButtonStyle.secondary, custom_id="staff_guide", row=1)
     async def guide_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(embed=build_guide_embed("staff"), ephemeral=False)
+
+
+async def upsert_staff_panel(channel: discord.TextChannel, staff: discord.Member):
+    """Update the latest staff panel in place, creating it only when missing."""
+    embed = build_staff_panel_embed(staff)
+    async for message in channel.history(limit=50):
+        if message.author.id != channel.guild.me.id or not message.embeds:
+            continue
+        current = message.embeds[0]
+        if "Ruang Kerja Staff" in (current.title or "") or "Private Staff Panel" in (current.footer.text or ""):
+            await message.edit(embed=embed, view=StaffPanelView())
+            return message, False
+    return await channel.send(embed=embed, view=StaffPanelView()), True
