@@ -33,6 +33,9 @@ Buka `http://127.0.0.1:5173`.
 
 ## Production
 
+Dashboard Ryukomik memakai `https://staff.ryukomik.web.id` dengan callback Discord
+`https://staff.ryukomik.web.id/auth/callback`.
+
 1. Isi environment OAuth dan session secret pada VPS.
 2. Jalankan FastAPI hanya di `127.0.0.1:8000`.
 3. Jalankan `npm run build`.
