@@ -39,7 +39,7 @@ Dashboard Ryukomik memakai `https://staff.ryukomik.web.id` dengan callback Disco
 1. Isi environment OAuth dan session secret pada VPS.
 2. Jalankan FastAPI hanya di `127.0.0.1:8000`.
 3. Jalankan `npm run build`.
-4. Sajikan `dashboard/frontend/dist` melalui Nginx.
+4. Salin isi `dashboard/frontend/dist` ke `/var/www/staff.ryukomik.web.id` dan sajikan melalui Nginx.
 5. Proxy `/api`, `/auth`, dan `/health` ke FastAPI.
 
 Database production masih memakai SQLite WAL pada MVP agar bot tetap kompatibel. Migrasi PostgreSQL dilakukan setelah dashboard read-only dan OAuth lolos staging.
