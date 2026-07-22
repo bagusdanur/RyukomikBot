@@ -113,7 +113,7 @@ bot = RyukomikBot()
 )
 async def panels_command(
     interaction: discord.Interaction,
-    panel: str = "auto",
+    panel: Literal["auto", "admin", "staff"] = "auto",
     staff: discord.Member = None,
 ):
     """Send exactly one panel to its designated channel."""
@@ -175,7 +175,7 @@ async def guide_command(interaction: discord.Interaction):
 @discord.app_commands.describe(role="Role TL, TS, atau TL+TS", new_rate="Base rate baru dalam Rupiah")
 async def update_payrate_command(
     interaction: discord.Interaction,
-    role: str,
+    role: Literal["TL", "TS", "TL+TS"],
     new_rate: int,
 ):
     """Persist the base payrate used by future assignments."""

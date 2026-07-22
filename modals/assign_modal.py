@@ -12,7 +12,54 @@ from panels.claim_view import ClaimView
 import database as db
 
 
-class AssignModal(discord.ui.Modal, title="Assign Tugas Baru"):
+class AssignRoleView(discord.ui.View):
+    """First assignment step: choose a role without typing it manually."""
+
+    def __init__(self):
+        super().__init__(timeout=180)
+        self.add_item(AssignRoleSelect())
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if is_admin(interaction.user):
+            return True
+        await interaction.response.send_message(
+            "Hanya administrator yang dapat membuat tugas.", ephemeral=False
+        )
+        return False
+
+
+class AssignRoleSelect(discord.ui.Select):
+    def __init__(self):
+        super().__init__(
+            placeholder="Pilih role yang dibutuhkan...",
+            options=[
+                discord.SelectOption(
+                    label="TL — Translator",
+                    description="Menerjemahkan chapter",
+                    value="TL",
+                    emoji="💬",
+                ),
+                discord.SelectOption(
+                    label="TS — Typesetter",
+                    description="Cleaning, redraw, dan typesetting",
+                    value="TS",
+                    emoji="🎨",
+                ),
+                discord.SelectOption(
+                    label="TL+TS — Keduanya",
+                    description="Translator sekaligus typesetter",
+                    value="TL+TS",
+                    emoji="✨",
+                ),
+            ],
+            custom_id="assign:role_select:v1",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.send_modal(AssignModal(self.values[0]))
+
+
+class AssignModal(discord.ui.Modal, title="Detail Tugas Baru"):
     """Modal for assigning new tasks."""
 
     function_name = "AssignModal"
@@ -31,26 +78,30 @@ class AssignModal(discord.ui.Modal, title="Assign Tugas Baru"):
         required=True,
     )
 
-    role = discord.ui.TextInput(
-        label="Role (TL/TS/TL+TS)",
-        placeholder="TL, TS, atau TL+TS",
-        style=discord.TextStyle.short,
-        required=True,
-    )
-
     rate_override = discord.ui.TextInput(
-        label="Rate Override (Opsional)",
-        placeholder="Kosongkan untuk rate default",
+        label="Bayaran Manual (Opsional)",
+        placeholder="Contoh: 15000. Kosongkan untuk rate default",
         style=discord.TextStyle.short,
         required=False,
     )
 
-    options = discord.ui.TextInput(
-        label="Halaman, Deadline Ketat? (Opsional)",
-        placeholder="Contoh: 24, ya",
+    page_count = discord.ui.TextInput(
+        label="Jumlah Halaman (Opsional)",
+        placeholder="Contoh: 24",
         style=discord.TextStyle.short,
         required=False,
     )
+
+    tight_deadline = discord.ui.TextInput(
+        label="Deadline Ketat? (Opsional)",
+        placeholder="Pilih jawaban: ya atau tidak",
+        style=discord.TextStyle.short,
+        required=False,
+    )
+
+    def __init__(self, role: str):
+        super().__init__()
+        self.selected_role = role
 
     async def on_submit(self, interaction: discord.Interaction):
         if not is_admin(interaction.user):
@@ -59,7 +110,7 @@ class AssignModal(discord.ui.Modal, title="Assign Tugas Baru"):
                 ephemeral=False,
             )
 
-        role = normalize_role(self.role.value)
+        role = normalize_role(self.selected_role)
         if role is None:
             return await interaction.response.send_message(
                 "Role harus TL, TS, atau TL+TS!",
@@ -87,18 +138,22 @@ class AssignModal(discord.ui.Modal, title="Assign Tugas Baru"):
 
         page_count = 0
         tight_deadline = False
-        if self.options.value:
-            option_parts = [part.strip() for part in self.options.value.split(",")]
-            if option_parts and option_parts[0]:
-                try:
-                    page_count = int(option_parts[0])
-                except ValueError:
-                    return await interaction.response.send_message(
-                        "Jumlah halaman harus angka. Contoh: 24, ya",
-                        ephemeral=False,
-                    )
-            if len(option_parts) > 1:
-                tight_deadline = option_parts[1].casefold() in ("ya", "yes", "y", "true", "1")
+        if self.page_count.value:
+            try:
+                page_count = int(self.page_count.value.strip())
+                if page_count < 0 or page_count > 1000:
+                    raise ValueError
+            except ValueError:
+                return await interaction.response.send_message(
+                    "Jumlah halaman harus berupa angka antara 0 dan 1000.", ephemeral=False
+                )
+        if self.tight_deadline.value:
+            deadline_answer = self.tight_deadline.value.strip().casefold()
+            if deadline_answer not in ("ya", "yes", "y", "tidak", "no", "n"):
+                return await interaction.response.send_message(
+                    "Deadline ketat harus dijawab `ya` atau `tidak`.", ephemeral=False
+                )
+            tight_deadline = deadline_answer in ("ya", "yes", "y")
 
         multiplier = 1.0
         bonuses = []

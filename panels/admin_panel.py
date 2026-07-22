@@ -22,9 +22,19 @@ class AdminPanelView(discord.ui.View):
 
     @discord.ui.button(label="Assign Tugas", style=discord.ButtonStyle.primary, custom_id="admin_assign")
     async def assign_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        from modals.assign_modal import AssignModal
+        from modals.assign_modal import AssignRoleView
 
-        await interaction.response.send_modal(AssignModal())
+        embed = discord.Embed(
+            title="Langkah 1 • Pilih Role Tugas",
+            description=(
+                "Pilih role yang dibutuhkan. Setelah itu form detail tugas akan terbuka.\n\n"
+                "• **TL** untuk translator\n"
+                "• **TS** untuk typesetter/editor\n"
+                "• **TL+TS** untuk satu staff yang mengerjakan keduanya"
+            ),
+            color=discord.Color.blue(),
+        )
+        await interaction.response.send_message(embed=embed, view=AssignRoleView(), ephemeral=False)
 
     @discord.ui.button(label="Review", style=discord.ButtonStyle.secondary, custom_id="admin_review")
     async def review_button(self, interaction: discord.Interaction, button: discord.ui.Button):
