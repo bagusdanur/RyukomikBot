@@ -13,6 +13,9 @@ class DatabaseConcurrencyTests(unittest.IsolatedAsyncioTestCase):
             with tempfile.TemporaryDirectory() as temporary_directory:
                 database.DB_PATH = os.path.join(temporary_directory, "concurrency.db")
                 await database.setup_database()
+                self.assertEqual(await database.get_role_payrate("TL"), 3000)
+                await database.set_role_payrate("TL", 7500)
+                self.assertEqual(await database.get_role_payrate("TL"), 7500)
 
                 await asyncio.gather(
                     *(

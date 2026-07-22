@@ -3,7 +3,6 @@ import discord
 from config import ROLE_STAFF_ID, STAFF_TASKS_CHANNEL_ID
 from helpers.utils import (
     calculate_final_rate,
-    calculate_rate,
     format_currency,
     is_admin,
     is_popular_series,
@@ -68,7 +67,7 @@ class AssignModal(discord.ui.Modal, title="Assign Tugas Baru"):
             )
 
         has_override = False
-        base_rate = calculate_rate(role, self.manga.value)
+        base_rate = await db.get_role_payrate(role)
         if self.rate_override.value:
             try:
                 clean_override = self.rate_override.value.replace(".", "").replace(",", "").strip()

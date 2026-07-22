@@ -56,6 +56,18 @@ async def setup_database():
                 paid_at DATETIME
             )
         """)
+
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS payrates (
+                role TEXT PRIMARY KEY,
+                base_rate INTEGER NOT NULL CHECK(base_rate >= 0),
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await db.executemany(
+            "INSERT OR IGNORE INTO payrates (role, base_rate) VALUES (?, ?)",
+            (("TL", 3000), ("TS", 3000), ("TL+TS", 5000)),
+        )
         
         await db.commit()
     finally:
@@ -252,6 +264,38 @@ async def get_rekap(period: str) -> List[Dict[str, Any]]:
         """, (f"{period}%",))
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
+    finally:
+        await db.close()
+
+
+async def get_role_payrate(role: str) -> int:
+    """Return the persisted base rate for an assignment role."""
+    defaults = {"TL": 3000, "TS": 3000, "TL+TS": 5000}
+    db = await get_db()
+    try:
+        cursor = await db.execute("SELECT base_rate FROM payrates WHERE role = ?", (role,))
+        row = await cursor.fetchone()
+        return int(row[0]) if row else defaults.get(role, 3000)
+    finally:
+        await db.close()
+
+
+async def set_role_payrate(role: str, base_rate: int) -> bool:
+    """Persist a base rate used by future non-override assignments."""
+    db = await get_db()
+    try:
+        await db.execute(
+            """
+            INSERT INTO payrates (role, base_rate, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(role) DO UPDATE SET
+                base_rate = excluded.base_rate,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (role, base_rate),
+        )
+        await db.commit()
+        return True
     finally:
         await db.close()
 

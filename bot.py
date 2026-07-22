@@ -1,8 +1,9 @@
-import discord
+﻿import discord
 from discord.ext import commands
 import asyncio
 import os
 from datetime import datetime
+from typing import Literal
 
 from config import TOKEN, GUILD_ID, STAFF_TASKS_CHANNEL_ID, STAFF_LOG_CHANNEL_ID, ROLE_STAFF_ID, ROLE_ADMIN_ID
 from database import get_assignments_by_status, setup_database
@@ -19,6 +20,12 @@ from recruitment.ticket import setup_recruitment, RecruitmentView
 from raw_downloader import get_downloader
 from helpers.utils import find_or_create_staff_ticket, is_admin, is_staff
 from helpers.panel_content import build_admin_panel_embed, build_guide_embed, build_staff_panel_embed
+import database as db
+
+
+# Discord gateway intents required by prefix commands, role checks, and tickets.
+intents = discord.Intents.default()
+intents.message_content = True
 intents.guilds = True
 intents.members = True
 
@@ -36,8 +43,6 @@ class RyukomikBot(commands.Bot):
         # Setup recruitment
         self.recruitment = setup_recruitment(self)
         
-        # Raw downloader
-        self.downloader = AsuraDownloader()
         self.commands_synced = False
     
     async def setup_hook(self):
@@ -166,56 +171,40 @@ async def guide_command(interaction: discord.Interaction):
     audience = "admin" if is_admin(interaction.user) else "staff" if is_staff(interaction.user) else "all"
     await interaction.response.send_message(embed=build_guide_embed(audience), ephemeral=False)
 
-@bot.tree.command(name="update-payrate", description="Update base rate untuk role tertentu")
+@bot.tree.command(name="update-payrate", description="Ubah base rate untuk tugas baru")
+@discord.app_commands.describe(role="Role TL, TS, atau TL+TS", new_rate="Base rate baru dalam Rupiah")
 async def update_payrate_command(
     interaction: discord.Interaction,
     role: str,
-    new_rate: int
+    new_rate: int,
 ):
-    """Update payrate for a role."""
+    """Persist the base payrate used by future assignments."""
     if not is_admin(interaction.user):
         return await interaction.response.send_message(
-            "âŒ Hanya admin yang bisa mengubah payrate!",
-            ephemeral=False
+            "Hanya administrator yang dapat mengubah payrate.", ephemeral=False
         )
-    
-    role = role.upper()
-    if role not in ("TL", "TS", "TL+TS"):
-        return await interaction.response.send_message(
-            "Role harus TL, TS, atau TL+TS!",
-            ephemeral=False
-        )
-    
-    if new_rate < 0 or new_rate > 50000:
-        return await interaction.response.send_message(
-            "âŒ Rate harus antara 0 dan 50000!",
-            ephemeral=False
-        )
-    
-    # In a real implementation, this would update a config file or database
-    # For now, we'll just acknowledge it
-    embed = discord.Embed(
-        title="âœ… Payrate Diupdate",
-            ephemeral=False
-        )
-    
-    if new_rate < 0 or new_rate > 50000:
-        return await interaction.response.send_message(
-            "❌ Rate harus antara 0 dan 50000!",
-            ephemeral=False
-        )
-    
-    # In a real implementation, this would update a config file or database
-    # For now, we'll just acknowledge it
-    embed = discord.Embed(
-        title="✅ Payrate Diupdate",
-        description=f"Base rate untuk **{role}** telah diupdate ke **Rp {new_rate:,}**",
-        color=discord.Color.green()
-    )
-    embed.set_footer(text="Note: Update ini berlaku untuk tugas baru ke depannya.")
-    
-    await interaction.response.send_message(embed=embed, ephemeral=False)
 
+    normalized_role = role.strip().upper().replace(" ", "")
+    if normalized_role not in ("TL", "TS", "TL+TS"):
+        return await interaction.response.send_message(
+            "Role harus TL, TS, atau TL+TS.", ephemeral=False
+        )
+    if new_rate < 0 or new_rate > 1_000_000:
+        return await interaction.response.send_message(
+            "Rate harus antara Rp 0 dan Rp 1.000.000.", ephemeral=False
+        )
+
+    await db.set_role_payrate(normalized_role, new_rate)
+    embed = discord.Embed(
+        title="Payrate Berhasil Diperbarui",
+        description=(
+            f"Base rate **{normalized_role}** sekarang **Rp {new_rate:,.0f}**. "
+            "Nilai ini berlaku untuk tugas baru yang tidak memakai Rate Override."
+        ).replace(",", "."),
+        color=discord.Color.green(),
+    )
+    embed.set_footer(text="Tugas lama dan manual override tidak berubah.")
+    await interaction.response.send_message(embed=embed, ephemeral=False)
 
 async def search_manga_command(interaction: discord.Interaction, query: str, source: str = "asura"):
     """Search for manga on Asura Scans or Doujiva."""
@@ -225,12 +214,12 @@ async def search_manga_command(interaction: discord.Interaction, query: str, sou
     
     if not results:
         return await interaction.followup.send(
-            f"🔍 Tidak ditemukan manga di **{source.title()}** dengan query: **{query}**",
+            f"ðŸ” Tidak ditemukan manga di **{source.title()}** dengan query: **{query}**",
             ephemeral=False
         )
     
     embed = discord.Embed(
-        title=f"🔍 Hasil Pencarian ({source.title()})",
+        title=f"ðŸ” Hasil Pencarian ({source.title()})",
         description=f"Query: **{query}**",
         color=discord.Color.blue()
     )
@@ -370,12 +359,12 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError):
     if isinstance(error, commands.CommandNotFound):
         return
     elif isinstance(error, commands.MissingPermissions):
-        await ctx.send("âŒ Kamu tidak memiliki izin untuk menggunakan command ini!")
+        await ctx.send("Ã¢ÂÅ’ Kamu tidak memiliki izin untuk menggunakan command ini!")
     elif isinstance(error, commands.BadArgument):
-        await ctx.send("âŒ Argument tidak valid!")
+        await ctx.send("Ã¢ÂÅ’ Argument tidak valid!")
     else:
         print(f"Error: {error}")
-        await ctx.send("âŒ Terjadi error saat menjalankan command!")
+        await ctx.send("Ã¢ÂÅ’ Terjadi error saat menjalankan command!")
 
 
 @bot.tree.error
