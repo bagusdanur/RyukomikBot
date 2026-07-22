@@ -69,6 +69,14 @@ async def setup_dashboard_tables():
                 UNIQUE(staff_id, period)
             )
         """)
+        await connection.execute("""
+            CREATE TABLE IF NOT EXISTS dashboard_staff_cache (
+                staff_id INTEGER PRIMARY KEY,
+                username TEXT NOT NULL,
+                avatar TEXT,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         await connection.commit()
     finally:
         await connection.close()
@@ -205,6 +213,27 @@ def discord_avatar(member: dict) -> str | None:
     return f"https://cdn.discordapp.com/avatars/{user['id']}/{avatar}.png?size=128"
 
 
+def member_profile(member: dict):
+    discord_user = member.get("user", {})
+    if not discord_user.get("id"):
+        return None
+    return {"id": int(discord_user["id"]), "username": member.get("nick") or discord_user.get("global_name") or discord_user.get("username", "Staff"), "avatar": discord_avatar(member)}
+
+
+async def cache_staff_profile(profile: dict):
+    connection = await dashboard_db()
+    try:
+        await connection.execute("""
+            INSERT INTO dashboard_staff_cache(staff_id,username,avatar,updated_at)
+            VALUES(?,?,?,CURRENT_TIMESTAMP)
+            ON CONFLICT(staff_id) DO UPDATE SET username=excluded.username,
+                avatar=excluded.avatar, updated_at=CURRENT_TIMESTAMP
+        """, (profile["id"], profile["username"], profile.get("avatar")))
+        await connection.commit()
+    finally:
+        await connection.close()
+
+
 async def staff_directory():
     if DEV_BYPASS:
         connection = await dashboard_db()
@@ -215,19 +244,30 @@ async def staff_directory():
             return [{"id": row[0], "username": f"Staff {row[0]}", "avatar": None} for row in rows]
         finally:
             await connection.close()
+    connection = await dashboard_db()
+    try:
+        cached = await (await connection.execute("SELECT staff_id id, username, avatar FROM dashboard_staff_cache")).fetchall()
+        known = await (await connection.execute("SELECT DISTINCT staff_id FROM assignments WHERE staff_id IS NOT NULL")).fetchall()
+    finally:
+        await connection.close()
+    profiles = {row["id"]: dict(row) for row in cached}
     members = await discord_api("GET", f"/guilds/{GUILD_ID}/members?limit=1000") or []
-    result = []
     for member in members:
         roles = {int(role) for role in member.get("roles", [])}
         if ROLE_STAFF_ID not in roles and ROLE_ADMIN_ID not in roles:
             continue
-        discord_user = member.get("user", {})
-        result.append({
-            "id": int(discord_user["id"]),
-            "username": member.get("nick") or discord_user.get("global_name") or discord_user.get("username", "Staff"),
-            "avatar": discord_avatar(member),
-        })
-    return sorted(result, key=lambda item: item["username"].casefold())
+        profile = member_profile(member)
+        if profile:
+            profiles[profile["id"]] = profile
+    for row in known:
+        if row["staff_id"] in profiles:
+            continue
+        profile = member_profile(await fetch_member(row["staff_id"]) or {})
+        if profile:
+            profiles[profile["id"]] = profile
+    for profile in profiles.values():
+        await cache_staff_profile(profile)
+    return sorted(profiles.values(), key=lambda item: item["username"].casefold())
 
 
 async def enrich_staff(rows):
@@ -308,6 +348,11 @@ async def auth_callback(request: Request):
         "avatar": profile.get("avatar"),
         "role": role,
     }
+    await cache_staff_profile({
+        "id": int(profile["id"]),
+        "username": profile.get("global_name") or profile["username"],
+        "avatar": f"https://cdn.discordapp.com/avatars/{profile['id']}/{profile['avatar']}.png?size=128" if profile.get("avatar") else None,
+    })
     return RedirectResponse(DASHBOARD_ORIGIN)
 
 
