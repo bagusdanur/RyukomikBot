@@ -7,9 +7,11 @@ DB_PATH = os.path.join(os.path.dirname(__file__), "data", "ryukomik.db")
 
 
 async def get_db() -> aiosqlite.Connection:
-    """Get database connection."""
-    db = await aiosqlite.connect(DB_PATH)
+    """Get a concurrency-safe SQLite connection for Discord interactions."""
+    db = await aiosqlite.connect(DB_PATH, timeout=30.0)
     db.row_factory = aiosqlite.Row
+    await db.execute("PRAGMA busy_timeout = 30000")
+    await db.execute("PRAGMA foreign_keys = ON")
     return db
 
 
@@ -17,6 +19,9 @@ async def setup_database():
     """Initialize database tables."""
     db = await get_db()
     try:
+        # WAL lets panel reads continue while another interaction writes.
+        await db.execute("PRAGMA journal_mode = WAL")
+        await db.execute("PRAGMA synchronous = NORMAL")
         await db.execute("""
             CREATE TABLE IF NOT EXISTS assignments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
