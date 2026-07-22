@@ -5,7 +5,6 @@ import re
 import secrets
 import shutil
 import time
-import zipfile
 
 import discord
 
@@ -37,17 +36,17 @@ def cleanup_old_raw_files(max_age_hours=24):
                 pass
 
 
-async def upload_to_filebin(bin_id, archive_path):
-    """Upload a temporary ZIP to Filebin and return whether it succeeded."""
-    filename = os.path.basename(archive_path)
+async def upload_to_filebin(bin_id, file_path, remote_filename=None):
+    """Upload one file into a shared Filebin bin."""
+    filename = remote_filename or os.path.basename(file_path)
     timeout = aiohttp.ClientTimeout(total=900)
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            with open(archive_path, "rb") as archive:
+            with open(file_path, "rb") as upload_file:
                 async with session.post(
                     f"{FILEBIN_BASE_URL}/{bin_id}/{filename}",
-                    data=archive,
-                    headers={"Content-Type": "application/zip"},
+                    data=upload_file,
+                    headers={"Content-Type": "application/octet-stream"},
                 ) as response:
                     if response.status not in (200, 201):
                         print(f"Filebin upload failed ({response.status}): {await response.text()}")
@@ -59,12 +58,11 @@ async def upload_to_filebin(bin_id, archive_path):
 
 
 async def create_filebin_download(source, manga_id, chapter_ids):
-    """Upload one flat ZIP containing every selected chapter image, then clean up."""
+    """Upload images directly so Filebin's download ZIP has no nested archive/folders."""
     cleanup_old_raw_files()
     os.makedirs(RAW_ROOT, exist_ok=True)
     downloader = get_downloader(source)
     completed, temporary_directories = [], []
-    archive_path = None
     bin_id = secrets.token_urlsafe(12).replace("_", "").replace("-", "").lower()
     try:
         for chapter_id in chapter_ids:
@@ -72,29 +70,25 @@ async def create_filebin_download(source, manga_id, chapter_ids):
             if not result:
                 continue
             temporary_directories.append(result)
-            completed.append(chapter_id)
+            safe_chapter = re.sub(r"[^a-zA-Z0-9_-]+", "-", chapter_id).strip("-")[:30] or "chapter"
+            image_number = 0
+            uploaded = True
+            for root, _, files in os.walk(result):
+                for filename in sorted(files):
+                    image_number += 1
+                    extension = os.path.splitext(filename)[1] or ".jpg"
+                    remote_name = f"ch-{safe_chapter}_{image_number:03d}{extension}"
+                    if not await upload_to_filebin(bin_id, os.path.join(root, filename), remote_name):
+                        uploaded = False
+                        break
+                if not uploaded:
+                    break
+            if uploaded and image_number:
+                completed.append(chapter_id)
         if not completed:
-            return None, []
-        safe_manga = re.sub(r"[^a-zA-Z0-9_-]+", "-", manga_id).strip("-")[:60] or "raw"
-        archive_path = os.path.join(RAW_ROOT, f"{source}_{safe_manga}.zip")
-        with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            for chapter_id, directory in zip(completed, temporary_directories):
-                safe_chapter = re.sub(r"[^a-zA-Z0-9_-]+", "-", chapter_id).strip("-")[:30] or "chapter"
-                image_number = 0
-                for root, _, files in os.walk(directory):
-                    for filename in sorted(files):
-                        image_number += 1
-                        extension = os.path.splitext(filename)[1] or ".jpg"
-                        archive.write(os.path.join(root, filename), arcname=f"ch-{safe_chapter}_{image_number:03d}{extension}")
-        if not await upload_to_filebin(bin_id, archive_path):
             return None, []
         return f"{FILEBIN_BASE_URL}/{bin_id}", completed
     finally:
-        if archive_path:
-            try:
-                os.remove(archive_path)
-            except OSError:
-                pass
         for path in temporary_directories:
             shutil.rmtree(path, ignore_errors=True)
 
@@ -250,9 +244,9 @@ async def download_chapters(interaction, source, manga_id, chapter_ids):
     filebin_url, completed = await create_filebin_download(source, manga_id, chapter_ids)
     if not filebin_url:
         return await interaction.edit_original_response(embed=discord.Embed(title="Upload Filebin Gagal", description="RAW tidak tersedia atau Filebin sedang menolak upload. File lokal sudah dibersihkan; coba lagi nanti.", color=discord.Color.red()))
-    embed = discord.Embed(title="RAW Siap Diunduh", description=f"**{len(completed)} chapter** tersedia dalam **1 ZIP** tanpa folder bertingkat.", color=discord.Color.green())
+    embed = discord.Embed(title="RAW Siap Diunduh", description=f"Gambar dari **{len(completed)} chapter** sudah tersedia langsung di Filebin tanpa ZIP bertingkat.", color=discord.Color.green())
     embed.add_field(name="Chapter", value=", ".join(completed), inline=False)
     embed.add_field(name="Link Download", value=f"[Buka Filebin]({filebin_url})", inline=False)
-    embed.add_field(name="Isi ZIP", value="Gambar langsung: `ch-{chapter}_001.jpg`, `ch-{chapter}_002.jpg`, dan seterusnya.", inline=False)
+    embed.add_field(name="Cara Download", value="Buka Filebin lalu pilih **Download files**. ZIP hasil download langsung berisi `ch-1_001.jpg`, `ch-1_002.jpg`, dan seterusnya.", inline=False)
     embed.add_field(name="Penyimpanan", value="File lokal VPS langsung dihapus. Link Filebin berlaku sementara.", inline=False)
     await interaction.edit_original_response(embed=embed)
