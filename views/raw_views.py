@@ -27,6 +27,13 @@ def cleanup_old_raw_files(max_age_hours=24):
                     os.remove(path)
             except OSError:
                 pass
+        for directory in directories:
+            path = os.path.join(root, directory)
+            try:
+                if not os.listdir(path):
+                    os.rmdir(path)
+            except OSError:
+                pass
 
 
 async def upload_to_filebin(bin_id, archive_path):
@@ -80,13 +87,6 @@ async def create_filebin_download(source, manga_id, chapter_ids):
         for path in temporary_archives:
             try:
                 os.remove(path)
-            except OSError:
-                pass
-        for directory in directories:
-            path = os.path.join(root, directory)
-            try:
-                if not os.listdir(path):
-                    os.rmdir(path)
             except OSError:
                 pass
         for path in temporary_directories:
