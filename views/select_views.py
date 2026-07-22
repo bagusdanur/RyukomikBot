@@ -4,6 +4,29 @@ from views.ticket_views import TicketReviewView, TicketSubmitModal
 import database as db
 
 
+class StaffTaskView(discord.ui.View):
+    def __init__(self, assignments: list):
+        super().__init__(timeout=300)
+        self.add_item(StaffTaskSelect(assignments[:25]))
+
+
+class StaffTaskSelect(discord.ui.Select):
+    def __init__(self, assignments):
+        options = [discord.SelectOption(label=f"#{a['id']} {a['manga']}"[:100], value=str(a["id"]), description=f"Ch. {a['chapter']} • {a['status']} • {a['role']}"[:100]) for a in assignments]
+        super().__init__(placeholder="Buka detail tugas", options=options)
+
+    async def callback(self, interaction):
+        assignment = await db.get_assignment(int(self.values[0]))
+        if not assignment or assignment["staff_id"] != interaction.user.id:
+            return await interaction.response.send_message("Tugas ini bukan milikmu.")
+        embed = discord.Embed(title=f"Tugas #{assignment['id']}", description=f"**{assignment['manga']}** — Chapter {assignment['chapter']}", color=discord.Color.blue())
+        embed.add_field(name="Status", value=assignment["status"]); embed.add_field(name="Role", value=assignment["role"]); embed.add_field(name="Bayaran", value=format_currency(assignment["final_rate"]))
+        embed.add_field(name="Deadline", value=assignment.get("deadline_at") or "Tidak ditentukan", inline=False)
+        from views.ticket_views import TicketSubmitView
+        view = TicketSubmitView(assignment["id"]) if assignment["status"] in ("claimed", "revision") else None
+        await interaction.response.send_message(embed=embed, view=view)
+
+
 class ReviewSelectView(discord.ui.View):
     """Dropdown view for admin review selection."""
     

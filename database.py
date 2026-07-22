@@ -68,6 +68,9 @@ async def setup_database():
             "INSERT OR IGNORE INTO payrates (role, base_rate) VALUES (?, ?)",
             (("TL", 3000), ("TS", 3000), ("TL+TS", 5000)),
         )
+        columns = {row[1] for row in await (await db.execute("PRAGMA table_info(assignments)")).fetchall()}
+        if "deadline_at" not in columns:
+            await db.execute("ALTER TABLE assignments ADD COLUMN deadline_at DATETIME")
         
         await db.commit()
     finally:
@@ -82,15 +85,24 @@ async def create_assignment(
     final_rate: int,
     multiplier: float,
     message_id: Optional[int] = None,
-    ticket_channel_id: Optional[int] = None
+    ticket_channel_id: Optional[int] = None,
+    staff_id: Optional[int] = None,
+    deadline_at: Optional[str] = None,
 ) -> int:
     """Create a new assignment and return its ID."""
     db = await get_db()
     try:
         cursor = await db.execute("""
-            INSERT INTO assignments (manga, chapter, role, base_rate, final_rate, multiplier, status, message_id, ticket_channel_id)
-            VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?)
-        """, (manga, chapter, role, base_rate, final_rate, multiplier, message_id, ticket_channel_id))
+            INSERT INTO assignments
+                (manga, chapter, staff_id, role, base_rate, final_rate, multiplier,
+                 status, message_id, ticket_channel_id, claimed_at, deadline_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            manga, chapter, staff_id, role, base_rate, final_rate, multiplier,
+            "claimed" if staff_id else "open", message_id, ticket_channel_id,
+            datetime.now().isoformat(timespec="seconds") if staff_id else None,
+            deadline_at,
+        ))
         await db.commit()
         return cursor.lastrowid
     finally:

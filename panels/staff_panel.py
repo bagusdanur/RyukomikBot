@@ -3,7 +3,7 @@ import discord
 import database as db
 from helpers.utils import STATUS_EMOJI, format_currency, get_current_period, is_staff
 from helpers.panel_content import build_guide_embed
-from views.select_views import SubmitSelectView
+from views.select_views import StaffTaskView, SubmitSelectView
 
 
 class StaffPanelView(discord.ui.View):
@@ -48,7 +48,7 @@ class StaffPanelView(discord.ui.View):
                 ),
                 inline=False,
             )
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed, view=StaffTaskView(assignments[:25]))
 
     @discord.ui.button(label="Submit Hasil", style=discord.ButtonStyle.success, custom_id="staff_submit")
     async def submit_button(self, interaction: discord.Interaction, button: discord.ui.Button):

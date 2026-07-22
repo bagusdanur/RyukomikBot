@@ -3,6 +3,28 @@ import discord
 from helpers.utils import is_admin, format_currency, get_current_period, get_or_fetch_member
 from views.select_views import ConfirmPayView
 import database as db
+from config import ROLE_STAFF_ID
+
+
+class RekapStaffView(discord.ui.View):
+    """Choose a staff member without copying a Discord ID."""
+
+    def __init__(self):
+        super().__init__(timeout=180)
+        self.add_item(RekapStaffSelect())
+
+
+class RekapStaffSelect(discord.ui.UserSelect):
+    def __init__(self):
+        super().__init__(placeholder="Pilih staff yang akan direkap", min_values=1, max_values=1)
+
+    async def callback(self, interaction: discord.Interaction):
+        if not is_admin(interaction.user):
+            return await interaction.response.send_message("Hanya administrator yang dapat membuat rekap.")
+        member = self.values[0]
+        if not isinstance(member, discord.Member) or not any(role.id == ROLE_STAFF_ID for role in member.roles):
+            return await interaction.response.send_message("Member yang dipilih belum memiliki role Staff.")
+        await interaction.response.send_modal(RekapModal(member.id))
 
 
 class RekapModal(discord.ui.Modal, title="Rekap Pembayaran"):
@@ -10,19 +32,16 @@ class RekapModal(discord.ui.Modal, title="Rekap Pembayaran"):
 
     function_name = "RekapModal"
 
-    staff_id = discord.ui.TextInput(
-        label="Staff ID",
-        placeholder="ID Discord staff",
-        style=discord.TextStyle.short,
-        required=True,
-    )
-
     period = discord.ui.TextInput(
         label="Periode",
         placeholder="YYYY-MM (contoh: 2026-07)",
         style=discord.TextStyle.short,
         required=False,
     )
+
+    def __init__(self, staff_id: int):
+        super().__init__()
+        self.selected_staff_id = staff_id
 
     async def on_submit(self, interaction: discord.Interaction):
         if not is_admin(interaction.user):
@@ -45,10 +64,7 @@ class RekapModal(discord.ui.Modal, title="Rekap Pembayaran"):
                 ephemeral=False,
             )
 
-        try:
-            staff_id = int(self.staff_id.value)
-        except ValueError:
-            return await interaction.response.send_message("Staff ID harus berupa angka!", ephemeral=False)
+        staff_id = self.selected_staff_id
 
         staff = await get_or_fetch_member(interaction.guild, staff_id) if interaction.guild else None
 

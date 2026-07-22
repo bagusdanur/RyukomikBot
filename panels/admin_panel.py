@@ -61,9 +61,10 @@ class AdminPanelView(discord.ui.View):
 
     @discord.ui.button(label="Rekap Gaji", style=discord.ButtonStyle.success, custom_id="admin_rekap")
     async def rekap_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        from modals.rekap_modal import RekapModal
+        from modals.rekap_modal import RekapStaffView
 
-        await interaction.response.send_modal(RekapModal())
+        embed = discord.Embed(title="Rekap Gaji", description="Pilih staff. Setelah itu isi periode pembayaran; kamu tidak perlu menyalin Discord ID.", color=discord.Color.gold())
+        await interaction.response.send_message(embed=embed, view=RekapStaffView())
 
     @discord.ui.button(label="Stats", style=discord.ButtonStyle.danger, custom_id="admin_stats")
     async def stats_button(self, interaction: discord.Interaction, button: discord.ui.Button):
