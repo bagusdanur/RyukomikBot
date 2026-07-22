@@ -368,7 +368,12 @@ async def discord_api(method: str, path: str, payload=None):
             timeout=aiohttp.ClientTimeout(total=20),
         ) as response:
             if 200 <= response.status < 300:
-                return await response.json() if response.content_length else {}
+                if response.status == 204:
+                    return {}
+                try:
+                    return await response.json()
+                except (aiohttp.ContentTypeError, json.JSONDecodeError):
+                    return {}
             return None
 
 
