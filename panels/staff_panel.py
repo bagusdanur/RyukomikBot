@@ -1,9 +1,10 @@
-import discord
+﻿import discord
 
 import database as db
 from helpers.utils import STATUS_EMOJI, format_currency, get_current_period, is_staff
 from helpers.panel_content import build_guide_embed
 from views.select_views import StaffTaskView, SubmitSelectView
+from views.raw_views import RawSearchModal
 
 
 class StaffPanelView(discord.ui.View):
@@ -81,6 +82,10 @@ class StaffPanelView(discord.ui.View):
         embed.add_field(name="Menunggu", value=str(stats["pending"]), inline=True)
         await interaction.followup.send(embed=embed)
 
-    @discord.ui.button(label="Panduan", emoji="📚", style=discord.ButtonStyle.secondary, custom_id="staff_guide")
+    @discord.ui.button(label="Download RAW", style=discord.ButtonStyle.primary, custom_id="staff_raw_download", row=1)
+    async def raw_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(RawSearchModal())
+
+    @discord.ui.button(label="Panduan", style=discord.ButtonStyle.secondary, custom_id="staff_guide", row=1)
     async def guide_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(embed=build_guide_embed("staff"), ephemeral=False)
