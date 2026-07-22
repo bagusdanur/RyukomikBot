@@ -24,7 +24,10 @@ class StaffTaskSelect(discord.ui.Select):
         embed.add_field(name="Deadline", value=assignment.get("deadline_at") or "Tidak ditentukan", inline=False)
         from views.ticket_views import TicketSubmitView
         view = TicketSubmitView(assignment["id"]) if assignment["status"] in ("claimed", "revision") else None
-        await interaction.response.send_message(embed=embed, view=view)
+        if view:
+            await interaction.response.send_message(embed=embed, view=view)
+        else:
+            await interaction.response.send_message(embed=embed)
 
 
 class ReviewSelectView(discord.ui.View):
