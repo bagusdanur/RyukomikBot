@@ -51,6 +51,7 @@ class RyukomikBot(commands.Bot):
         await setup_database()
         
         # Add persistent views
+        self.recruitment.register_persistent_views()
         self.add_view(AdminPanelView())
         self.add_view(StaffPanelView())
         open_assignments = await get_assignments_by_status("open")
