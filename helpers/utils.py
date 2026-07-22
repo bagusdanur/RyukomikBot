@@ -147,6 +147,16 @@ def build_private_ticket_overwrites(
     return overwrites
 
 
+def build_private_ticket_name(member: discord.Member) -> str:
+    """Use the server's established private-ticket naming convention."""
+    safe_name = "".join(
+        character
+        for character in member.name.lower()
+        if character.isalnum() or character in "-_"
+    )
+    return f"🔒・tiket-{(safe_name[:70] or f'member-{member.id}') }"
+
+
 async def find_recruitment_ticket(
     guild: discord.Guild, member: discord.Member
 ) -> Optional[discord.TextChannel]:
@@ -173,11 +183,18 @@ async def find_or_create_staff_ticket(guild: discord.Guild, staff: discord.Membe
     """Find or create a private staff ticket channel."""
     existing = await find_ticket(guild, staff.id)
     if existing:
+        await existing.edit(
+            name=build_private_ticket_name(staff),
+            overwrites=build_private_ticket_overwrites(guild, staff),
+            sync_permissions=False,
+            reason="Menormalkan tiket privat staff",
+        )
         return existing
 
     recruitment_ticket = await find_recruitment_ticket(guild, staff)
     if recruitment_ticket:
         await recruitment_ticket.edit(
+            name=build_private_ticket_name(staff),
             topic=f"Tiket staff untuk {staff.display_name} ({staff.id})",
             overwrites=build_private_ticket_overwrites(guild, staff),
             sync_permissions=False,
@@ -187,10 +204,10 @@ async def find_or_create_staff_ticket(guild: discord.Guild, staff: discord.Membe
 
     overwrites = build_private_ticket_overwrites(guild, staff)
 
-    safe_name = "".join(ch for ch in staff.name.lower() if ch.isalnum() or ch == "-")
-    channel_name = f"tiket-{safe_name}-{str(staff.id)[-4:]}"
+    category = guild.get_channel(REKRUT_CAT_ID)
     return await guild.create_text_channel(
-        name=channel_name,
+        name=build_private_ticket_name(staff),
+        category=category if isinstance(category, discord.CategoryChannel) else None,
         overwrites=overwrites,
         topic=f"Tiket staff untuk {staff.display_name} ({staff.id})",
     )

@@ -8,6 +8,7 @@ from discord.ext import commands
 from config import REKRUT_CAT_ID, ROLE_STAFF_ID
 from helpers.panel_content import build_staff_panel_embed
 from helpers.utils import (
+    build_private_ticket_name,
     build_private_ticket_overwrites,
     find_or_create_staff_ticket,
     is_admin,
@@ -166,10 +167,8 @@ class RecruitmentView(RecruitmentBaseView):
                 )
 
         await interaction.response.defer(ephemeral=False)
-        safe_name = "".join(character for character in member.name.lower() if character.isalnum() or character in "-_")
-        safe_name = safe_name[:70] or f"member-{member.id}"
         ticket_channel = await guild.create_text_channel(
-            name=f"tiket-{safe_name}",
+            name=build_private_ticket_name(member),
             category=category,
             overwrites=build_ticket_overwrites(guild, member),
             topic=build_ticket_topic(member.id),
@@ -414,11 +413,20 @@ class RecruitmentBot:
             fixed = 0
             skipped = 0
             for channel in channels:
+                topic = channel.topic or ""
+                if "tiket" not in channel.name and not topic.startswith(("Tiket rekrutmen", "Tiket staff")):
+                    continue
                 owner = get_ticket_owner(channel)
                 if not owner:
                     skipped += 1
                     continue
                 await channel.edit(
+                    name=build_private_ticket_name(owner),
+                    topic=(
+                        f"Tiket staff untuk {owner.display_name} ({owner.id})"
+                        if discord.utils.get(owner.roles, id=ROLE_STAFF_ID)
+                        else build_ticket_topic(owner.id, get_topic_position(channel) or "pending")
+                    ),
                     overwrites=build_ticket_overwrites(ctx.guild, owner),
                     sync_permissions=False,
                     reason=f"Permission diperbaiki oleh {ctx.author}",
