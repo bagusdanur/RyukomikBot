@@ -4,6 +4,7 @@ from getpass import getpass
 from pathlib import Path
 
 import boto3
+from botocore.exceptions import ClientError
 
 
 ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
@@ -36,17 +37,23 @@ def main():
     client = boto3.client("s3", endpoint_url=endpoint, aws_access_key_id=access_key,
                           aws_secret_access_key=secret_key, region_name="auto")
     client.head_bucket(Bucket=BUCKET)
-    client.put_bucket_cors(Bucket=BUCKET, CORSConfiguration={"CORSRules": [{
-        "AllowedOrigins": ["https://staff.ryukomik.web.id"],
-        "AllowedMethods": ["GET", "PUT", "HEAD"],
-        "AllowedHeaders": ["Content-Type"],
-        "ExposeHeaders": ["ETag"],
-        "MaxAgeSeconds": 3600,
-    }]})
     upsert({"R2_ACCOUNT_ID": account_id, "R2_ACCESS_KEY_ID": access_key,
             "R2_SECRET_ACCESS_KEY": secret_key, "R2_BUCKET_NAME": BUCKET,
             "R2_ENDPOINT": endpoint})
-    print("R2 terverifikasi, CORS terpasang, dan kredensial tersimpan tanpa ditampilkan.")
+    try:
+        client.put_bucket_cors(Bucket=BUCKET, CORSConfiguration={"CORSRules": [{
+            "AllowedOrigins": ["https://staff.ryukomik.web.id"],
+            "AllowedMethods": ["GET", "PUT", "HEAD"],
+            "AllowedHeaders": ["Content-Type"],
+            "ExposeHeaders": ["ETag"],
+            "MaxAgeSeconds": 3600,
+        }]})
+    except ClientError as error:
+        if error.response.get("Error", {}).get("Code") != "AccessDenied":
+            raise
+        print("R2 terverifikasi dan kredensial tersimpan. Token tidak memiliki izin pengaturan bucket; pasang CORS manual di Cloudflare.")
+    else:
+        print("R2 terverifikasi, CORS terpasang, dan kredensial tersimpan tanpa ditampilkan.")
 
 
 if __name__ == "__main__":
