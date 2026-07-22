@@ -41,14 +41,14 @@ class DashboardApiTests(unittest.TestCase):
     def test_admin_overview_and_assignments(self):
         user = {"id": 1, "username": "Admin", "role": "admin"}
         overview = asyncio.run(self.module.overview(user))
-        assignments = asyncio.run(self.module.assignments(user=user))
+        assignments = asyncio.run(self.module.assignments(status=None, search=None, user=user))
         self.assertEqual(overview["counts"]["claimed"], 1)
         self.assertEqual(overview["total_value"], 19000)
         self.assertEqual(len(assignments), 3)
 
     def test_staff_can_only_see_own_assignments(self):
         user = {"id": 100, "username": "Staff", "role": "staff"}
-        assignments = asyncio.run(self.module.assignments(user=user))
+        assignments = asyncio.run(self.module.assignments(status=None, search=None, user=user))
         self.assertEqual({item["staff_id"] for item in assignments}, {100})
         self.assertEqual(len(assignments), 2)
 
