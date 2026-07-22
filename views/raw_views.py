@@ -1,10 +1,11 @@
-import asyncio
+﻿import asyncio
 import aiohttp
 import os
 import re
 import secrets
 import shutil
 import time
+import zipfile
 
 import discord
 
@@ -58,11 +59,12 @@ async def upload_to_filebin(bin_id, archive_path):
 
 
 async def create_filebin_download(source, manga_id, chapter_ids):
-    """Download chapters temporarily, upload ZIP files to one Filebin, then clean up."""
+    """Upload one flat ZIP containing every selected chapter image, then clean up."""
     cleanup_old_raw_files()
     os.makedirs(RAW_ROOT, exist_ok=True)
     downloader = get_downloader(source)
-    completed, temporary_directories, temporary_archives = [], [], []
+    completed, temporary_directories = [], []
+    archive_path = None
     bin_id = secrets.token_urlsafe(12).replace("_", "").replace("-", "").lower()
     try:
         for chapter_id in chapter_ids:
@@ -70,23 +72,27 @@ async def create_filebin_download(source, manga_id, chapter_ids):
             if not result:
                 continue
             temporary_directories.append(result)
-            safe_manga = re.sub(r"[^a-zA-Z0-9_-]+", "-", manga_id).strip("-")[:60] or "raw"
-            safe_chapter = re.sub(r"[^a-zA-Z0-9_-]+", "-", chapter_id).strip("-")[:40] or "chapter"
-            archive_path = shutil.make_archive(
-                os.path.join(RAW_ROOT, f"{source}_{safe_manga}_{safe_chapter}"),
-                "zip",
-                result,
-            )
-            temporary_archives.append(archive_path)
-            if await upload_to_filebin(bin_id, archive_path):
-                completed.append(chapter_id)
+            completed.append(chapter_id)
         if not completed:
+            return None, []
+        safe_manga = re.sub(r"[^a-zA-Z0-9_-]+", "-", manga_id).strip("-")[:60] or "raw"
+        archive_path = os.path.join(RAW_ROOT, f"{source}_{safe_manga}.zip")
+        with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for chapter_id, directory in zip(completed, temporary_directories):
+                safe_chapter = re.sub(r"[^a-zA-Z0-9_-]+", "-", chapter_id).strip("-")[:30] or "chapter"
+                image_number = 0
+                for root, _, files in os.walk(directory):
+                    for filename in sorted(files):
+                        image_number += 1
+                        extension = os.path.splitext(filename)[1] or ".jpg"
+                        archive.write(os.path.join(root, filename), arcname=f"ch-{safe_chapter}_{image_number:03d}{extension}")
+        if not await upload_to_filebin(bin_id, archive_path):
             return None, []
         return f"{FILEBIN_BASE_URL}/{bin_id}", completed
     finally:
-        for path in temporary_archives:
+        if archive_path:
             try:
-                os.remove(path)
+                os.remove(archive_path)
             except OSError:
                 pass
         for path in temporary_directories:
@@ -130,7 +136,7 @@ class RawAssignmentSelect(discord.ui.Select):
             discord.SelectOption(
                 label=f"#{item['id']} {item['manga']}"[:100],
                 value=str(item["id"]),
-                description=f"Chapter {item['chapter']} • {item['role']}"[:100],
+                description=f"Chapter {item['chapter']} â€¢ {item['role']}"[:100],
             )
             for item in assignments
         ]
@@ -142,7 +148,7 @@ class RawAssignmentSelect(discord.ui.Select):
             return await interaction.response.send_message("Tugas ini bukan milikmu.")
         await interaction.response.edit_message(
             embed=discord.Embed(
-                title="Mencari RAW Proyek…",
+                title="Mencari RAW Proyekâ€¦",
                 description=(
                     f"Proyek: **{assignment['manga']}**\n"
                     f"Target chapter: **{assignment['chapter']}**\n\n"
@@ -175,7 +181,7 @@ class RawAssignmentSelect(discord.ui.Select):
         embed = discord.Embed(
             title="Pilih Komik RAW",
             description=(
-                f"Proyek tugas: **{assignment['manga']} — Ch. {assignment['chapter']}**\n"
+                f"Proyek tugas: **{assignment['manga']} â€” Ch. {assignment['chapter']}**\n"
                 "Pilih hasil yang sesuai. Judul diambil otomatis dari tugas kamu."
             ),
             color=discord.Color.blue(),
@@ -193,7 +199,7 @@ class RawSearchView(discord.ui.View):
 class RawMangaSelect(discord.ui.Select):
     def __init__(self, results):
         self.results = results
-        options = [discord.SelectOption(label=str(manga.get("title", "Tanpa judul"))[:100], value=str(index), description=f"{manga['_source'].title()} • {manga.get('status', 'status tidak diketahui')}"[:100]) for index, manga in enumerate(results)]
+        options = [discord.SelectOption(label=str(manga.get("title", "Tanpa judul"))[:100], value=str(index), description=f"{manga['_source'].title()} â€¢ {manga.get('status', 'status tidak diketahui')}"[:100]) for index, manga in enumerate(results)]
         super().__init__(placeholder="Pilih komik", options=options)
 
     async def callback(self, interaction):
@@ -201,11 +207,11 @@ class RawMangaSelect(discord.ui.Select):
             return await interaction.response.send_message("Hanya staff yang dapat memakai RAW navigator.")
         manga = self.results[int(self.values[0])]
         source, manga_id = manga["_source"], str(manga["id"])
-        await interaction.response.edit_message(embed=discord.Embed(title="Mengambil Daftar Chapter…", description=f"**{manga.get('title')}** dari {source.title()}", color=discord.Color.gold()), view=None)
+        await interaction.response.edit_message(embed=discord.Embed(title="Mengambil Daftar Chapterâ€¦", description=f"**{manga.get('title')}** dari {source.title()}", color=discord.Color.gold()), view=None)
         chapters = await get_downloader(source).get_chapter_list(manga_id)
         if not chapters:
             return await interaction.edit_original_response(embed=discord.Embed(title="Chapter Tidak Ditemukan", description="Sumber sedang bermasalah atau chapter belum tersedia.", color=discord.Color.red()))
-        embed = discord.Embed(title="Pilih Chapter RAW", description=f"**{manga.get('title')}** • {source.title()}\nPilih maksimal 10 chapter, atau tekan **Download Terbaru**.", color=discord.Color.blue())
+        embed = discord.Embed(title="Pilih Chapter RAW", description=f"**{manga.get('title')}** â€¢ {source.title()}\nPilih maksimal 10 chapter, atau tekan **Download Terbaru**.", color=discord.Color.blue())
         await interaction.edit_original_response(embed=embed, view=RawChapterView(source, manga_id, chapters[:25]))
 
 
@@ -233,53 +239,20 @@ class RawChapterSelect(discord.ui.Select):
 async def download_chapters(interaction, source, manga_id, chapter_ids):
     if not is_staff(interaction.user):
         return await interaction.response.send_message("Hanya staff yang dapat download RAW.")
-    cleanup_old_raw_files()
-    os.makedirs(RAW_ROOT, exist_ok=True)
-    await interaction.response.edit_message(embed=discord.Embed(title="Menyiapkan RAW…", description=f"Sumber: **{source.title()}**\nChapter: **{', '.join(chapter_ids)}**\n\nMengambil gambar, membuat ZIP, lalu upload ke Filebin. Mohon tunggu.", color=discord.Color.gold()), view=None)
-    downloader = get_downloader(source)
-    completed, temporary_directories, temporary_archives = [], [], []
-    bin_id = secrets.token_urlsafe(12).replace("_", "").replace("-", "").lower()
-    try:
-        for chapter_id in chapter_ids:
-            result = await downloader.download_chapter(manga_id, chapter_id, RAW_ROOT)
-            if not result:
-                continue
-            temporary_directories.append(result)
-            safe_manga = re.sub(r"[^a-zA-Z0-9_-]+", "-", manga_id).strip("-")[:60] or "raw"
-            safe_chapter = re.sub(r"[^a-zA-Z0-9_-]+", "-", chapter_id).strip("-")[:40] or "chapter"
-            archive_path = shutil.make_archive(
-                os.path.join(RAW_ROOT, f"{source}_{safe_manga}_{safe_chapter}"),
-                "zip",
-                result,
-            )
-            temporary_archives.append(archive_path)
-            if await upload_to_filebin(bin_id, archive_path):
-                completed.append(chapter_id)
-
-        if not completed:
-            return await interaction.edit_original_response(
-                embed=discord.Embed(
-                    title="Upload Filebin Gagal",
-                    description="RAW tidak tersedia atau Filebin sedang menolak upload. File lokal sudah dibersihkan; coba lagi nanti.",
-                    color=discord.Color.red(),
-                )
-            )
-
-        filebin_url = f"{FILEBIN_BASE_URL}/{bin_id}"
-        embed = discord.Embed(
-            title="RAW Siap Diunduh",
-            description=f"**{len(completed)} chapter** berhasil diunggah ke Filebin.",
-            color=discord.Color.green(),
-        )
-        embed.add_field(name="Chapter", value=", ".join(completed), inline=False)
-        embed.add_field(name="Link Download", value=f"[Buka Filebin]({filebin_url})", inline=False)
-        embed.add_field(name="Penyimpanan", value="File lokal VPS langsung dihapus. Link Filebin berlaku sementara.", inline=False)
-        await interaction.edit_original_response(embed=embed)
-    finally:
-        for path in temporary_archives:
-            try:
-                os.remove(path)
-            except OSError:
-                pass
-        for path in temporary_directories:
-            shutil.rmtree(path, ignore_errors=True)
+    await interaction.response.edit_message(
+        embed=discord.Embed(
+            title="Menyiapkan RAW...",
+            description=f"Sumber: **{source.title()}**\nChapter: **{', '.join(chapter_ids)}**\n\nMembuat satu ZIP gambar lalu upload ke Filebin.",
+            color=discord.Color.gold(),
+        ),
+        view=None,
+    )
+    filebin_url, completed = await create_filebin_download(source, manga_id, chapter_ids)
+    if not filebin_url:
+        return await interaction.edit_original_response(embed=discord.Embed(title="Upload Filebin Gagal", description="RAW tidak tersedia atau Filebin sedang menolak upload. File lokal sudah dibersihkan; coba lagi nanti.", color=discord.Color.red()))
+    embed = discord.Embed(title="RAW Siap Diunduh", description=f"**{len(completed)} chapter** tersedia dalam **1 ZIP** tanpa folder bertingkat.", color=discord.Color.green())
+    embed.add_field(name="Chapter", value=", ".join(completed), inline=False)
+    embed.add_field(name="Link Download", value=f"[Buka Filebin]({filebin_url})", inline=False)
+    embed.add_field(name="Isi ZIP", value="Gambar langsung: `ch-{chapter}_001.jpg`, `ch-{chapter}_002.jpg`, dan seterusnya.", inline=False)
+    embed.add_field(name="Penyimpanan", value="File lokal VPS langsung dihapus. Link Filebin berlaku sementara.", inline=False)
+    await interaction.edit_original_response(embed=embed)

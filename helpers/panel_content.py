@@ -190,8 +190,9 @@ def build_guide_embed(audience: str = "all") -> discord.Embed:
     embed.add_field(
         name="🖼️ RAW Downloader",
         value=(
-            "`/raw-search` cari komik • `/raw-chapters` lihat chapter • "
-            "`/raw-download` unduh satu chapter • `/raw-download-batch` unduh beberapa chapter."
+            "Cara mudah: gunakan tombol **Download RAW** di Staff Panel.\n"
+            "Command manual: `manga_id` diisi slug, contoh `lets-do-it-after-work`; "
+            "`chapter_id` diisi `1`; batch diisi `1,2,3`. Gunakan `/raw-search` untuk menemukan slug."
         ),
         inline=False,
     )

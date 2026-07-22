@@ -297,7 +297,7 @@ async def status_bot_command(interaction: discord.Interaction):
 
 
 @bot.tree.command(name="raw-chapters", description="Lihat daftar chapter RAW")
-@discord.app_commands.describe(manga_id="ID komik", source="Sumber RAW (asura atau doujiva)")
+@discord.app_commands.describe(manga_id="Slug komik, contoh: lets-do-it-after-work", source="Sumber RAW (asura atau doujiva)")
 async def raw_chapters_command(interaction: discord.Interaction, manga_id: str, source: Literal["asura", "doujiva"] = "asura"):
     await interaction.response.defer(ephemeral=False)
     downloader = get_downloader(source)
@@ -313,13 +313,13 @@ async def raw_chapters_command(interaction: discord.Interaction, manga_id: str, 
 
 
 @bot.tree.command(name="raw-download", description="Download chapter RAW dari Asura Scans atau Doujiva")
-@discord.app_commands.describe(manga_id="ID komik", chapter_id="ID chapter", source="Sumber RAW (asura atau doujiva)")
+@discord.app_commands.describe(manga_id="Slug komik, contoh: lets-do-it-after-work", chapter_id="Nomor/slug chapter, contoh: 1", source="Sumber RAW")
 async def raw_download_command(interaction: discord.Interaction, manga_id: str, chapter_id: str, source: Literal["asura", "doujiva"] = "asura"):
     await download_raw_command(interaction, manga_id, chapter_id, source)
 
 
 @bot.tree.command(name="raw-download-batch", description="Batch download chapter RAW")
-@discord.app_commands.describe(manga_id="ID komik", chapter_ids="Daftar ID chapter dipisah koma", source="Sumber RAW (asura atau doujiva)")
+@discord.app_commands.describe(manga_id="Slug komik, contoh: lets-do-it-after-work", chapter_ids="Chapter dipisah koma, contoh: 1,2,3", source="Sumber RAW")
 async def raw_download_batch_command(interaction: discord.Interaction, manga_id: str, chapter_ids: str, source: Literal["asura", "doujiva"] = "asura"):
     if not is_staff(interaction.user):
         return await interaction.response.send_message("Hanya staff yang bisa download RAW!", ephemeral=False)
