@@ -4,7 +4,7 @@ import database as db
 from helpers.utils import STATUS_EMOJI, format_currency, get_current_period, is_staff
 from helpers.panel_content import build_guide_embed, build_staff_panel_embed
 from views.select_views import StaffTaskView, SubmitSelectView
-from views.raw_views import RawSearchModal
+from views.raw_views import RawAssignmentView
 
 
 class StaffPanelView(discord.ui.View):
@@ -84,7 +84,18 @@ class StaffPanelView(discord.ui.View):
 
     @discord.ui.button(label="Download RAW", style=discord.ButtonStyle.primary, custom_id="staff_raw_download", row=1)
     async def raw_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(RawSearchModal())
+        assignments = await db.get_assignments_by_staff(interaction.user.id)
+        active = [item for item in assignments if item["status"] in ("claimed", "revision")]
+        if not active:
+            return await interaction.response.send_message(
+                "Kamu belum memiliki tugas aktif. Claim atau terima tugas terlebih dahulu sebelum download RAW."
+            )
+        embed = discord.Embed(
+            title="Download RAW untuk Proyek",
+            description="Pilih tugas aktif. Judul komik akan diambil otomatis dari proyek tersebut.",
+            color=discord.Color.blue(),
+        )
+        await interaction.response.send_message(embed=embed, view=RawAssignmentView(active))
 
     @discord.ui.button(label="Panduan", style=discord.ButtonStyle.secondary, custom_id="staff_guide", row=1)
     async def guide_button(self, interaction: discord.Interaction, button: discord.ui.Button):

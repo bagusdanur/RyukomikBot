@@ -107,8 +107,8 @@ def build_guide_embed(audience: str = "all") -> discord.Embed:
         embed.add_field(
             name="3️⃣ Ambil Bahan RAW",
             value=(
-                "Jalankan `/raw-search`, pilih sumber **Asura/Doujiva**, lalu pilih komik dan chapter "
-                "melalui dropdown. Bot akan membuat ZIP; kamu tidak perlu menyalin manga ID atau chapter ID."
+                "Tekan **Download RAW** di panel, lalu pilih tugas aktif. Judul komik diambil otomatis "
+                "dari proyek yang kamu claim. Pilih hasil komik dan chapter; bot akan membuat ZIP."
             ),
             inline=False,
         )

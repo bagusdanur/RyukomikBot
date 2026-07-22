@@ -55,6 +55,74 @@ class RawSearchModal(discord.ui.Modal, title="Cari dan Download RAW"):
         await interaction.followup.send(embed=embed, view=RawSearchView("auto", combined))
 
 
+class RawAssignmentView(discord.ui.View):
+    """Start RAW navigation from one of the staff member's claimed projects."""
+
+    def __init__(self, assignments):
+        super().__init__(timeout=300)
+        self.add_item(RawAssignmentSelect(assignments[:25]))
+
+
+class RawAssignmentSelect(discord.ui.Select):
+    def __init__(self, assignments):
+        self.assignments = {str(item["id"]): item for item in assignments}
+        options = [
+            discord.SelectOption(
+                label=f"#{item['id']} {item['manga']}"[:100],
+                value=str(item["id"]),
+                description=f"Chapter {item['chapter']} • {item['role']}"[:100],
+            )
+            for item in assignments
+        ]
+        super().__init__(placeholder="Pilih proyek yang sedang dikerjakan", options=options)
+
+    async def callback(self, interaction):
+        assignment = self.assignments[self.values[0]]
+        if assignment["staff_id"] != interaction.user.id:
+            return await interaction.response.send_message("Tugas ini bukan milikmu.")
+        await interaction.response.edit_message(
+            embed=discord.Embed(
+                title="Mencari RAW Proyek…",
+                description=(
+                    f"Proyek: **{assignment['manga']}**\n"
+                    f"Target chapter: **{assignment['chapter']}**\n\n"
+                    "Mencari otomatis di Asura dan Doujiva."
+                ),
+                color=discord.Color.gold(),
+            ),
+            view=None,
+        )
+        asura, doujiva = await asyncio.gather(
+            get_downloader("asura").search_manga(assignment["manga"]),
+            get_downloader("doujiva").search_manga(assignment["manga"]),
+            return_exceptions=True,
+        )
+        combined = []
+        for source, result in (("asura", asura), ("doujiva", doujiva)):
+            if isinstance(result, list):
+                combined.extend({**manga, "_source": source} for manga in result[:12])
+        if not combined:
+            return await interaction.edit_original_response(
+                embed=discord.Embed(
+                    title="RAW Tidak Ditemukan",
+                    description=(
+                        f"Tidak ada hasil untuk **{assignment['manga']}** di Asura maupun Doujiva. "
+                        "Hubungi admin jika judul proyek perlu disesuaikan."
+                    ),
+                    color=discord.Color.red(),
+                )
+            )
+        embed = discord.Embed(
+            title="Pilih Komik RAW",
+            description=(
+                f"Proyek tugas: **{assignment['manga']} — Ch. {assignment['chapter']}**\n"
+                "Pilih hasil yang sesuai. Judul diambil otomatis dari tugas kamu."
+            ),
+            color=discord.Color.blue(),
+        )
+        await interaction.edit_original_response(embed=embed, view=RawSearchView("auto", combined))
+
+
 class RawSearchView(discord.ui.View):
     def __init__(self, source, results):
         super().__init__(timeout=300)
