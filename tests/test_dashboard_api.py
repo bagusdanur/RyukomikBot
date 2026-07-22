@@ -77,7 +77,7 @@ class DashboardApiTests(unittest.TestCase):
         result = asyncio.run(self.module.create_dashboard_assignment(payload, user))
         assignment = asyncio.run(self.module.assignments(status="claimed", search="Project Baru", user=user))[0]
         self.assertEqual(result["id"], assignment["id"])
-        self.assertEqual(assignment["staff_id"], 100)
+        self.assertEqual(assignment["staff_id"], "100")
 
     def test_invoice_creation_and_payment(self):
         user = {"id": 1, "username": "Admin", "role": "admin"}
