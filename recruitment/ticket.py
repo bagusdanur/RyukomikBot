@@ -4,7 +4,8 @@ from typing import Optional
 import discord
 from discord.ext import commands
 
-from config import REKRUT_CAT_ID, ROLE_ADMIN_ID, ROLE_STAFF_ID
+from config import REKRUT_CAT_ID, ROLE_STAFF_ID
+from helpers.utils import build_private_ticket_overwrites
 
 
 TEST_MATERIALS = {
@@ -16,36 +17,7 @@ TEST_MATERIALS = {
 
 def build_ticket_overwrites(guild: discord.Guild, applicant: discord.Member):
     """Return strict permissions: applicant, administrators, and the bot only."""
-    overwrites = {
-        guild.default_role: discord.PermissionOverwrite(view_channel=False),
-        applicant: discord.PermissionOverwrite(
-            view_channel=True,
-            read_message_history=True,
-            send_messages=True,
-            attach_files=True,
-            embed_links=True,
-        ),
-    }
-    admin_role = guild.get_role(ROLE_ADMIN_ID)
-    if admin_role:
-        overwrites[admin_role] = discord.PermissionOverwrite(
-            view_channel=True,
-            read_message_history=True,
-            send_messages=True,
-            manage_messages=True,
-            attach_files=True,
-            embed_links=True,
-        )
-    bot_member = guild.me
-    if bot_member:
-        overwrites[bot_member] = discord.PermissionOverwrite(
-            view_channel=True,
-            read_message_history=True,
-            send_messages=True,
-            manage_channels=True,
-            manage_messages=True,
-        )
-    return overwrites
+    return build_private_ticket_overwrites(guild, applicant)
 
 
 class RecruitmentView(discord.ui.View):
@@ -237,7 +209,11 @@ class RecruitmentBot:
 
         @self.bot.command(name="close")
         async def close_ticket(ctx: commands.Context):
-            if not ctx.channel.category_id or ctx.channel.category_id != REKRUT_CAT_ID:
+            if (
+                not ctx.channel.category_id
+                or ctx.channel.category_id != REKRUT_CAT_ID
+                or not (ctx.channel.topic or "").startswith("Tiket rekrutmen")
+            ):
                 return await ctx.send("Command ini hanya bisa digunakan di tiket rekrutmen!")
 
             if not ctx.author.guild_permissions.administrator:

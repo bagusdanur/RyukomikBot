@@ -112,17 +112,13 @@ async def find_ticket(guild: discord.Guild, staff_id: int) -> Optional[discord.T
     return None
 
 
-async def find_or_create_staff_ticket(guild: discord.Guild, staff: discord.Member) -> Optional[discord.TextChannel]:
-    """Find or create a private staff ticket channel."""
-    existing = await find_ticket(guild, staff.id)
-    if existing:
-        return existing
-
-    admin_role = guild.get_role(ROLE_ADMIN_ID)
-    staff_role = guild.get_role(ROLE_STAFF_ID)
+def build_private_ticket_overwrites(
+    guild: discord.Guild, member: discord.Member
+) -> dict:
+    """Permissions shared by private recruitment and staff tickets."""
     overwrites = {
         guild.default_role: discord.PermissionOverwrite(view_channel=False),
-        staff: discord.PermissionOverwrite(
+        member: discord.PermissionOverwrite(
             view_channel=True,
             read_message_history=True,
             send_messages=True,
@@ -130,6 +126,7 @@ async def find_or_create_staff_ticket(guild: discord.Guild, staff: discord.Membe
             embed_links=True,
         ),
     }
+    admin_role = guild.get_role(ROLE_ADMIN_ID)
     if admin_role:
         overwrites[admin_role] = discord.PermissionOverwrite(
             view_channel=True,
@@ -139,8 +136,56 @@ async def find_or_create_staff_ticket(guild: discord.Guild, staff: discord.Membe
             attach_files=True,
             embed_links=True,
         )
-    if staff_role:
-        overwrites[staff_role] = discord.PermissionOverwrite(view_channel=False)
+    if guild.me:
+        overwrites[guild.me] = discord.PermissionOverwrite(
+            view_channel=True,
+            read_message_history=True,
+            send_messages=True,
+            manage_channels=True,
+            manage_messages=True,
+        )
+    return overwrites
+
+
+async def find_recruitment_ticket(
+    guild: discord.Guild, member: discord.Member
+) -> Optional[discord.TextChannel]:
+    """Find the member's existing recruitment ticket, including legacy tickets."""
+    category = guild.get_channel(REKRUT_CAT_ID)
+    if not isinstance(category, discord.CategoryChannel):
+        return None
+
+    for channel in category.text_channels:
+        topic = channel.topic or ""
+        if str(member.id) in topic:
+            return channel
+        for target, overwrite in channel.overwrites.items():
+            if (
+                isinstance(target, discord.Member)
+                and target.id == member.id
+                and overwrite.view_channel is not False
+            ):
+                return channel
+    return None
+
+
+async def find_or_create_staff_ticket(guild: discord.Guild, staff: discord.Member) -> Optional[discord.TextChannel]:
+    """Find or create a private staff ticket channel."""
+    existing = await find_ticket(guild, staff.id)
+    if existing:
+        return existing
+
+    recruitment_ticket = await find_recruitment_ticket(guild, staff)
+    if recruitment_ticket:
+        await recruitment_ticket.edit(
+            topic=f"Tiket staff untuk {staff.display_name} ({staff.id})",
+            overwrites=build_private_ticket_overwrites(guild, staff),
+            sync_permissions=False,
+            reason="Menggunakan tiket rekrutmen sebagai tiket staff",
+        )
+        return recruitment_ticket
+
+    overwrites = build_private_ticket_overwrites(guild, staff)
 
     safe_name = "".join(ch for ch in staff.name.lower() if ch.isalnum() or ch == "-")
     channel_name = f"tiket-{safe_name}-{str(staff.id)[-4:]}"
