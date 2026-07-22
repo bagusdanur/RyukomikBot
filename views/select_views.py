@@ -1,6 +1,6 @@
 import discord
 from helpers.utils import is_admin, format_currency
-from views.ticket_views import DashboardUploadLinkView, TicketReviewView
+from views.ticket_views import DiscordResultUploadModal, TicketReviewView
 import database as db
 
 
@@ -154,16 +154,7 @@ class SubmitSelect(discord.ui.Select):
                 ephemeral=False
             )
         
-        embed = discord.Embed(
-            title="Upload Hasil melalui Dashboard",
-            description=(
-                f"Tugas **#{assignment['id']} · {assignment['manga']} Chapter {assignment['chapter']}**\n\n"
-                "Buka dashboard, masuk ke menu **Tugas**, lalu tekan **Upload hasil** pada tugas ini. "
-                "Pilih seluruh gambar sekaligus; tidak perlu Google Drive."
-            ),
-            color=discord.Color.green(),
-        )
-        await interaction.response.send_message(embed=embed, view=DashboardUploadLinkView(), ephemeral=False)
+        await interaction.response.send_modal(DiscordResultUploadModal(assignment))
 
 
 class ConfirmPayView(discord.ui.View):

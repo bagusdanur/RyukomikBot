@@ -181,6 +181,8 @@ async def current_user(request: Request):
     user = request.session.get("user")
     if not user:
         raise HTTPException(status_code=401, detail="Silakan masuk dengan Discord.")
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Dashboard hanya tersedia untuk administrator.")
     return user
 
 
@@ -421,8 +423,8 @@ async def auth_callback(request: Request):
             profile = await response.json()
     member = await fetch_member(int(profile["id"]))
     role = role_from_member(member or {})
-    if not role:
-        raise HTTPException(status_code=403, detail="Akun tidak memiliki role Admin atau Staff Ryukomik.")
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="Dashboard hanya tersedia untuk administrator Ryukomik.")
     request.session["user"] = {
         "id": int(profile["id"]),
         "username": profile.get("global_name") or profile["username"],

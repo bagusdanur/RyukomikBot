@@ -49,7 +49,7 @@ def build_staff_panel_embed(staff: discord.Member) -> discord.Embed:
         title="👤 Ruang Kerja Staff",
         description=(
             f"Halo {staff.mention}, panel ini adalah pusat tugas privat kamu. "
-            "Detail tugas tersedia di sini, sedangkan upload hasil dilakukan aman melalui dashboard staff."
+            "Detail dan upload hasil dilakukan langsung dari Discord melalui tiket ini."
         ),
         color=discord.Color.from_rgb(88, 101, 242),
     )
@@ -60,7 +60,7 @@ def build_staff_panel_embed(staff: discord.Member) -> discord.Embed:
     )
     embed.add_field(
         name="📤 Submit Hasil",
-        value="Pilih tugas berstatus **claimed/revision**, buka dashboard, lalu upload seluruh gambar. Tidak perlu Google Drive.",
+        value="Pilih tugas berstatus **claimed/revision**, lalu upload gambar langsung dari Discord. Maksimal 10 file; gunakan ZIP jika lebih banyak.",
         inline=False,
     )
     embed.add_field(
@@ -83,7 +83,7 @@ def build_guide_embed(audience: str = "all") -> discord.Embed:
             title="📚 Panduan Kerja Staff Ryukomik",
             description=(
                 "Panduan singkat untuk mengerjakan tugas dari awal sampai pembayaran. "
-                "Detail tugas tersedia di tiket privat dan upload hasil dilakukan melalui dashboard staff."
+                "Detail tugas dan upload hasil dilakukan langsung melalui tiket privat Discord."
             ),
             color=discord.Color.from_rgb(88, 101, 242),
         )
@@ -115,9 +115,9 @@ def build_guide_embed(audience: str = "all") -> discord.Embed:
         embed.add_field(
             name="4️⃣ Submit Hasil",
             value=(
-                "Tekan **Upload Hasil** pada detail tugas untuk membuka dashboard, atau langsung masuk ke "
-                "**staff.ryukomik.web.id → Tugas**. Pilih seluruh gambar sekaligus; sistem mengurutkan halaman, "
-                "membuat ZIP, dan mengunggahnya langsung ke penyimpanan Ryukomik. Tidak perlu Google Drive."
+                "Tekan **Upload Hasil**, lalu pilih maksimal 10 gambar langsung dari Discord. Sistem mengurutkan "
+                "halaman, membuat ZIP, dan menyimpannya ke Ryukomik. Jika hasil lebih dari 10 gambar, jadikan "
+                "satu ZIP terlebih dahulu. Tidak perlu Google Drive atau login dashboard."
             ),
             inline=False,
         )
@@ -174,7 +174,7 @@ def build_guide_embed(audience: str = "all") -> discord.Embed:
             value=(
                 "1. Claim tugas yang tersedia di channel staff-tasks.\n"
                 "2. Buka tiket privat dan baca detail tugas.\n"
-                "3. Klik **Upload Hasil** dan upload seluruh gambar melalui dashboard staff.\n"
+                "3. Klik **Upload Hasil** dan kirim gambar/ZIP langsung melalui Discord.\n"
                 "4. Jika revision, perbaiki sesuai catatan dan submit ulang.\n"
                 "5. Cek pendapatan melalui tombol **Penghasilan**."
             ),

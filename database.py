@@ -58,6 +58,22 @@ async def setup_database():
         """)
 
         await db.execute("""
+            CREATE TABLE IF NOT EXISTS assignment_submissions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                assignment_id INTEGER NOT NULL,
+                staff_id INTEGER NOT NULL,
+                object_key TEXT NOT NULL UNIQUE,
+                original_name TEXT NOT NULL,
+                content_type TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                uploaded_at DATETIME,
+                FOREIGN KEY(assignment_id) REFERENCES assignments(id)
+            )
+        """)
+
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS payrates (
                 role TEXT PRIMARY KEY,
                 base_rate INTEGER NOT NULL CHECK(base_rate >= 0),
