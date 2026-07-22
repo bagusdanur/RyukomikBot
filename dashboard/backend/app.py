@@ -3,6 +3,7 @@ import os
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Literal
+import secrets
 
 import aiohttp
 import aiosqlite
@@ -15,6 +16,7 @@ from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 
 from config import GUILD_ID, ROLE_ADMIN_ID, ROLE_STAFF_ID, TOKEN
+import database as staff_db
 from database import DB_PATH, setup_database
 
 ROLE_RATE_LIMITS = {"TL": 8000, "TS": 12000, "TL+TS": 15000}
@@ -50,6 +52,21 @@ async def setup_dashboard_tables():
                 before_data TEXT,
                 after_data TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await connection.execute("""
+            CREATE TABLE IF NOT EXISTS dashboard_invoices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                invoice_number TEXT NOT NULL UNIQUE,
+                staff_id INTEGER NOT NULL,
+                period TEXT NOT NULL,
+                chapter_count INTEGER NOT NULL,
+                total_amount INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'issued',
+                issued_by INTEGER NOT NULL,
+                issued_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                paid_at DATETIME,
+                UNIQUE(staff_id, period)
             )
         """)
         await connection.commit()
@@ -146,6 +163,116 @@ async def audit(actor_id, action, target_type, target_id=None, before=None, afte
 
 class PayrateUpdate(BaseModel):
     base_rate: int = Field(ge=0, le=1_000_000)
+
+
+class AssignmentCreate(BaseModel):
+    manga: str = Field(min_length=2, max_length=150)
+    chapter: str = Field(min_length=1, max_length=30)
+    staff_id: int
+    role: Literal["TL", "TS", "TL+TS"]
+    final_rate: int = Field(ge=0, le=1_000_000)
+    deadline_at: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+class InvoiceCreate(BaseModel):
+    staff_id: int
+    period: str = Field(pattern=r"^\d{4}-\d{2}$")
+
+
+async def discord_api(method: str, path: str, payload=None):
+    if not TOKEN:
+        return None
+    async with aiohttp.ClientSession() as session:
+        async with session.request(
+            method,
+            f"https://discord.com/api/v10{path}",
+            headers={"Authorization": f"Bot {TOKEN}", "Content-Type": "application/json"},
+            json=payload,
+            timeout=aiohttp.ClientTimeout(total=20),
+        ) as response:
+            if 200 <= response.status < 300:
+                return await response.json() if response.content_length else {}
+            return None
+
+
+def discord_avatar(member: dict) -> str | None:
+    user = member.get("user", {})
+    avatar = member.get("avatar") or user.get("avatar")
+    if not avatar:
+        return None
+    if member.get("avatar"):
+        return f"https://cdn.discordapp.com/guilds/{GUILD_ID}/users/{user['id']}/avatars/{avatar}.png?size=128"
+    return f"https://cdn.discordapp.com/avatars/{user['id']}/{avatar}.png?size=128"
+
+
+async def staff_directory():
+    if DEV_BYPASS:
+        connection = await dashboard_db()
+        try:
+            rows = await (await connection.execute(
+                "SELECT DISTINCT staff_id FROM assignments WHERE staff_id IS NOT NULL"
+            )).fetchall()
+            return [{"id": row[0], "username": f"Staff {row[0]}", "avatar": None} for row in rows]
+        finally:
+            await connection.close()
+    members = await discord_api("GET", f"/guilds/{GUILD_ID}/members?limit=1000") or []
+    result = []
+    for member in members:
+        roles = {int(role) for role in member.get("roles", [])}
+        if ROLE_STAFF_ID not in roles and ROLE_ADMIN_ID not in roles:
+            continue
+        discord_user = member.get("user", {})
+        result.append({
+            "id": int(discord_user["id"]),
+            "username": member.get("nick") or discord_user.get("global_name") or discord_user.get("username", "Staff"),
+            "avatar": discord_avatar(member),
+        })
+    return sorted(result, key=lambda item: item["username"].casefold())
+
+
+async def enrich_staff(rows):
+    profiles = {item["id"]: item for item in await staff_directory()}
+    enriched = []
+    for row in rows:
+        item = dict(row)
+        profile = profiles.get(item.get("staff_id"), {})
+        item["staff_name"] = profile.get("username") or f"Staff {item.get('staff_id') or 'belum dipilih'}"
+        item["staff_avatar"] = profile.get("avatar")
+        enriched.append(item)
+    return enriched
+
+
+async def send_assignment_notice(staff_id: int, assignment_id: int, payload: AssignmentCreate):
+    if DEV_BYPASS:
+        return True
+    connection = await dashboard_db()
+    try:
+        row = await (await connection.execute(
+            "SELECT ticket_channel_id FROM assignments WHERE staff_id=? AND ticket_channel_id IS NOT NULL ORDER BY id DESC LIMIT 1",
+            (staff_id,),
+        )).fetchone()
+    finally:
+        await connection.close()
+    channel_id = row[0] if row else None
+    if not channel_id:
+        dm = await discord_api("POST", "/users/@me/channels", {"recipient_id": str(staff_id)})
+        channel_id = dm.get("id") if dm else None
+    if not channel_id:
+        return False
+    message = {
+        "content": f"<@{staff_id}> kamu mendapat tugas baru dari dashboard admin.",
+        "embeds": [{
+            "title": f"Tugas #{assignment_id} • {payload.manga}",
+            "description": f"Chapter **{payload.chapter}** • Role **{payload.role}**",
+            "color": 6253567,
+            "fields": [
+                {"name": "Bayaran", "value": f"Rp {payload.final_rate:,.0f}".replace(",", "."), "inline": True},
+                {"name": "Deadline", "value": payload.deadline_at or "Tidak ditentukan", "inline": True},
+            ],
+            "footer": {"text": "Buka Staff Panel atau dashboard untuk melihat dan submit tugas."},
+        }],
+    }
+    return bool(await discord_api("POST", f"/channels/{channel_id}/messages", message))
 
 
 @app.get("/health")
@@ -245,9 +372,26 @@ async def assignments(
         rows = await (await connection.execute(
             f"SELECT * FROM assignments{where} ORDER BY assigned_at DESC LIMIT 250", params
         )).fetchall()
-        return [dict(row) for row in rows]
+        return await enrich_staff(rows)
     finally:
         await connection.close()
+
+
+@app.post("/api/assignments", status_code=201)
+async def create_dashboard_assignment(payload: AssignmentCreate, user=Depends(admin_user)):
+    if payload.final_rate > ROLE_RATE_LIMITS[payload.role]:
+        raise HTTPException(status_code=422, detail=f"Maksimum rate {payload.role} adalah {ROLE_RATE_LIMITS[payload.role]}.")
+    profiles = {item["id"]: item for item in await staff_directory()}
+    if payload.staff_id not in profiles:
+        raise HTTPException(status_code=422, detail="Staff tidak ditemukan atau tidak memiliki role Staff.")
+    assignment_id = await staff_db.create_assignment(
+        manga=payload.manga.strip(), chapter=payload.chapter.strip(), role=payload.role,
+        base_rate=payload.final_rate, final_rate=payload.final_rate, multiplier=1.0,
+        staff_id=payload.staff_id, deadline_at=payload.deadline_at,
+    )
+    notified = await send_assignment_notice(payload.staff_id, assignment_id, payload)
+    await audit(user["id"], "assignment.create", "assignment", assignment_id, after={**payload.model_dump(), "notified": notified})
+    return {"id": assignment_id, "notified": notified}
 
 
 @app.get("/api/staff")
@@ -262,9 +406,15 @@ async def staff(_user=Depends(admin_user)):
                    SUM(CASE WHEN status='paid' THEN final_rate ELSE 0 END) paid_amount
             FROM assignments WHERE staff_id IS NOT NULL GROUP BY staff_id ORDER BY task_count DESC
         """)).fetchall()
-        return [dict(row) for row in rows]
+        stats = {row["staff_id"]: dict(row) for row in rows}
     finally:
         await connection.close()
+    directory = await staff_directory()
+    return [{
+        **profile,
+        "staff_id": profile["id"],
+        **stats.get(profile["id"], {"task_count": 0, "active_count": 0, "approved_amount": 0, "paid_amount": 0}),
+    } for profile in directory]
 
 
 @app.get("/api/payrates")
@@ -311,7 +461,7 @@ async def deadlines(user=Depends(current_user)):
             f"SELECT * FROM assignments WHERE {' AND '.join(clauses)} ORDER BY date(deadline_at) ASC LIMIT 100",
             params,
         )).fetchall()
-        return [dict(row) for row in rows]
+        return await enrich_staff(rows)
     finally:
         await connection.close()
 
@@ -321,14 +471,84 @@ async def recap(period: str = Query(pattern=r"^\d{4}-\d{2}$"), _user=Depends(adm
     connection = await dashboard_db()
     try:
         rows = await (await connection.execute("""
-            SELECT staff_id, COUNT(*) chapter_count, SUM(final_rate) total_amount
+            SELECT staff_id, COUNT(*) chapter_count, SUM(final_rate) total_amount,
+                   SUM(CASE WHEN status='approved' THEN final_rate ELSE 0 END) pending_amount,
+                   SUM(CASE WHEN status='paid' THEN final_rate ELSE 0 END) paid_amount
             FROM assignments
-            WHERE status='approved' AND approved_at LIKE ?
+            WHERE staff_id IS NOT NULL AND status IN ('approved','paid')
+              AND (approved_at LIKE ? OR paid_period = ?)
             GROUP BY staff_id ORDER BY total_amount DESC
-        """, (f"{period}%",))).fetchall()
-        return [dict(row) for row in rows]
+        """, (f"{period}%", period))).fetchall()
+        return await enrich_staff(rows)
     finally:
         await connection.close()
+
+
+@app.get("/api/invoices")
+async def invoices(period: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$"), _user=Depends(admin_user)):
+    connection = await dashboard_db()
+    try:
+        where, params = (" WHERE period=?", [period]) if period else ("", [])
+        rows = await (await connection.execute(
+            f"SELECT * FROM dashboard_invoices{where} ORDER BY issued_at DESC LIMIT 200", params
+        )).fetchall()
+        return await enrich_staff(rows)
+    finally:
+        await connection.close()
+
+
+@app.post("/api/invoices", status_code=201)
+async def create_invoice(payload: InvoiceCreate, user=Depends(admin_user)):
+    connection = await dashboard_db()
+    try:
+        totals = await (await connection.execute("""
+            SELECT COUNT(*) chapter_count, COALESCE(SUM(final_rate),0) total_amount
+            FROM assignments WHERE staff_id=? AND status='approved' AND approved_at LIKE ?
+        """, (payload.staff_id, f"{payload.period}%"))).fetchone()
+        if not totals["chapter_count"]:
+            raise HTTPException(status_code=422, detail="Tidak ada tugas approved yang belum dibayar pada periode ini.")
+        invoice_number = f"RYU-{payload.period.replace('-', '')}-{payload.staff_id}-{secrets.token_hex(2).upper()}"
+        try:
+            cursor = await connection.execute("""
+                INSERT INTO dashboard_invoices
+                    (invoice_number,staff_id,period,chapter_count,total_amount,status,issued_by)
+                VALUES(?,?,?,?,?,'issued',?)
+            """, (invoice_number, payload.staff_id, payload.period, totals["chapter_count"], totals["total_amount"], user["id"]))
+            await connection.commit()
+        except aiosqlite.IntegrityError:
+            raise HTTPException(status_code=409, detail="Invoice staf untuk periode ini sudah dibuat.")
+    finally:
+        await connection.close()
+    await audit(user["id"], "invoice.create", "invoice", cursor.lastrowid, after={"invoice_number": invoice_number})
+    return {"id": cursor.lastrowid, "invoice_number": invoice_number}
+
+
+@app.post("/api/invoices/{invoice_id}/pay")
+async def pay_invoice(invoice_id: int, user=Depends(admin_user)):
+    connection = await dashboard_db()
+    try:
+        invoice = await (await connection.execute(
+            "SELECT * FROM dashboard_invoices WHERE id=?", (invoice_id,)
+        )).fetchone()
+        if not invoice or invoice["status"] != "issued":
+            raise HTTPException(status_code=409, detail="Invoice tidak ditemukan atau sudah dibayar.")
+        await connection.execute("""
+            UPDATE assignments SET status='paid', paid_period=?
+            WHERE staff_id=? AND status='approved' AND approved_at LIKE ?
+        """, (invoice["period"], invoice["staff_id"], f"{invoice['period']}%"))
+        await connection.execute(
+            "UPDATE dashboard_invoices SET status='paid', paid_at=CURRENT_TIMESTAMP WHERE id=?",
+            (invoice_id,),
+        )
+        await connection.execute("""
+            INSERT INTO payments(staff_id,period,total_amount,chapter_count,status,paid_at)
+            VALUES(?,?,?,?, 'paid', CURRENT_TIMESTAMP)
+        """, (invoice["staff_id"], invoice["period"], invoice["total_amount"], invoice["chapter_count"]))
+        await connection.commit()
+    finally:
+        await connection.close()
+    await audit(user["id"], "invoice.pay", "invoice", invoice_id, before=dict(invoice), after={"status": "paid"})
+    return {"ok": True}
 
 
 @app.get("/api/audit")
