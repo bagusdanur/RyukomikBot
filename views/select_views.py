@@ -1,6 +1,6 @@
 import discord
 from helpers.utils import is_admin, format_currency
-from views.ticket_views import DiscordResultUploadModal, TicketReviewView
+from views.ticket_views import TicketReviewView, TicketSubmitModal
 import database as db
 
 
@@ -85,8 +85,8 @@ class ReviewSelect(discord.ui.Select):
         embed.add_field(name="Role", value=assignment["role"], inline=True)
         embed.add_field(name="Rate", value=format_currency(assignment["final_rate"]), inline=True)
         embed.add_field(
-            name="Hasil Kerja",
-            value="Tersimpan aman di R2. Buka dashboard admin untuk mengunduh hasil." if assignment["gdrive_link"] else "Belum ada",
+            name="Link Google Drive",
+            value=assignment["gdrive_link"] or "Belum ada",
             inline=False,
         )
         
@@ -154,7 +154,7 @@ class SubmitSelect(discord.ui.Select):
                 ephemeral=False
             )
         
-        await interaction.response.send_modal(DiscordResultUploadModal(assignment))
+        await interaction.response.send_modal(TicketSubmitModal(assignment))
 
 
 class ConfirmPayView(discord.ui.View):
