@@ -92,6 +92,16 @@ class DashboardApiTests(unittest.TestCase):
         asyncio.run(self.module.pay_invoice(created["id"], user))
         paid_rows = asyncio.run(self.module.invoices(period="2026-07", _user=user))
         self.assertEqual(paid_rows[0]["status"], "paid")
+        with self.assertRaises(self.module.HTTPException):
+            asyncio.run(self.module.delete_invoice(created["id"], user))
+
+    def test_unpaid_invoice_can_be_deleted_and_recreated(self):
+        user = {"id": 1, "username": "Admin", "role": "admin"}
+        created = asyncio.run(self.module.create_invoice(self.module.InvoiceCreate(staff_id=100, period="2026-07"), user))
+        self.assertTrue(asyncio.run(self.module.delete_invoice(created["id"], user))["ok"])
+        self.assertEqual(asyncio.run(self.module.invoices(period="2026-07", _user=user)), [])
+        recreated = asyncio.run(self.module.create_invoice(self.module.InvoiceCreate(staff_id=100, period="2026-07"), user))
+        self.assertNotEqual(created["invoice_number"], recreated["invoice_number"])
 
     def test_staff_can_upload_and_submit_result(self):
         class FakeR2:

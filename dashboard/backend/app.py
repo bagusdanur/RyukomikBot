@@ -137,7 +137,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[DASHBOARD_ORIGIN],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["Content-Type"],
 )
 
@@ -735,6 +735,26 @@ async def pay_invoice(invoice_id: int, user=Depends(admin_user)):
     finally:
         await connection.close()
     await audit(user["id"], "invoice.pay", "invoice", invoice_id, before=dict(invoice), after={"status": "paid"})
+    return {"ok": True}
+
+
+@app.delete("/api/invoices/{invoice_id}")
+async def delete_invoice(invoice_id: int, user=Depends(admin_user)):
+    connection = await dashboard_db()
+    try:
+        invoice = await (await connection.execute(
+            "SELECT * FROM dashboard_invoices WHERE id=?", (invoice_id,)
+        )).fetchone()
+        if not invoice:
+            raise HTTPException(status_code=404, detail="Invoice tidak ditemukan.")
+        if invoice["status"] == "paid":
+            raise HTTPException(status_code=409, detail="Invoice yang sudah lunas tidak dapat dihapus.")
+        await connection.execute("DELETE FROM dashboard_invoice_items WHERE invoice_id=?", (invoice_id,))
+        await connection.execute("DELETE FROM dashboard_invoices WHERE id=?", (invoice_id,))
+        await connection.commit()
+    finally:
+        await connection.close()
+    await audit(user["id"], "invoice.delete", "invoice", invoice_id, before=dict(invoice))
     return {"ok": True}
 
 
