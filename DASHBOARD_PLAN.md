@@ -12,12 +12,12 @@ Komponen inti dapat digunakan gratis dan bersifat open-source:
 
 | Komponen | Pilihan | Biaya software |
 |---|---|---:|
-| Frontend | Next.js + TypeScript | Gratis |
-| Tampilan | Tailwind CSS + shadcn/ui | Gratis |
+| Frontend | Vue 3 + Vite + TypeScript | Gratis |
+| Tampilan | PrimeVue + CSS responsif | Gratis |
 | Backend | FastAPI (Python) | Gratis |
 | Database | PostgreSQL | Gratis |
 | Login | Discord OAuth2 | Gratis |
-| Grafik | Recharts | Gratis |
+| Grafik | PrimeVue Chart (fase lanjutan) | Gratis |
 | Reverse proxy | Nginx | Gratis |
 | Process manager | PM2 atau systemd | Gratis |
 | Hosting | VPS Ryukomik yang sudah ada | Tidak ada biaya baru jika kapasitas cukup |
@@ -39,7 +39,7 @@ Browser
    v
 Nginx + HTTPS
    |
-   +--> Next.js Dashboard
+   +--> Vue + Vite static dashboard
    |         |
    |         v
    +--> FastAPI Internal API
@@ -267,7 +267,7 @@ Perubahan penting dari SQLite saat ini:
 
 ### Tahap 1 — Dashboard Read-only
 
-- Scaffold Next.js dan FastAPI.
+- Scaffold Vue 3 + Vite dan FastAPI.
 - Login Discord.
 - Pemeriksaan guild dan role.
 - Overview, daftar tugas, staff, dan gaji read-only.
@@ -345,7 +345,7 @@ Rencana service:
 ```text
 ryukomik-bot        -> Python bot
 ryukomik-api        -> FastAPI/Uvicorn
-ryukomik-dashboard  -> Next.js
+ryukomik-dashboard  -> Nginx static files dari Vite `dist/`
 postgresql          -> database
 nginx               -> HTTPS dan reverse proxy
 ```

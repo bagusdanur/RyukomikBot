@@ -24,3 +24,8 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Dashboard frontend
+dashboard/frontend/node_modules/
+dashboard/frontend/dist/
+dashboard/frontend/*.tsbuildinfo
