@@ -101,6 +101,19 @@ class TicketReviewView(discord.ui.View):
         for child in self.children:
             child.disabled = True
         await interaction.response.edit_message(embed=embed, view=self)
+        ticket_channel = interaction.guild.get_channel(assignment["ticket_channel_id"]) if interaction.guild and assignment.get("ticket_channel_id") else None
+        if isinstance(ticket_channel, discord.TextChannel):
+            completed = discord.Embed(
+                title="✅ Tugas Selesai",
+                description=(
+                    f"Hasil **{assignment['manga']}** chapter **{assignment['chapter']}** sudah disetujui administrator.\n\n"
+                    "Status tugas menjadi **approved** dan bayarannya sudah masuk ke rekap gaji."
+                ),
+                color=discord.Color.green(),
+            )
+            completed.add_field(name="Role", value=assignment["role"], inline=True)
+            completed.add_field(name="Bayaran", value=f"Rp {assignment['final_rate']:,.0f}".replace(",", "."), inline=True)
+            await ticket_channel.send(content=staff.mention if staff else None, embed=completed)
         if staff:
             try:
                 await staff.send(f"Tugas **{assignment['manga']}** chapter **{assignment['chapter']}** telah disetujui!")

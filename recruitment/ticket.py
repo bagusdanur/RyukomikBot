@@ -172,10 +172,13 @@ class RecruitmentBaseView(discord.ui.View):
     ) -> None:
         print(f"[ERROR] Recruitment interaction failed: {error}")
         message = "Terjadi kesalahan saat memproses rekrutmen. Hubungi administrator."
+        in_private_ticket = isinstance(interaction.channel, discord.TextChannel) and (
+            interaction.channel.topic or ""
+        ).startswith("Tiket rekrutmen")
         if interaction.response.is_done():
-            await interaction.followup.send(message, ephemeral=False)
+            await interaction.followup.send(message, ephemeral=not in_private_ticket)
         else:
-            await interaction.response.send_message(message, ephemeral=False)
+            await interaction.response.send_message(message, ephemeral=not in_private_ticket)
 
 
 class RecruitmentView(RecruitmentBaseView):
@@ -189,22 +192,22 @@ class RecruitmentView(RecruitmentBaseView):
         guild = interaction.guild
         member = interaction.user
         if not guild or not isinstance(member, discord.Member):
-            return await interaction.response.send_message("Tombol ini hanya bisa digunakan di server.", ephemeral=False)
+            return await interaction.response.send_message("Tombol ini hanya bisa digunakan di server.", ephemeral=True)
 
         category = guild.get_channel(REKRUT_CAT_ID)
         if not isinstance(category, discord.CategoryChannel):
             return await interaction.response.send_message(
-                "Kategori rekrutmen belum tersedia. Hubungi administrator.", ephemeral=False
+                "Kategori rekrutmen belum tersedia. Hubungi administrator.", ephemeral=True
             )
 
         for channel in category.text_channels:
             owner = get_ticket_owner(channel)
             if owner and owner.id == member.id:
                 return await interaction.response.send_message(
-                    f"Kamu sudah memiliki tiket privat: {channel.mention}", ephemeral=False
+                    f"Kamu sudah memiliki tiket privat: {channel.mention}", ephemeral=True
                 )
 
-        await interaction.response.defer(ephemeral=False)
+        await interaction.response.defer(ephemeral=True)
         ticket_channel = await guild.create_text_channel(
             name=build_private_ticket_name(member),
             category=category,
@@ -227,7 +230,7 @@ class RecruitmentView(RecruitmentBaseView):
             color=discord.Color.green(),
         )
         await ticket_channel.send(embed=embed, view=RecruitmentPositionView())
-        await interaction.followup.send(f"Tiket berhasil dibuat: {ticket_channel.mention}", ephemeral=False)
+        await interaction.followup.send(f"Tiket privat berhasil dibuat: {ticket_channel.mention}", ephemeral=True)
 
 
 class RecruitmentPositionView(RecruitmentBaseView):
