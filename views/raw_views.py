@@ -48,6 +48,40 @@ async def upload_to_filebin(bin_id, archive_path):
     except (aiohttp.ClientError, TimeoutError, OSError) as error:
         print(f"Filebin upload error: {error}")
         return False
+
+
+async def create_filebin_download(source, manga_id, chapter_ids):
+    """Download chapters temporarily, upload ZIP files to one Filebin, then clean up."""
+    cleanup_old_raw_files()
+    os.makedirs(RAW_ROOT, exist_ok=True)
+    downloader = get_downloader(source)
+    completed, temporary_directories, temporary_archives = [], [], []
+    bin_id = secrets.token_urlsafe(12).replace("_", "").replace("-", "").lower()
+    try:
+        for chapter_id in chapter_ids:
+            result = await downloader.download_chapter(manga_id, chapter_id, RAW_ROOT)
+            if not result:
+                continue
+            temporary_directories.append(result)
+            safe_manga = re.sub(r"[^a-zA-Z0-9_-]+", "-", manga_id).strip("-")[:60] or "raw"
+            safe_chapter = re.sub(r"[^a-zA-Z0-9_-]+", "-", chapter_id).strip("-")[:40] or "chapter"
+            archive_path = shutil.make_archive(
+                os.path.join(RAW_ROOT, f"{source}_{safe_manga}_{safe_chapter}"),
+                "zip",
+                result,
+            )
+            temporary_archives.append(archive_path)
+            if await upload_to_filebin(bin_id, archive_path):
+                completed.append(chapter_id)
+        if not completed:
+            return None, []
+        return f"{FILEBIN_BASE_URL}/{bin_id}", completed
+    finally:
+        for path in temporary_archives:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
         for directory in directories:
             path = os.path.join(root, directory)
             try:
@@ -55,6 +89,8 @@ async def upload_to_filebin(bin_id, archive_path):
                     os.rmdir(path)
             except OSError:
                 pass
+        for path in temporary_directories:
+            shutil.rmtree(path, ignore_errors=True)
 
 
 class RawSearchModal(discord.ui.Modal, title="Cari dan Download RAW"):

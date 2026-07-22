@@ -13,7 +13,7 @@ from panels.staff_panel import StaffPanelView, upsert_staff_panel
 from panels.claim_view import ClaimView
 from views.ticket_views import TicketSubmitView, TicketReviewView
 from views.select_views import ReviewSelectView, SubmitSelectView, ConfirmPayView
-from views.raw_views import RawSearchView
+from views.raw_views import RawSearchView, create_filebin_download
 from modals.assign_modal import AssignModal
 from modals.submit_modal import SubmitModal
 from modals.revisi_modal import RevisiModal
@@ -248,16 +248,14 @@ async def download_raw_command(interaction: discord.Interaction, manga_id: str, 
     if not is_staff(interaction.user):
         return await interaction.response.send_message("Hanya staff yang bisa download RAW!", ephemeral=False)
     await interaction.response.defer(ephemeral=False)
-    downloader = get_downloader(source)
-    save_dir = os.path.join(os.path.dirname(__file__), "data", "raw")
-    os.makedirs(save_dir, exist_ok=True)
-    result = await downloader.download_chapter(manga_id, chapter_id, save_dir)
-    if not result:
-        return await interaction.followup.send(f"Gagal download chapter dari **{source.title()}**. Periksa manga ID dan chapter ID.", ephemeral=False)
-    embed = discord.Embed(title=f"Download Berhasil ({source.title()})", color=discord.Color.green())
+    filebin_url, completed = await create_filebin_download(source, manga_id, [chapter_id])
+    if not filebin_url:
+        return await interaction.followup.send(f"Gagal download atau upload ke Filebin dari **{source.title()}**. Coba lagi nanti.", ephemeral=False)
+    embed = discord.Embed(title=f"RAW Siap Diunduh ({source.title()})", color=discord.Color.green())
     embed.add_field(name="Manga ID", value=manga_id, inline=True)
-    embed.add_field(name="Chapter ID", value=chapter_id, inline=True)
-    embed.add_field(name="Lokasi", value=f"`{result}`", inline=False)
+    embed.add_field(name="Chapter", value=", ".join(completed), inline=True)
+    embed.add_field(name="Link Download", value=f"[Buka Filebin]({filebin_url})", inline=False)
+    embed.set_footer(text="File lokal VPS sudah dihapus setelah upload.")
     await interaction.followup.send(embed=embed, ephemeral=False)
 
 
@@ -326,16 +324,19 @@ async def raw_download_batch_command(interaction: discord.Interaction, manga_id:
     if not is_staff(interaction.user):
         return await interaction.response.send_message("Hanya staff yang bisa download RAW!", ephemeral=False)
     await interaction.response.defer(ephemeral=False)
-    downloader = get_downloader(source)
-    save_dir = os.path.join(os.path.dirname(__file__), "data", "raw")
-    os.makedirs(save_dir, exist_ok=True)
     ids = [item.strip() for item in chapter_ids.split(",") if item.strip()][:10]
     if not ids:
         return await interaction.followup.send("Isi minimal satu chapter ID.", ephemeral=False)
-    embed = discord.Embed(title=f"Batch Download RAW ({source.title()})", color=discord.Color.green())
-    for chapter_id in ids:
-        result = await downloader.download_chapter(manga_id, chapter_id, save_dir)
-        embed.add_field(name=f"Chapter {chapter_id}", value=f"OK: `{result}`" if result else "Gagal", inline=False)
+    filebin_url, completed = await create_filebin_download(source, manga_id, ids)
+    if not filebin_url:
+        return await interaction.followup.send("Download atau upload Filebin gagal. Coba kembali nanti.")
+    embed = discord.Embed(title=f"Batch RAW Siap Diunduh ({source.title()})", color=discord.Color.green())
+    embed.add_field(name="Chapter Berhasil", value=", ".join(completed), inline=False)
+    failed = [chapter for chapter in ids if chapter not in completed]
+    if failed:
+        embed.add_field(name="Chapter Gagal", value=", ".join(failed), inline=False)
+    embed.add_field(name="Link Download", value=f"[Buka Filebin]({filebin_url})", inline=False)
+    embed.set_footer(text="File lokal VPS sudah dihapus setelah upload.")
     await interaction.followup.send(embed=embed, ephemeral=False)
 
 
