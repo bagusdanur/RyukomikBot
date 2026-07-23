@@ -1,8 +1,13 @@
-from views.ticket_views import build_completed_embed, build_revision_embed
+from views.ticket_views import (
+    build_admin_completed_embed,
+    build_completed_embed,
+    build_revision_embed,
+)
 
 
 ASSIGNMENT = {
     "id": 7,
+    "staff_id": "123456789",
     "manga": "Let's Do it After Work",
     "chapter": "1-3",
     "chapter_count": 3,
@@ -30,3 +35,11 @@ def test_revision_report_contains_notes_and_previous_result():
     values = fields(build_revision_embed(ASSIGNMENT, "Perbaiki halaman 11"))
     assert values["Catatan Administrator"] == "Perbaiki halaman 11"
     assert values["Hasil Sebelumnya"] == ASSIGNMENT["gdrive_link"]
+
+
+def test_admin_completion_record_keeps_staff_and_drive_link():
+    embed = build_admin_completed_embed(ASSIGNMENT)
+    values = fields(embed)
+    assert embed.title == "📁 Laporan Akhir Tugas #7"
+    assert values["Staff"] == "<@123456789>"
+    assert values["Hasil Google Drive"] == ASSIGNMENT["gdrive_link"]

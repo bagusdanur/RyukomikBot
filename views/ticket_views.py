@@ -94,6 +94,27 @@ def build_completed_embed(assignment: dict) -> discord.Embed:
     return embed
 
 
+def build_admin_completed_embed(assignment: dict, reviewer: discord.abc.User | None = None) -> discord.Embed:
+    """Build the permanent completion record kept in staff-mod."""
+    embed = build_completed_embed(assignment)
+    embed.title = f"📁 Laporan Akhir Tugas #{assignment['id']}"
+    embed.description = (
+        "Tugas telah selesai dan disetujui. Laporan ini disimpan untuk "
+        "memudahkan Administrator membuka kembali hasil kerja."
+    )
+    if assignment.get("staff_id"):
+        embed.insert_field_at(
+            0,
+            name="Staff",
+            value=f"<@{assignment['staff_id']}>",
+            inline=True,
+        )
+    if reviewer:
+        embed.add_field(name="Disetujui Oleh", value=reviewer.mention, inline=True)
+    embed.set_footer(text=f"Task #{assignment['id']} • Arsip hasil kerja Administrator")
+    return embed
+
+
 def build_revision_embed(assignment: dict, notes: str) -> discord.Embed:
     embed = discord.Embed(
         title="🔄 Tugas Perlu Revisi",
@@ -165,14 +186,16 @@ async def approve_task(interaction: discord.Interaction, assignment_id: int):
     if not await db.approve_assignment(assignment_id):
         return await interaction.response.send_message("Approve gagal karena status tugas telah berubah.", ephemeral=True)
     assignment = await db.get_assignment(assignment_id)
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.edit_message(
+        embed=build_admin_completed_embed(assignment, interaction.user),
+        view=None,
+    )
     notified = await _notify_ticket(interaction, assignment, build_completed_embed(assignment))
-    await _remove_review_card(interaction)
     await interaction.followup.send(
         (
-            f"Tugas #{assignment_id} disetujui dan laporan akhir dikirim ke tiket staff."
+            f"Tugas #{assignment_id} disetujui. Laporan akhir disimpan di staff-mod dan dikirim ke tiket staff."
             if notified
-            else f"Tugas #{assignment_id} disetujui, tetapi tiket staff tidak ditemukan. Periksa tiket staff."
+            else f"Tugas #{assignment_id} disetujui dan laporan admin disimpan, tetapi tiket staff tidak ditemukan."
         ),
         ephemeral=True,
     )
