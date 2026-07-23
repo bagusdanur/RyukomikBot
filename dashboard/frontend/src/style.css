@@ -58,3 +58,67 @@
 @media(max-width:580px){.action-list article{align-items:stretch;flex-direction:column}.action-list article .p-button{width:100%}}
 @media(max-width:580px){.operations-skeleton{grid-template-columns:1fr}.operation-row{align-items:stretch;flex-direction:column}.operation-row .p-button{width:100%}.nav-badge{position:absolute;right:5px;top:4px}.sidebar nav button{position:relative}}
 @media(max-width:580px){.payment-destination{grid-template-columns:1fr}.payout-detail .table-card .p-datatable{min-width:620px}}
+
+/* Payment confirmation is viewport-bound: details scroll, actions never disappear. */
+.payment-confirm-card{
+  display:flex;
+  flex-direction:column;
+  width:min(680px,100%);
+  max-height:calc(100dvh - 32px);
+  overflow:hidden;
+}
+.payment-confirm-card .modal-head,
+.payment-confirm-card .confirm-warning,
+.payment-confirm-card .modal-actions{flex:0 0 auto}
+.payment-confirm-card .payment-destination{
+  min-height:0;
+  margin-bottom:0;
+  padding-right:4px;
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  scrollbar-width:thin;
+}
+.payment-confirm-card .payment-destination b{
+  overflow-wrap:anywhere;
+  word-break:break-word;
+}
+.payment-confirm-card .modal-actions{
+  position:static;
+  bottom:auto;
+  margin:16px 0 0;
+  padding:16px 0 0;
+  border-top:1px solid var(--line);
+  background:#111722;
+}
+
+@media(max-width:580px){
+  .payment-confirm-card{
+    max-height:94dvh;
+    padding:19px 15px calc(15px + env(safe-area-inset-bottom));
+  }
+  .payment-confirm-card .modal-head{margin-bottom:14px}
+  .payment-confirm-card .confirm-warning{
+    margin-bottom:12px;
+    padding:11px 12px;
+    font-size:13px;
+  }
+  .payment-confirm-card .payment-destination{
+    grid-template-columns:1fr;
+    gap:9px;
+  }
+  .payment-confirm-card .payment-destination>span{padding:12px}
+  .payment-confirm-card .modal-actions{
+    display:grid;
+    grid-template-columns:minmax(0,1fr) minmax(0,1.35fr);
+    gap:8px;
+  }
+  .payment-confirm-card .modal-actions .p-button{
+    width:100%;
+    min-width:0;
+    padding-inline:10px;
+  }
+}
+
+@media(max-width:370px){
+  .payment-confirm-card .modal-actions{grid-template-columns:1fr}
+}
