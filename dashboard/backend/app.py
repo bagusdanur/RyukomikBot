@@ -1,6 +1,7 @@
 import json
 import os
 import asyncio
+import hashlib
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Literal
@@ -552,7 +553,13 @@ async def send_assignment_notice(staff_id: int, assignment_id: int, payload: Ass
             "footer": {"text": "Buka Staff Panel atau dashboard untuk melihat dan submit tugas."},
         }],
     }
-    return bool(await discord_api("POST", f"/channels/{channel_id}/messages", message))
+    sent = bool(await discord_api("POST", f"/channels/{channel_id}/messages", message))
+    if not sent:
+        await operations.enqueue_notification(
+            f"assignment:{assignment_id}:created", "assignment", channel_id,
+            {"content": message["content"], "embed": message["embeds"][0]},
+        )
+    return sent
 
 
 async def send_submission_notice(upload, username: str):
@@ -593,10 +600,18 @@ async def send_ticket_review_notice(assignment: dict, approved: bool, notes: str
     fields = [{"name": "Status", "value": "Approved" if approved else "Revision", "inline": True}]
     if notes:
         fields.append({"name": "Catatan Admin", "value": notes[:1024], "inline": False})
-    return bool(await discord_api("POST", f"/channels/{channel_id}/messages", {
+    message = {
         "content": f"<@{assignment['staff_id']}>",
         "embeds": [{"title": title, "description": description, "color": 5763719 if approved else 16753920, "fields": fields}],
-    }))
+    }
+    sent = bool(await discord_api("POST", f"/channels/{channel_id}/messages", message))
+    if not sent:
+        event = "approved" if approved else "revision"
+        await operations.enqueue_notification(
+            f"assignment:{assignment['id']}:{event}", f"assignment_{event}", channel_id,
+            {"content": message["content"], "embed": message["embeds"][0]},
+        )
+    return sent
 
 
 async def send_payout_ticket_notice(staff_id: int, title: str, description: str, success: bool):
@@ -610,10 +625,18 @@ async def send_payout_ticket_notice(staff_id: int, title: str, description: str,
         return True
     if not row:
         return False
-    return bool(await discord_api("POST", f"/channels/{row['ticket_channel_id']}/messages", {
+    message = {
         "content": f"<@{staff_id}>",
         "embeds": [{"title": title, "description": description, "color": 5763719 if success else 15548997}],
-    }))
+    }
+    sent = bool(await discord_api("POST", f"/channels/{row['ticket_channel_id']}/messages", message))
+    if not sent:
+        await operations.enqueue_notification(
+            f"payout:{staff_id}:{hashlib.sha256((title+description).encode()).hexdigest()[:16]}",
+            "payout_status", row["ticket_channel_id"],
+            {"content": message["content"], "embed": message["embeds"][0]},
+        )
+    return sent
 
 
 async def send_paid_invoice_pdf(payout_id: int, admin_name: str):
@@ -705,12 +728,22 @@ async def health():
         payout_service.R2_ENDPOINT, payout_service.R2_ACCESS_KEY_ID,
         payout_service.R2_SECRET_ACCESS_KEY, payout_service.R2_BUCKET_NAME,
     )) else "not_configured"
+    operational = {"backup": "unknown", "outbox": "unknown"}
+    try:
+        snapshot = await operations.operations_snapshot()
+        operational["backup"] = "ok" if snapshot["backups"] else "missing"
+        operational["outbox"] = "degraded" if any(
+            item["status"] == "failed" for item in snapshot["outbox"]
+        ) else "ok"
+    except Exception:
+        pass
     return {
         "status": "ok" if database_status == "ok" and payment_encryption_status == "ok" else "degraded",
         "time": datetime.now().isoformat(),
         "components": {"database": database_status, "discord": discord_status,
                        "oauth": "ok" if DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET else "not_configured",
-                       "payment_encryption": payment_encryption_status, "r2": r2_status},
+                       "payment_encryption": payment_encryption_status, "r2": r2_status,
+                       **operational},
     }
 
 
