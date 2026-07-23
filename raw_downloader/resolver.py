@@ -12,6 +12,7 @@ SOURCE_ORDER = ("asura", "doujiva")
 def normalize_title(value):
     value = unicodedata.normalize("NFKD", str(value or "")).casefold()
     value = "".join(character for character in value if not unicodedata.combining(character))
+    value = re.sub(r"['’`]", "", value)
     return " ".join(re.sub(r"[^a-z0-9]+", " ", value).split())
 
 
