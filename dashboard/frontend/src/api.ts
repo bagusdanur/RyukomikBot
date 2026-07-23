@@ -132,6 +132,13 @@ export type OperationSnapshot = {
   backups: Array<Record<string, any>>;
   staff_cache: { count: number; updated_at: string | null; ttl_seconds: number };
 };
+export type Paged<T> = {
+  items: T[];
+  page: number;
+  page_size: number;
+  total: number;
+  total_pages: number;
+};
 
 let csrfToken = "";
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -176,6 +183,10 @@ const liveApi = {
     request<Assignment[]>(
       `/api/assignments?status=${encodeURIComponent(status)}&search=${encodeURIComponent(search)}`,
     ),
+  assignmentsPage: (status = "", search = "", page = 1, pageSize = 20) =>
+    request<Paged<Assignment>>(
+      `/api/assignments?paginated=true&page=${page}&page_size=${pageSize}&status=${encodeURIComponent(status)}&search=${encodeURIComponent(search)}`,
+    ),
   staff: () => request<Staff[]>("/api/staff"),
   createAssignment: (payload: Record<string, unknown>) =>
     request<{ id: number; notified: boolean }>("/api/assignments", {
@@ -218,6 +229,10 @@ const liveApi = {
     request(`/api/invoices/${id}/correction`, { method: "POST" }),
   payouts: (status = "") =>
     request<Payout[]>(`/api/payouts${status ? `?status=${encodeURIComponent(status)}` : ""}`),
+  payoutsPage: (status = "", page = 1, pageSize = 20) =>
+    request<Paged<Payout>>(
+      `/api/payouts?paginated=true&page=${page}&page_size=${pageSize}${status ? `&status=${encodeURIComponent(status)}` : ""}`,
+    ),
   payout: (id: number) => request<PayoutDetail>(`/api/payouts/${id}`),
   payoutQris: (id: number) =>
     request<{ download_url: string; expires_in: number }>(`/api/payouts/${id}/qris`),
@@ -239,6 +254,10 @@ const liveApi = {
     request<{ download_url: string }>(`/api/submissions/${id}/download`),
   audit: () =>
     request<Array<Record<string, string | number | null>>>("/api/audit"),
+  auditPage: (page = 1, pageSize = 20) =>
+    request<Paged<Record<string, string | number | null>>>(
+      `/api/audit?paginated=true&page=${page}&page_size=${pageSize}`,
+    ),
   logout: () => request("/auth/logout", { method: "POST" }),
 };
 
@@ -336,6 +355,10 @@ const demoApi = {
             .toLowerCase()
             .includes(search.toLowerCase())),
     ),
+  assignmentsPage: async (status = "", search = "", page = 1, pageSize = 20) => {
+    const items = await demoApi.assignments(status, search);
+    return { items: items.slice((page - 1) * pageSize, page * pageSize), page, page_size: pageSize, total: items.length, total_pages: Math.max(1, Math.ceil(items.length / pageSize)) };
+  },
   staff: async () => [
     {
       id: "1001",
@@ -434,6 +457,9 @@ const demoApi = {
   refreshInvoice: async () => ({ ok: true }),
   correctionInvoice: async () => ({ id: 2 }),
   payouts: async () => [] as Payout[],
+  payoutsPage: async (_status = "", page = 1, pageSize = 20) => ({
+    items: [] as Payout[], page, page_size: pageSize, total: 0, total_pages: 1,
+  }),
   payout: async (id: number) => ({
     id, staff_id: "1001", staff_name: "Aira", staff_avatar: null,
     payout_type: "instant" as const, cycle_key: null, invoice_id: 1,
@@ -460,6 +486,9 @@ const demoApi = {
       target_id: "TS",
     },
   ],
+  auditPage: async (page = 1, pageSize = 20) => ({
+    items: await demoApi.audit(), page, page_size: pageSize, total: 1, total_pages: 1,
+  }),
   logout: async () => ({ ok: true }),
 };
 

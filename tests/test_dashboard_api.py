@@ -43,6 +43,7 @@ class DashboardApiTests(unittest.TestCase):
         self.module.DB_PATH = self.db_path
         self.module.staff_db.DB_PATH = self.db_path
         self.module.payout_service.DB_PATH = self.db_path
+        self.module.operations.DB_PATH = self.db_path
         self.module.payout_service.PAYMENT_DATA_ENCRYPTION_KEY = Fernet.generate_key().decode()
         asyncio.run(self.module.setup_dashboard_tables())
         asyncio.run(self.module.payout_service.setup_payment_tables())
@@ -64,6 +65,16 @@ class DashboardApiTests(unittest.TestCase):
         assignments = asyncio.run(self.module.assignments(status=None, search=None, user=user))
         self.assertEqual({item["staff_id"] for item in assignments}, {"100"})
         self.assertEqual(len(assignments), 3)
+
+    def test_server_pagination_keeps_discord_ids_as_strings(self):
+        user = {"id": 1, "username": "Admin", "role": "admin"}
+        result = asyncio.run(self.module.assignments(
+            status=None, search=None, page=1, page_size=1,
+            paginated=True, user=user,
+        ))
+        self.assertEqual(result["page_size"], 1)
+        self.assertEqual(result["total"], 4)
+        self.assertIsInstance(result["items"][0]["staff_id"], str)
 
     def test_payrate_update_creates_audit_log(self):
         user = {"id": 1, "username": "Admin", "role": "admin"}

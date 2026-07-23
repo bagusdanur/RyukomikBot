@@ -22,6 +22,7 @@ import {
 type Page =
   "overview" | "actions" | "tasks" | "staff" | "payrates" | "deadlines" | "recap" | "payouts" | "operations" | "audit";
 const OperationsPage = defineAsyncComponent(() => import("./pages/OperationsPage.vue"));
+const ActionCenterPage = defineAsyncComponent(() => import("./pages/ActionCenterPage.vue"));
 const user = ref<User | null>(null),
   authChecked = ref(false),
   loading = ref(false),
@@ -47,6 +48,9 @@ const payrates = ref<
   payoutStatus = ref(""),
   audit = ref<Array<Record<string, string | number | null>>>([]);
 const actionItems = ref<ActionItem[]>([]);
+const taskPage = ref(1), taskPages = ref(1), taskTotal = ref(0),
+  payoutPage = ref(1), payoutPages = ref(1), payoutTotal = ref(0),
+  auditPage = ref(1), auditPages = ref(1), auditTotal = ref(0);
 const search = ref(""),
   status = ref(""),
   staffFilter = ref(""),
@@ -173,10 +177,22 @@ async function loadPage() {
   if (page.value === "tasks") {
     if (user.value.role === "admin" && !staff.value.length)
       staff.value = await api.staff();
-    await Promise.all([
-      run(() => api.assignments(status.value, search.value), assignments),
-      run(() => api.submissions(), submissions),
-    ]);
+    loading.value = true;
+    error.value = "";
+    try {
+      const [result, submissionRows] = await Promise.all([
+        api.assignmentsPage(status.value, search.value, taskPage.value, 20),
+        api.submissions(),
+      ]);
+      assignments.value = result.items;
+      taskPages.value = result.total_pages;
+      taskTotal.value = result.total;
+      submissions.value = submissionRows;
+    } catch (reason) {
+      error.value = reason instanceof Error ? reason.message : "Tugas gagal dimuat.";
+    } finally {
+      loading.value = false;
+    }
   }
   if (page.value === "staff") await run(api.staff, staff);
   if (page.value === "payrates") await run(api.payrates, payrates);
@@ -189,8 +205,27 @@ async function loadPage() {
     ]);
   }
   if (page.value === "payouts")
-    await run(() => api.payouts(payoutStatus.value), payouts);
-  if (page.value === "audit") await run(api.audit, audit);
+    try {
+      loading.value = true;
+      const result = await api.payoutsPage(payoutStatus.value, payoutPage.value, 20);
+      payouts.value = result.items; payoutPages.value = result.total_pages; payoutTotal.value = result.total;
+    } catch (reason) {
+      error.value = reason instanceof Error ? reason.message : "Payout gagal dimuat.";
+    } finally { loading.value = false; }
+  if (page.value === "audit")
+    try {
+      loading.value = true;
+      const result = await api.auditPage(auditPage.value, 20);
+      audit.value = result.items; auditPages.value = result.total_pages; auditTotal.value = result.total;
+    } catch (reason) {
+      error.value = reason instanceof Error ? reason.message : "Audit gagal dimuat.";
+    } finally { loading.value = false; }
+}
+async function changeServerPage(kind: "tasks" | "payouts" | "audit", direction: number) {
+  if (kind === "tasks") taskPage.value = Math.min(taskPages.value, Math.max(1, taskPage.value + direction));
+  if (kind === "payouts") payoutPage.value = Math.min(payoutPages.value, Math.max(1, payoutPage.value + direction));
+  if (kind === "audit") auditPage.value = Math.min(auditPages.value, Math.max(1, auditPage.value + direction));
+  await loadPage();
 }
 async function openPayout(item: Payout) {
   try {
@@ -682,43 +717,10 @@ onMounted(async () => {
             </div>
           </article></div
       ></template>
-      <template v-if="page === 'actions'">
-        <div class="toolbar">
-          <div>
-            <p class="eyebrow">ANTREAN ADMINISTRATOR</p>
-            <h3>Perlu Tindakan</h3>
-            <small>Diurutkan berdasarkan urgensi agar pekerjaan penting tidak terlewat.</small>
-          </div>
-          <Button label="Muat ulang" icon="pi pi-refresh" severity="secondary" @click="loadPage" />
-        </div>
-        <div v-if="!actionItems.length && !loading" class="empty-state">
-          <i class="pi pi-check-circle"></i>
-          <h3>Semua pekerjaan sudah tertangani</h3>
-          <p>Tidak ada review, deadline, pembayaran, atau invoice gagal yang menunggu.</p>
-        </div>
-        <div v-else class="action-list">
-          <article v-for="item in actionItems" :key="`${item.item_type}-${item.id}`" class="panel">
-            <div>
-              <Tag :severity="item.priority === 1 ? 'danger' : item.priority === 2 ? 'warn' : 'secondary'"
-                :value="({
-                  review: 'Review hasil',
-                  overdue: 'Terlambat',
-                  deadline: 'Deadline dekat',
-                  transfer: 'Transfer gaji',
-                  payment_method: 'Menunggu rekening',
-                  invoice_delivery: 'Kirim ulang invoice'
-                } as Record<string,string>)[item.action_type] || item.action_type" />
-              <h3>{{ item.title }}</h3>
-              <p>{{ item.staff_name }}<span v-if="item.due_at"> • {{ item.due_at }}</span></p>
-            </div>
-            <Button
-              label="Tangani"
-              icon="pi pi-arrow-right"
-              @click="handleAction(item)"
-            />
-          </article>
-        </div>
-      </template>
+      <Suspense v-if="page === 'actions'">
+        <ActionCenterPage :items="actionItems" :loading="loading" @reload="loadPage" @handle="handleAction" />
+        <template #fallback><div class="operations-skeleton"><span v-for="n in 4" :key="n"></span></div></template>
+      </Suspense>
       <Suspense v-if="page === 'operations'">
         <OperationsPage />
         <template #fallback><div class="operations-skeleton"><span v-for="n in 4" :key="n"></span></div></template>
@@ -845,7 +847,12 @@ onMounted(async () => {
               ></DataTable
             >
           </div>
-        </section></template
+        </section>
+        <div class="server-pager">
+          <Button icon="pi pi-chevron-left" severity="secondary" :disabled="taskPage <= 1" @click="changeServerPage('tasks', -1)" />
+          <span>Halaman {{ taskPage }} / {{ taskPages }} • {{ taskTotal }} tugas</span>
+          <Button icon="pi pi-chevron-right" severity="secondary" :disabled="taskPage >= taskPages" @click="changeServerPage('tasks', 1)" />
+        </div></template
       >
       <template v-if="page === 'staff'"
         ><div class="people-grid">
@@ -1048,7 +1055,7 @@ onMounted(async () => {
       >
       <template v-if="page === 'audit'"
         ><div class="table-card">
-          <DataTable :value="audit" :loading="loading" paginator :rows="15"
+          <DataTable :value="audit" :loading="loading"
             ><Column field="created_at" header="Waktu" /><Column
               field="actor_id"
               header="Pelaku" /><Column
@@ -1056,7 +1063,12 @@ onMounted(async () => {
               header="Aktivitas" /><Column
               field="target_type"
               header="Target" /><Column field="target_id" header="ID"
-          /></DataTable></div
+          /></DataTable></div>
+          <div class="server-pager">
+            <Button icon="pi pi-chevron-left" severity="secondary" :disabled="auditPage <= 1" @click="changeServerPage('audit', -1)" />
+            <span>Halaman {{ auditPage }} / {{ auditPages }} • {{ auditTotal }} aktivitas</span>
+            <Button icon="pi pi-chevron-right" severity="secondary" :disabled="auditPage >= auditPages" @click="changeServerPage('audit', 1)" />
+          </div>
       ></template>
       <template v-if="page === 'payouts'">
         <div class="toolbar">
@@ -1068,7 +1080,7 @@ onMounted(async () => {
           <Button label="Muat ulang" icon="pi pi-refresh" @click="loadPage" />
         </div>
         <div class="table-card">
-          <DataTable :value="payouts" :loading="loading" paginator :rows="10" responsiveLayout="scroll">
+          <DataTable :value="payouts" :loading="loading" responsiveLayout="scroll">
             <Column header="Staff"><template #body="{ data }"><div class="person">
               <img v-if="data.staff_avatar" :src="data.staff_avatar" /><span v-else class="mini-avatar">{{ initials(data.staff_name) }}</span>
               <span>{{ data.staff_name }}</span></div></template></Column>
@@ -1086,6 +1098,11 @@ onMounted(async () => {
               <Button v-if="data.status === 'issued'" label="Tolak" size="small" severity="danger" @click="rejectPayout(data)" />
             </div></template></Column>
           </DataTable>
+        </div>
+        <div class="server-pager">
+          <Button icon="pi pi-chevron-left" severity="secondary" :disabled="payoutPage <= 1" @click="changeServerPage('payouts', -1)" />
+          <span>Halaman {{ payoutPage }} / {{ payoutPages }} • {{ payoutTotal }} pembayaran</span>
+          <Button icon="pi pi-chevron-right" severity="secondary" :disabled="payoutPage >= payoutPages" @click="changeServerPage('payouts', 1)" />
         </div>
       </template>
     </section>
