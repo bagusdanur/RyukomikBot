@@ -65,7 +65,10 @@ def build_staff_panel_embed(staff: discord.Member) -> discord.Embed:
     )
     embed.add_field(
         name="💰 Penghasilan",
-        value="Lihat jumlah tugas, pendapatan yang disetujui, pembayaran, dan saldo pending periode ini.",
+        value=(
+            "Lihat saldo, atur rekening bank/e-wallet/QRIS, dan ajukan **Ambil Gaji Sekarang**. "
+            "Gajian rutin diproses tanggal **4 dan 19**."
+        ),
         inline=False,
     )
     embed.add_field(
@@ -134,8 +137,11 @@ def build_guide_embed(audience: str = "all") -> discord.Embed:
         embed.add_field(
             name="💰 Cek Penghasilan",
             value=(
-                "Tekan **Penghasilan** untuk melihat tugas periode berjalan, nominal disetujui, "
-                "yang sudah dibayar, dan yang masih menunggu proses."
+                "Tekan **Metode Pembayaran** untuk menyimpan bank, e-wallet, atau QRIS dan menentukan tujuan utama.\n"
+                "Tekan **Penghasilan** untuk melihat saldo approved dan pembayaran.\n"
+                "Gajian rutin: tanggal **19** untuk approval tanggal 1-15 dan tanggal **4** untuk "
+                "approval tanggal 16-akhir bulan sebelumnya.\n"
+                "Gunakan **Ambil Gaji Sekarang** tanpa minimum saldo, pilih tujuan, lalu tunggu admin mentransfer."
             ),
             inline=False,
         )

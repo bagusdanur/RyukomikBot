@@ -103,9 +103,9 @@ class PaymentMethodsView(discord.ui.View):
         attachment = message.attachments[0]
         try:
             content = await attachment.read()
-            object_key = await payments.upload_qris(interaction.user.id, content, attachment.content_type or "")
-            method_id = await payments.create_method(
-                interaction.user.id, "qris", "QRIS", interaction.user.display_name, qris_object_key=object_key,
+            method_id = await payments.create_qris_method(
+                interaction.user.id, "QRIS", interaction.user.display_name,
+                content, attachment.content_type or "",
             )
             try:
                 await message.delete()

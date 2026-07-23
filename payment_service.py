@@ -247,6 +247,48 @@ async def upload_qris(staff_id, content, content_type):
     return object_key
 
 
+async def create_qris_method(staff_id, provider, account_name, content, content_type):
+    """Validate/upload QRIS, then move it under the permanent method-id prefix."""
+    pending_key = await upload_qris(staff_id, content, content_type)
+    method_id = None
+    try:
+        method_id = await create_method(
+            staff_id, "qris", provider, account_name, qris_object_key=pending_key
+        )
+        extension = pending_key.rsplit(".", 1)[-1]
+        final_key = f"payment-methods/{staff_id}/{method_id}/{secrets.token_urlsafe(18)}.{extension}"
+        client = r2_client()
+        await asyncio.to_thread(
+            client.copy_object, Bucket=R2_BUCKET_NAME,
+            CopySource={"Bucket": R2_BUCKET_NAME, "Key": pending_key},
+            Key=final_key, MetadataDirective="COPY",
+        )
+        await asyncio.to_thread(client.delete_object, Bucket=R2_BUCKET_NAME, Key=pending_key)
+        connection = await _db()
+        try:
+            await connection.execute(
+                "UPDATE staff_payment_methods SET qris_object_key=? WHERE id=?",
+                (final_key, method_id),
+            )
+            await connection.commit()
+        finally:
+            await connection.close()
+        return method_id
+    except Exception:
+        try:
+            await asyncio.to_thread(r2_client().delete_object, Bucket=R2_BUCKET_NAME, Key=pending_key)
+        except Exception:
+            pass
+        if method_id:
+            connection = await _db()
+            try:
+                await connection.execute("DELETE FROM staff_payment_methods WHERE id=?", (method_id,))
+                await connection.commit()
+            finally:
+                await connection.close()
+        raise
+
+
 async def qris_download_url(object_key, expires=600):
     return await asyncio.to_thread(
         r2_client().generate_presigned_url, "get_object",
