@@ -11,6 +11,13 @@ logger = logging.getLogger(__name__)
 TASK_ID_PATTERN = re.compile(r"#(\d+)")
 
 
+async def _respond(interaction: discord.Interaction, content: str, *, ephemeral: bool = True):
+    """Respond safely whether the interaction was already deferred or not."""
+    if interaction.response.is_done():
+        return await interaction.followup.send(content, ephemeral=ephemeral)
+    return await interaction.response.send_message(content, ephemeral=ephemeral)
+
+
 def task_id_from_message(message: discord.Message | None) -> int | None:
     """Recover an assignment id from a legacy task/review message."""
     if not message:
@@ -28,19 +35,17 @@ def task_id_from_message(message: discord.Message | None) -> int | None:
 async def _validated_assignment(interaction: discord.Interaction, assignment_id: int, statuses: tuple[str, ...], admin=False):
     assignment = await db.get_assignment(assignment_id)
     if not assignment:
-        await interaction.response.send_message("Tugas tidak ditemukan atau sudah dihapus.", ephemeral=True)
+        await _respond(interaction, "Tugas tidak ditemukan atau sudah dihapus.")
         return None
     if assignment["status"] not in statuses:
-        await interaction.response.send_message(
-            f"Aksi tidak tersedia karena status tugas sekarang **{assignment['status']}**.", ephemeral=True
-        )
+        await _respond(interaction, f"Aksi tidak tersedia karena status tugas sekarang **{assignment['status']}**.")
         return None
     if admin:
         if not is_admin(interaction.user):
-            await interaction.response.send_message("Hanya administrator yang dapat melakukan aksi ini.", ephemeral=True)
+            await _respond(interaction, "Hanya administrator yang dapat melakukan aksi ini.")
             return None
     elif not is_staff(interaction.user) or int(assignment["staff_id"] or 0) != interaction.user.id:
-        await interaction.response.send_message("Kamu hanya dapat mengirim tugas milikmu sendiri.", ephemeral=True)
+        await _respond(interaction, "Kamu hanya dapat mengirim tugas milikmu sendiri.")
         return None
     return assignment
 
@@ -180,16 +185,15 @@ class TicketSubmitModal(discord.ui.Modal, title="Submit Hasil Kerja"):
 
 
 async def approve_task(interaction: discord.Interaction, assignment_id: int):
+    await interaction.response.defer(ephemeral=True)
     assignment = await _validated_assignment(interaction, assignment_id, ("submitted",), admin=True)
     if not assignment:
         return
     if not await db.approve_assignment(assignment_id):
-        return await interaction.response.send_message("Approve gagal karena status tugas telah berubah.", ephemeral=True)
+        return await _respond(interaction, "Approve gagal karena status tugas telah berubah.")
     assignment = await db.get_assignment(assignment_id)
-    await interaction.response.edit_message(
-        embed=build_admin_completed_embed(assignment, interaction.user),
-        view=None,
-    )
+    if interaction.message:
+        await interaction.message.edit(embed=build_admin_completed_embed(assignment, interaction.user), view=None)
     notified = await _notify_ticket(interaction, assignment, build_completed_embed(assignment))
     await interaction.followup.send(
         (
@@ -209,13 +213,13 @@ class TicketReviseModal(discord.ui.Modal, title="Revisi Tugas"):
         self.assignment_id = assignment_id
 
     async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         assignment = await _validated_assignment(interaction, self.assignment_id, ("submitted",), admin=True)
         if not assignment:
             return
         if not await db.revise_assignment(self.assignment_id, self.catatan.value):
-            return await interaction.response.send_message("Revisi gagal karena status tugas telah berubah.", ephemeral=True)
+            return await _respond(interaction, "Revisi gagal karena status tugas telah berubah.")
         assignment = await db.get_assignment(self.assignment_id)
-        await interaction.response.defer(ephemeral=True)
         notified = await _notify_ticket(
             interaction,
             assignment,
