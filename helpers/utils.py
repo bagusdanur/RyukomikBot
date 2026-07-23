@@ -109,19 +109,25 @@ async def get_or_fetch_member(guild: discord.Guild, user_id: int) -> Optional[di
 
 
 async def find_ticket(guild: discord.Guild, staff_id: int) -> Optional[discord.TextChannel]:
-    """Find ticket channel by staff member's name or ID."""
+    """Find the existing private ticket by owner ID or permission overwrite.
+
+    Recruitment and staff tickets intentionally share the same category, so
+    category membership must never be used to exclude a valid staff ticket.
+    """
     staff = await get_or_fetch_member(guild, staff_id)
     if not staff:
         return None
-    
-    # Search for channel with staff name
+
     for channel in guild.text_channels:
-        if channel.category_id == REKRUT_CAT_ID or (channel.topic or "").startswith("Tiket rekrutmen"):
+        if "tiket-" not in channel.name.casefold():
             continue
         topic = channel.topic or ""
         if str(staff.id) in topic or str(staff.id) in channel.name:
             return channel
-    
+        overwrite = channel.overwrites_for(staff)
+        if overwrite.view_channel is True:
+            return channel
+
     return None
 
 
