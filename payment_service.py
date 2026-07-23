@@ -597,6 +597,16 @@ async def pay_payout(payout_id, actor_id):
     connection = await _db()
     try:
         await connection.execute("BEGIN IMMEDIATE")
+        await connection.execute("""
+            CREATE TABLE IF NOT EXISTS assignment_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                assignment_id INTEGER NOT NULL,
+                event_type TEXT NOT NULL,
+                actor_id TEXT,
+                detail TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         payout = await (await connection.execute(
             "SELECT * FROM payout_requests WHERE id=? AND status='issued'", (payout_id,)
         )).fetchone()

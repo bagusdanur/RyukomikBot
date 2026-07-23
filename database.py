@@ -411,6 +411,16 @@ async def add_assignment_event(
     """Append an immutable assignment timeline entry."""
     db = await get_db()
     try:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS assignment_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                assignment_id INTEGER NOT NULL,
+                event_type TEXT NOT NULL,
+                actor_id TEXT,
+                detail TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         await db.execute(
             """INSERT INTO assignment_events (assignment_id,event_type,actor_id,detail)
                VALUES (?,?,?,?)""",
