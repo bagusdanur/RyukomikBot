@@ -410,7 +410,7 @@ const demoApi = {
       paid_amount: 50000,
     },
   ],
-  invoices: async () => [
+  invoices: async (): Promise<Invoice[]> => [
     {
       id: 1,
       invoice_number: "RYU-202607-1001-A1B2",
@@ -425,7 +425,7 @@ const demoApi = {
       paid_at: null,
     },
   ],
-  invoice: async (id: number) => ({
+  invoice: async (id: number): Promise<InvoiceDetail> => ({
     id,
     invoice_number: "RYU-202607-1001-A1B2",
     staff_id: "1001",
