@@ -31,6 +31,7 @@ from views.payment_views import (
     RetryInvoiceDynamic,
 )
 import database as db
+from server_management import apply_server_housekeeping, send_goodbye, send_welcome
 
 
 # Discord gateway intents required by prefix commands, role checks, and tickets.
@@ -54,6 +55,7 @@ class RyukomikBot(commands.Bot):
         self.recruitment = setup_recruitment(self)
         
         self.commands_synced = False
+        self.server_housekeeping_done = False
     
     async def setup_hook(self):
         """Called when the bot is starting up."""
@@ -115,6 +117,16 @@ class RyukomikBot(commands.Bot):
                 name="Ryukomik Scanlation"
             )
         )
+
+        if not self.server_housekeeping_done:
+            try:
+                target_guild = self.get_guild(GUILD_ID)
+                if target_guild is not None:
+                    await apply_server_housekeeping(target_guild)
+                    self.server_housekeeping_done = True
+                    print("[OK] Server housekeeping applied without changing layout")
+            except Exception as exc:
+                print(f"[ERROR] Server housekeeping failed: {exc}")
 
 
 # Create bot instance
@@ -643,6 +655,28 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError):
     else:
         print(f"Error: {error}")
         await ctx.send("Ã¢ÂÅ’ Terjadi error saat menjalankan command!")
+
+
+@bot.event
+async def on_member_join(member: discord.Member):
+    """Send one clear welcome card in the existing welcome channel."""
+    if member.guild.id != GUILD_ID or member.bot:
+        return
+    try:
+        await send_welcome(member)
+    except discord.HTTPException as exc:
+        print(f"[ERROR] Failed to send welcome for {member.id}: {exc}")
+
+
+@bot.event
+async def on_member_remove(member: discord.Member):
+    """Send a compact goodbye card in the existing welcome channel."""
+    if member.guild.id != GUILD_ID or member.bot:
+        return
+    try:
+        await send_goodbye(member)
+    except discord.HTTPException as exc:
+        print(f"[ERROR] Failed to send goodbye for {member.id}: {exc}")
 
 
 @bot.tree.error
