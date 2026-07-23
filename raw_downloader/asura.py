@@ -41,7 +41,7 @@ class AsuraDownloader:
 
     async def search_manga(self, query: str) -> List[Dict[str, Any]]:
         async with _create_session() as session:
-            payload = await get_json(session, f"{self.api_url}/search", source="asura", stage="search", params={"q": query}, timeout=20)
+            payload = await get_json(session, f"{self.api_url}/search", source="asura", stage="search", params={"q": query}, timeout=4, validator=lambda item: bool(item.get("data", item.get("results", []))))
             if not payload:
                 return []
             results = payload.get("data", payload.get("results", []))
@@ -60,7 +60,7 @@ class AsuraDownloader:
 
     async def get_manga_info(self, manga_id: str) -> Optional[Dict[str, Any]]:
         async with _create_session() as session:
-            payload = await get_json(session, f"{self.api_url}/detail/{_clean_id(manga_id)}", source="asura", stage=f"detail:{_clean_id(manga_id)}", timeout=20)
+            payload = await get_json(session, f"{self.api_url}/detail/{_clean_id(manga_id)}", source="asura", stage=f"detail:{_clean_id(manga_id)}", timeout=4, validator=lambda item: bool((item.get("data", item) or {}).get("chapters")))
             return payload.get("data", payload) if payload else None
 
     async def get_chapter_list(self, manga_id: str) -> List[Dict[str, Any]]:
@@ -83,7 +83,7 @@ class AsuraDownloader:
         clean_manga = _clean_id(manga_id)
         clean_chapter = _clean_chapter(chapter_id)
         async with _create_session() as session:
-            payload = await get_json(session, f"{self.api_url}/chapter/{clean_manga}/{clean_chapter}", source="asura", stage=f"chapter:{clean_manga}:{clean_chapter}", timeout=30)
+            payload = await get_json(session, f"{self.api_url}/chapter/{clean_manga}/{clean_chapter}", source="asura", stage=f"chapter:{clean_manga}:{clean_chapter}", timeout=10, validator=lambda item: bool(item.get("images")))
             return payload.get("images", []) if payload else []
 
     async def download_image(self, url: str, save_path: str) -> bool:

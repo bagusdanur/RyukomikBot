@@ -8,7 +8,7 @@ from unittest.mock import patch
 import database
 from chapter_utils import chapter_display, normalize_chapter, parse_chapters
 from raw_downloader.retry import get_json
-from views.raw_views import filter_allowed_chapters
+from raw_downloader.resolver import filter_allowed_chapters, normalize_title, resolve_assignment_raw
 
 
 class ChapterParserTests(unittest.TestCase):
@@ -71,6 +71,57 @@ class RawRetryTests(unittest.TestCase):
         session = FakeSession([FakeResponse(404, {})])
         self.assertIsNone(asyncio.run(get_json(session, "https://example.test", source="doujiva", stage="chapter")))
         self.assertEqual(session.calls, 1)
+
+    def test_data_null_is_retried(self):
+        session = FakeSession([
+            FakeResponse(200, {"success": True, "data": None}),
+            FakeResponse(200, {"success": True, "data": [{"title": "Found"}]}),
+        ])
+        result = asyncio.run(get_json(
+            session, "https://example.test", source="doujiva", stage="search",
+            validator=lambda payload: bool(payload.get("data")),
+        ))
+        self.assertEqual(result["data"][0]["title"], "Found")
+        self.assertEqual(session.calls, 2)
+
+
+class FakeDownloader:
+    def __init__(self, results, chapters):
+        self.results, self.chapters = results, chapters
+        self.chapter_calls = 0
+    async def search_manga(self, _query):
+        return self.results
+    async def get_chapter_list(self, _manga_id):
+        self.chapter_calls += 1
+        return self.chapters
+
+
+class RawResolverTests(unittest.TestCase):
+    def test_title_normalization(self):
+        self.assertEqual(normalize_title("Let’s  Do-It, After Work!"), "lets do it after work")
+
+    def test_asura_priority_when_complete(self):
+        asura = FakeDownloader([{"id": "a", "title": "Project"}], [{"id": "chapter-1"}, {"id": "chapter-2"}])
+        doujiva = FakeDownloader([{"id": "d", "title": "Project"}], [{"id": "chapter-1"}, {"id": "chapter-2"}])
+        result = asyncio.run(resolve_assignment_raw("Project", ["1", "2"], {"asura": asura, "doujiva": doujiva}))
+        self.assertEqual(result["source"], "asura")
+        self.assertEqual(doujiva.chapter_calls, 0)
+
+    def test_falls_back_to_more_complete_doujiva(self):
+        asura = FakeDownloader([{"id": "a", "title": "Project"}], [{"id": "chapter-1"}])
+        doujiva = FakeDownloader([{"id": "d", "title": "Project"}], [{"id": "chapter-1"}, {"id": "chapter-2"}])
+        result = asyncio.run(resolve_assignment_raw("Project", ["1", "2"], {"asura": asura, "doujiva": doujiva}))
+        self.assertEqual(result["source"], "doujiva")
+        self.assertEqual(result["missing"], [])
+
+    def test_ambiguous_title_requires_manual_choice(self):
+        asura = FakeDownloader([
+            {"id": "a", "title": "Project Red"},
+            {"id": "b", "title": "Project Blue"},
+        ], [])
+        doujiva = FakeDownloader([], [])
+        result = asyncio.run(resolve_assignment_raw("Project", ["1"], {"asura": asura, "doujiva": doujiva}))
+        self.assertEqual(result["status"], "ambiguous")
 
 
 class MultiChapterDatabaseTests(unittest.TestCase):

@@ -81,7 +81,7 @@ class DoujivaDownloader:
     async def search_manga(self, query: str) -> List[Dict[str, Any]]:
         """Search for manga by title."""
         async with _create_session() as session:
-            data = await get_json(session, f"{self.api_url}/search", source="doujiva", stage="search", params={"q": query}, timeout=20)
+            data = await get_json(session, f"{self.api_url}/search", source="doujiva", stage="search", params={"q": query}, timeout=4, validator=lambda item: bool(item.get("data")))
             if data:
                 results = data.get("data", [])
                 normalized = []
@@ -104,7 +104,7 @@ class DoujivaDownloader:
         """Get manga information."""
         clean_id = _clean_manga_id(manga_id)
         async with _create_session() as session:
-            data = await get_json(session, f"{self.api_url}/detail/{clean_id}", source="doujiva", stage=f"detail:{clean_id}", timeout=20)
+            data = await get_json(session, f"{self.api_url}/detail/{clean_id}", source="doujiva", stage=f"detail:{clean_id}", timeout=4, validator=lambda item: bool((item.get("data") or {}).get("chapters")))
             return data.get("data") if data else None
 
     async def get_chapter_list(self, manga_id: str) -> List[Dict[str, Any]]:
@@ -136,13 +136,13 @@ class DoujivaDownloader:
 
         async with _create_session() as session:
             url = f"{self.api_url}/chapter/{clean_manga}/{clean_chap}"
-            data = await get_json(session, url, source="doujiva", stage=f"chapter:{clean_manga}:{clean_chap}", timeout=30)
+            data = await get_json(session, url, source="doujiva", stage=f"chapter:{clean_manga}:{clean_chap}", timeout=10, validator=lambda item: bool(item.get("images")))
             if data:
                 images = _normalize_chapter_images(data.get("images", []))
                 if images:
                     return images
             url_fallback = f"{self.api_url}/chapter/manga/{clean_manga}/{clean_chap}"
-            data = await get_json(session, url_fallback, source="doujiva", stage=f"chapter-fallback:{clean_manga}:{clean_chap}", timeout=30)
+            data = await get_json(session, url_fallback, source="doujiva", stage=f"chapter-fallback:{clean_manga}:{clean_chap}", timeout=10, validator=lambda item: bool(item.get("images")))
             return _normalize_chapter_images(data.get("images", [])) if data else []
 
     async def download_image(self, url: str, save_path: str) -> bool:

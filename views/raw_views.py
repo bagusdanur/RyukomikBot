@@ -11,23 +11,11 @@ import discord
 from helpers.utils import is_staff
 from chapter_utils import chapters_from_assignment, normalize_chapter
 from raw_downloader import get_downloader
+from raw_downloader.resolver import filter_allowed_chapters, resolve_assignment_raw
 from raw_downloader.retry import RETRYABLE_STATUSES
 
 RAW_ROOT = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "raw")
 FILEBIN_BASE_URL = "https://filebin.net"
-
-
-def filter_allowed_chapters(chapters, allowed):
-    indexed = {}
-    for chapter in chapters:
-        for candidate in (chapter.get("id"), chapter.get("title")):
-            normalized = normalize_chapter(str(candidate or ""))
-            if normalized:
-                indexed.setdefault(normalized, chapter)
-    return (
-        [indexed[item] for item in allowed if item in indexed],
-        [item for item in allowed if item not in indexed],
-    )
 
 
 def cleanup_old_raw_files(max_age_hours=24):
@@ -181,16 +169,28 @@ class RawAssignmentSelect(discord.ui.Select):
             ),
             view=None,
         )
-        asura, doujiva = await asyncio.gather(
-            get_downloader("asura").search_manga(assignment["manga"]),
-            get_downloader("doujiva").search_manga(assignment["manga"]),
-            return_exceptions=True,
+        allowed = chapters_from_assignment(assignment)
+
+        async def show_progress(message):
+            await interaction.edit_original_response(
+                embed=discord.Embed(
+                    title="Mendeteksi RAW Otomatis...",
+                    description=(
+                        f"Proyek: **{assignment['manga']}**\n"
+                        f"Target chapter: **{assignment['chapter']}**\n\n{message}"
+                    ),
+                    color=discord.Color.gold(),
+                ),
+                view=None,
+            )
+
+        result = await resolve_assignment_raw(
+            assignment["manga"],
+            allowed,
+            {"asura": get_downloader("asura"), "doujiva": get_downloader("doujiva")},
+            progress=show_progress,
         )
-        combined = []
-        for source, result in (("asura", asura), ("doujiva", doujiva)):
-            if isinstance(result, list):
-                combined.extend({**manga, "_source": source} for manga in result[:12])
-        if not combined:
+        if result["status"] == "not_found":
             return await interaction.edit_original_response(
                 embed=discord.Embed(
                     title="RAW Tidak Ditemukan",
@@ -201,11 +201,38 @@ class RawAssignmentSelect(discord.ui.Select):
                     color=discord.Color.red(),
                 )
             )
+        if result["status"] == "timeout":
+            return await interaction.edit_original_response(embed=discord.Embed(
+                title="Pencarian RAW Melewati Batas Waktu",
+                description="Asura dan Doujiva belum merespons dalam 12 detik. Bot sudah mencoba ulang otomatis; coba lagi nanti.",
+                color=discord.Color.red(),
+            ))
+        if result["status"] == "chapters_missing":
+            return await interaction.edit_original_response(embed=discord.Embed(
+                title="Chapter Tugas Belum Tersedia",
+                description=f"Judul ditemukan, tetapi chapter **{', '.join(allowed)}** belum tersedia di Asura maupun Doujiva.",
+                color=discord.Color.orange(),
+            ))
+        if result["status"] == "resolved":
+            source = result["source"]
+            available = [normalize_chapter(item["id"]) for item in result["chapters"]]
+            description = (
+                f"**{result['manga'].get('title')}** • Sumber terpilih: **{source.title()}**\n"
+                f"Chapter tersedia: **{', '.join(available)}**."
+            )
+            if result["missing"]:
+                description += f"\nBelum tersedia: **{', '.join(result['missing'])}**."
+            return await interaction.edit_original_response(
+                embed=discord.Embed(title="RAW Tugas Ditemukan", description=description, color=discord.Color.green()),
+                view=RawChapterView(source, str(result["manga"]["id"]), result["chapters"], restricted=True),
+            )
+
+        combined = result["combined"]
         embed = discord.Embed(
-            title="Pilih Komik RAW",
+            title="Pilih Komik yang Sesuai",
             description=(
                 f"Proyek tugas: **{assignment['manga']} â€” Ch. {assignment['chapter']}**\n"
-                "Pilih hasil yang sesuai. Judul diambil otomatis dari tugas kamu."
+                "Ada beberapa judul yang mirip, jadi bot perlu konfirmasi satu kali."
             ),
             color=discord.Color.blue(),
         )
@@ -213,7 +240,7 @@ class RawAssignmentSelect(discord.ui.Select):
             embed=embed,
             view=RawSearchView(
                 "auto", combined,
-                allowed_chapters=chapters_from_assignment(assignment),
+                allowed_chapters=allowed,
                 assignment_id=assignment["id"],
             ),
         )
