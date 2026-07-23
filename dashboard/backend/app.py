@@ -514,6 +514,14 @@ def page_payload(items, page, page_size, total):
     }
 
 
+def normalize_paging(page, page_size, paginated):
+    return (
+        page if isinstance(page, int) else 1,
+        page_size if isinstance(page_size, int) else 20,
+        paginated if isinstance(paginated, bool) else False,
+    )
+
+
 async def send_assignment_notice(staff_id: int, assignment_id: int, payload: AssignmentCreate):
     if DEV_BYPASS:
         return True
@@ -875,6 +883,7 @@ async def assignments(
     paginated: bool = Query(default=False),
     user=Depends(current_user),
 ):
+    page, page_size, paginated = normalize_paging(page, page_size, paginated)
     clauses, params = [], []
     if user["role"] == "staff":
         clauses.append("staff_id = ?")
@@ -982,6 +991,7 @@ async def staff(
     page: int = Query(default=1, ge=1), page_size: int = Query(default=20, ge=1, le=100),
     paginated: bool = Query(default=False), _user=Depends(admin_user),
 ):
+    page, page_size, paginated = normalize_paging(page, page_size, paginated)
     connection = await dashboard_db()
     try:
         rows = await (await connection.execute("""
@@ -1097,6 +1107,7 @@ async def payout_requests(
     page_size: int = Query(default=20, ge=1, le=100),
     paginated: bool = Query(default=False), _user=Depends(admin_user),
 ):
+    page, page_size, paginated = normalize_paging(page, page_size, paginated)
     if status and status not in {"awaiting_method", "issued", "paid", "rejected", "cancelled"}:
         raise HTTPException(status_code=422, detail="Status pencairan tidak valid.")
     rows = await enrich_staff(await payout_service.list_payouts(status))
@@ -1522,9 +1533,10 @@ async def submission_download(submission_id: int, user=Depends(current_user)):
 
 @app.get("/api/audit")
 async def audit_logs(
-    page: int = Query(default=1, ge=1), page_size: int = Query(default=20, ge=1, le=100),
-    paginated: bool = Query(default=False), _user=Depends(admin_user),
+    _user=Depends(admin_user), page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100), paginated: bool = Query(default=False),
 ):
+    page, page_size, paginated = normalize_paging(page, page_size, paginated)
     connection = await dashboard_db()
     try:
         if paginated:
