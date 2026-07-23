@@ -9,10 +9,25 @@ import time
 import discord
 
 from helpers.utils import is_staff
+from helpers.chapters import chapters_from_assignment, normalize_chapter
 from raw_downloader import get_downloader
+from raw_downloader.retry import RETRYABLE_STATUSES
 
 RAW_ROOT = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "raw")
 FILEBIN_BASE_URL = "https://filebin.net"
+
+
+def filter_allowed_chapters(chapters, allowed):
+    indexed = {}
+    for chapter in chapters:
+        for candidate in (chapter.get("id"), chapter.get("title")):
+            normalized = normalize_chapter(str(candidate or ""))
+            if normalized:
+                indexed.setdefault(normalized, chapter)
+    return (
+        [indexed[item] for item in allowed if item in indexed],
+        [item for item in allowed if item not in indexed],
+    )
 
 
 def cleanup_old_raw_files(max_age_hours=24):
@@ -40,21 +55,27 @@ async def upload_to_filebin(bin_id, file_path, remote_filename=None):
     """Upload one file into a shared Filebin bin."""
     filename = remote_filename or os.path.basename(file_path)
     timeout = aiohttp.ClientTimeout(total=900)
-    try:
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            with open(file_path, "rb") as upload_file:
-                async with session.post(
-                    f"{FILEBIN_BASE_URL}/{bin_id}/{filename}",
-                    data=upload_file,
-                    headers={"Content-Type": "application/octet-stream"},
-                ) as response:
-                    if response.status not in (200, 201):
-                        print(f"Filebin upload failed ({response.status}): {await response.text()}")
-                        return False
-        return True
-    except (aiohttp.ClientError, TimeoutError, OSError) as error:
-        print(f"Filebin upload error: {error}")
-        return False
+    for attempt in range(1, 4):
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                with open(file_path, "rb") as upload_file:
+                    async with session.post(
+                        f"{FILEBIN_BASE_URL}/{bin_id}/{filename}",
+                        data=upload_file,
+                        headers={"Content-Type": "application/octet-stream"},
+                    ) as response:
+                        if response.status in (200, 201):
+                            return True
+                        if response.status not in RETRYABLE_STATUSES:
+                            print(f"Filebin upload {filename} failed permanently: HTTP {response.status}")
+                            return False
+                        reason = f"HTTP {response.status}"
+        except (aiohttp.ClientError, TimeoutError, OSError) as error:
+            reason = type(error).__name__
+        print(f"Filebin upload {filename} attempt {attempt}/3 failed: {reason}")
+        if attempt < 3:
+            await asyncio.sleep(0.75 * attempt)
+    return False
 
 
 async def create_filebin_download(source, manga_id, chapter_ids):
@@ -88,6 +109,8 @@ async def create_filebin_download(source, manga_id, chapter_ids):
                     break
             if uploaded and image_number:
                 completed.append(chapter_id)
+            else:
+                shutil.rmtree(result, ignore_errors=True)
         if not completed:
             return None, []
         return f"{FILEBIN_BASE_URL}/{bin_id}", completed
@@ -183,19 +206,28 @@ class RawAssignmentSelect(discord.ui.Select):
             ),
             color=discord.Color.blue(),
         )
-        await interaction.edit_original_response(embed=embed, view=RawSearchView("auto", combined))
+        await interaction.edit_original_response(
+            embed=embed,
+            view=RawSearchView(
+                "auto", combined,
+                allowed_chapters=chapters_from_assignment(assignment),
+                assignment_id=assignment["id"],
+            ),
+        )
 
 
 class RawSearchView(discord.ui.View):
-    def __init__(self, source, results):
+    def __init__(self, source, results, allowed_chapters=None, assignment_id=None):
         super().__init__(timeout=300)
         normalized = [{**manga, "_source": manga.get("_source", source)} for manga in results[:25]]
-        self.add_item(RawMangaSelect(normalized))
+        self.add_item(RawMangaSelect(normalized, allowed_chapters, assignment_id))
 
 
 class RawMangaSelect(discord.ui.Select):
-    def __init__(self, results):
+    def __init__(self, results, allowed_chapters=None, assignment_id=None):
         self.results = results
+        self.allowed_chapters = allowed_chapters
+        self.assignment_id = assignment_id
         options = [discord.SelectOption(label=str(manga.get("title", "Tanpa judul"))[:100], value=str(index), description=f"{manga['_source'].title()} â€¢ {manga.get('status', 'status tidak diketahui')}"[:100]) for index, manga in enumerate(results)]
         super().__init__(placeholder="Pilih komik", options=options)
 
@@ -208,26 +240,51 @@ class RawMangaSelect(discord.ui.Select):
         chapters = await get_downloader(source).get_chapter_list(manga_id)
         if not chapters:
             return await interaction.edit_original_response(embed=discord.Embed(title="Chapter Tidak Ditemukan", description="Sumber sedang bermasalah atau chapter belum tersedia.", color=discord.Color.red()))
-        embed = discord.Embed(title="Pilih Chapter RAW", description=f"**{manga.get('title')}** â€¢ {source.title()}\nPilih maksimal 10 chapter, atau tekan **Download Terbaru**.", color=discord.Color.blue())
-        await interaction.edit_original_response(embed=embed, view=RawChapterView(source, manga_id, chapters[:25]))
+        missing = []
+        if self.allowed_chapters is not None:
+            filtered, missing = filter_allowed_chapters(chapters, self.allowed_chapters)
+            if not filtered:
+                return await interaction.edit_original_response(embed=discord.Embed(
+                    title="Chapter Tugas Belum Tersedia",
+                    description=(
+                        f"Tidak ada chapter tugas **{', '.join(self.allowed_chapters)}** pada {source.title()}.\n"
+                        "Pilih hasil manga atau sumber lain. Bot tidak akan menampilkan chapter di luar tugas."
+                    ),
+                    color=discord.Color.orange(),
+                ))
+            chapters = filtered
+        description = f"**{manga.get('title')}** • {source.title()}\n"
+        if self.allowed_chapters is None:
+            description += "Mode administrator: pilih maksimal 10 chapter atau Download Terbaru."
+        else:
+            description += f"Chapter tugas tersedia: **{', '.join(normalize_chapter(ch['id']) for ch in chapters)}**."
+            if missing:
+                description += f"\nBelum tersedia: **{', '.join(missing)}**."
+        embed = discord.Embed(title="Pilih Chapter RAW", description=description, color=discord.Color.blue())
+        await interaction.edit_original_response(
+            embed=embed,
+            view=RawChapterView(source, manga_id, chapters[:25], restricted=self.allowed_chapters is not None),
+        )
 
 
 class RawChapterView(discord.ui.View):
-    def __init__(self, source, manga_id, chapters):
+    def __init__(self, source, manga_id, chapters, restricted=False):
         super().__init__(timeout=300)
-        self.source, self.manga_id, self.chapters = source, manga_id, chapters
+        self.source, self.manga_id, self.chapters, self.restricted = source, manga_id, chapters, restricted
         self.add_item(RawChapterSelect(self, chapters))
 
-    @discord.ui.button(label="Download Terbaru", style=discord.ButtonStyle.success, row=1)
+    @discord.ui.button(label="Download Chapter Tugas", style=discord.ButtonStyle.success, row=1)
     async def latest_button(self, interaction, _button):
-        await download_chapters(interaction, self.source, self.manga_id, [str(self.chapters[0]["id"])])
+        chapter_ids = [str(item["id"]) for item in self.chapters] if self.restricted else [str(self.chapters[0]["id"])]
+        await download_chapters(interaction, self.source, self.manga_id, chapter_ids)
 
 
 class RawChapterSelect(discord.ui.Select):
     def __init__(self, parent_view, chapters):
         self.parent_view = parent_view
         options = [discord.SelectOption(label=str(chapter.get("title", chapter.get("id")))[:100], value=str(chapter.get("id")), description=str(chapter.get("date") or "Pilih untuk download")[:100]) for chapter in chapters]
-        super().__init__(placeholder="Pilih chapter (maksimal 10)", options=options, min_values=1, max_values=min(10, len(options)), row=0)
+        placeholder = "Pilih chapter tugas" if parent_view.restricted else "Pilih chapter (maksimal 10)"
+        super().__init__(placeholder=placeholder, options=options, min_values=1, max_values=min(10, len(options)), row=0)
 
     async def callback(self, interaction):
         await download_chapters(interaction, self.parent_view.source, self.parent_view.manga_id, self.values)

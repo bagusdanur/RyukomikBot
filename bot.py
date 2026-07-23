@@ -245,6 +245,11 @@ async def update_payrate_command(
 
 async def search_manga_command(interaction: discord.Interaction, query: str, source: str = "asura"):
     """Search for manga on Asura Scans or Doujiva."""
+    if not is_admin(interaction.user):
+        return await interaction.response.send_message(
+            "Pencarian RAW bebas hanya untuk administrator. Staff gunakan **Download RAW** pada Staff Panel agar chapter sesuai tugas.",
+            ephemeral=True,
+        )
     await interaction.response.defer(ephemeral=False)
     downloader = get_downloader(source)
     results = await downloader.search_manga(query)
@@ -277,8 +282,11 @@ async def search_manga_command(interaction: discord.Interaction, query: str, sou
 
 async def download_raw_command(interaction: discord.Interaction, manga_id: str, chapter_id: str, source: str = "asura"):
     """Download one RAW chapter."""
-    if not is_staff(interaction.user):
-        return await interaction.response.send_message("Hanya staff yang bisa download RAW!", ephemeral=False)
+    if not is_admin(interaction.user):
+        return await interaction.response.send_message(
+            "Download RAW bebas hanya untuk administrator. Staff gunakan **Download RAW** pada Staff Panel.",
+            ephemeral=True,
+        )
     await interaction.response.defer(ephemeral=False)
     filebin_url, completed = await create_filebin_download(source, manga_id, [chapter_id])
     if not filebin_url:
@@ -331,6 +339,11 @@ async def status_bot_command(interaction: discord.Interaction):
 @bot.tree.command(name="raw-chapters", description="Lihat daftar chapter RAW")
 @discord.app_commands.describe(manga_id="Slug komik, contoh: lets-do-it-after-work", source="Sumber RAW (asura atau doujiva)")
 async def raw_chapters_command(interaction: discord.Interaction, manga_id: str, source: Literal["asura", "doujiva"] = "asura"):
+    if not is_admin(interaction.user):
+        return await interaction.response.send_message(
+            "Daftar chapter bebas hanya untuk administrator. Staff gunakan **Download RAW** pada Staff Panel.",
+            ephemeral=True,
+        )
     await interaction.response.defer(ephemeral=False)
     downloader = get_downloader(source)
     chapters = await downloader.get_chapter_list(manga_id)
@@ -353,8 +366,11 @@ async def raw_download_command(interaction: discord.Interaction, manga_id: str, 
 @bot.tree.command(name="raw-download-batch", description="Batch download chapter RAW")
 @discord.app_commands.describe(manga_id="Slug komik, contoh: lets-do-it-after-work", chapter_ids="Chapter dipisah koma, contoh: 1,2,3", source="Sumber RAW")
 async def raw_download_batch_command(interaction: discord.Interaction, manga_id: str, chapter_ids: str, source: Literal["asura", "doujiva"] = "asura"):
-    if not is_staff(interaction.user):
-        return await interaction.response.send_message("Hanya staff yang bisa download RAW!", ephemeral=False)
+    if not is_admin(interaction.user):
+        return await interaction.response.send_message(
+            "Batch RAW bebas hanya untuk administrator. Staff gunakan **Download RAW** pada Staff Panel.",
+            ephemeral=True,
+        )
     await interaction.response.defer(ephemeral=False)
     ids = [item.strip() for item in chapter_ids.split(",") if item.strip()][:10]
     if not ids:
@@ -375,6 +391,11 @@ async def raw_download_batch_command(interaction: discord.Interaction, manga_id:
 @bot.tree.command(name="raw-update", description="Cek update RAW terbaru")
 @discord.app_commands.describe(query="Kata kunci komik (opsional)", source="Sumber RAW (asura atau doujiva)")
 async def raw_update_command(interaction: discord.Interaction, query: str = "", source: Literal["asura", "doujiva"] = "asura"):
+    if not is_admin(interaction.user):
+        return await interaction.response.send_message(
+            "Update RAW bebas hanya untuk administrator. Staff gunakan **Download RAW** pada Staff Panel.",
+            ephemeral=True,
+        )
     await interaction.response.defer(ephemeral=False)
     downloader = get_downloader(source)
     results = await downloader.search_manga(query or "latest")

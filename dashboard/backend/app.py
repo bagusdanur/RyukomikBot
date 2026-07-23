@@ -25,6 +25,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from config import GUILD_ID, ROLE_ADMIN_ID, ROLE_STAFF_ID, STAFF_LOG_CHANNEL_ID, TOKEN
 import database as staff_db
 from database import DB_PATH, setup_database
+from helpers.chapters import chapter_display, parse_chapters
 
 ROLE_RATE_LIMITS = {"TL": 8000, "TS": 12000, "TL+TS": 15000}
 
@@ -98,9 +99,23 @@ async def setup_dashboard_tables():
                 amount INTEGER NOT NULL,
                 assigned_at DATETIME,
                 approved_at DATETIME,
+                chapter_count INTEGER NOT NULL DEFAULT 1,
+                rate_per_chapter INTEGER,
                 UNIQUE(invoice_id, assignment_id),
                 FOREIGN KEY(invoice_id) REFERENCES dashboard_invoices(id)
             )
+        """)
+        item_columns = {row["name"] for row in await (await connection.execute(
+            "PRAGMA table_info(dashboard_invoice_items)"
+        )).fetchall()}
+        if "chapter_count" not in item_columns:
+            await connection.execute("ALTER TABLE dashboard_invoice_items ADD COLUMN chapter_count INTEGER NOT NULL DEFAULT 1")
+        if "rate_per_chapter" not in item_columns:
+            await connection.execute("ALTER TABLE dashboard_invoice_items ADD COLUMN rate_per_chapter INTEGER")
+        await connection.execute("""
+            UPDATE dashboard_invoice_items
+            SET chapter_count=COALESCE(NULLIF(chapter_count,0),1),
+                rate_per_chapter=COALESCE(rate_per_chapter,amount)
         """)
         await connection.execute("""
             CREATE TABLE IF NOT EXISTS dashboard_staff_cache (
@@ -322,7 +337,8 @@ class AssignmentCreate(BaseModel):
     chapter: str = Field(min_length=1, max_length=30)
     staff_id: int
     role: Literal["TL", "TS", "TL+TS"]
-    final_rate: int = Field(ge=0, le=1_000_000)
+    rate_per_chapter: int | None = Field(default=None, ge=0, le=1_000_000)
+    final_rate: int | None = Field(default=None, ge=0, le=1_000_000)
     deadline_at: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
 
 
@@ -666,18 +682,35 @@ async def assignments(
 
 @app.post("/api/assignments", status_code=201)
 async def create_dashboard_assignment(payload: AssignmentCreate, user=Depends(admin_user)):
-    if payload.final_rate > ROLE_RATE_LIMITS[payload.role]:
+    try:
+        chapters = parse_chapters(payload.chapter)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error))
+    rate_per_chapter = payload.rate_per_chapter if payload.rate_per_chapter is not None else payload.final_rate
+    if rate_per_chapter is None:
+        raise HTTPException(status_code=422, detail="Bayaran per chapter wajib diisi.")
+    if rate_per_chapter > ROLE_RATE_LIMITS[payload.role]:
         raise HTTPException(status_code=422, detail=f"Maksimum rate {payload.role} adalah {ROLE_RATE_LIMITS[payload.role]}.")
     profiles = {item["id"]: item for item in await staff_directory()}
     if payload.staff_id not in profiles:
         raise HTTPException(status_code=422, detail="Staff tidak ditemukan atau tidak memiliki role Staff.")
     assignment_id = await staff_db.create_assignment(
-        manga=payload.manga.strip(), chapter=payload.chapter.strip(), role=payload.role,
-        base_rate=payload.final_rate, final_rate=payload.final_rate, multiplier=1.0,
+        manga=payload.manga.strip(), chapter=chapter_display(chapters), chapters=chapters, role=payload.role,
+        base_rate=rate_per_chapter, rate_per_chapter=rate_per_chapter,
+        final_rate=rate_per_chapter * len(chapters), multiplier=1.0,
         staff_id=payload.staff_id, deadline_at=payload.deadline_at,
     )
-    notified = await send_assignment_notice(payload.staff_id, assignment_id, payload)
-    await audit(user["id"], "assignment.create", "assignment", assignment_id, after={**payload.model_dump(), "notified": notified})
+    notice_payload = payload.model_copy(update={
+        "chapter": chapter_display(chapters),
+        "rate_per_chapter": rate_per_chapter,
+        "final_rate": rate_per_chapter * len(chapters),
+    })
+    notified = await send_assignment_notice(payload.staff_id, assignment_id, notice_payload)
+    await audit(user["id"], "assignment.create", "assignment", assignment_id, after={
+        **payload.model_dump(), "chapters": chapters, "chapter_count": len(chapters),
+        "rate_per_chapter": rate_per_chapter, "final_rate": rate_per_chapter * len(chapters),
+        "notified": notified,
+    })
     return {"id": assignment_id, "notified": notified}
 
 
@@ -801,7 +834,7 @@ async def recap(period: str = Query(pattern=r"^\d{4}-\d{2}$"), _user=Depends(adm
     connection = await dashboard_db()
     try:
         rows = await (await connection.execute("""
-            SELECT staff_id, COUNT(*) chapter_count, SUM(final_rate) total_amount,
+            SELECT staff_id, SUM(COALESCE(chapter_count,1)) chapter_count, SUM(final_rate) total_amount,
                    SUM(CASE WHEN status='approved' THEN final_rate ELSE 0 END) pending_amount,
                    SUM(CASE WHEN status='paid' THEN final_rate ELSE 0 END) paid_amount
             FROM assignments
@@ -837,13 +870,15 @@ async def invoice_detail(invoice_id: int, _user=Depends(admin_user)):
         if not invoice:
             raise HTTPException(status_code=404, detail="Invoice tidak ditemukan.")
         items = await (await connection.execute("""
-            SELECT assignment_id,manga,chapter,role,amount,assigned_at,approved_at
+            SELECT assignment_id,manga,chapter,role,amount,assigned_at,approved_at,
+                   chapter_count,rate_per_chapter
             FROM dashboard_invoice_items WHERE invoice_id=? ORDER BY assignment_id
         """, (invoice_id,))).fetchall()
         if not items:
             status_clause = "paid_period=?" if invoice["status"] == "paid" else "status='approved' AND approved_at LIKE ?"
             items = await (await connection.execute(f"""
-                SELECT id assignment_id,manga,chapter,role,final_rate amount,assigned_at,approved_at
+                SELECT id assignment_id,manga,chapter,role,final_rate amount,assigned_at,approved_at,
+                       COALESCE(chapter_count,1) chapter_count,COALESCE(rate_per_chapter,final_rate) rate_per_chapter
                 FROM assignments WHERE staff_id=? AND {status_clause} ORDER BY id
             """, (invoice["staff_id"], invoice["period"] if invoice["status"] == "paid" else f"{invoice['period']}%"))).fetchall()
         result = (await enrich_staff([invoice]))[0]
@@ -862,14 +897,15 @@ async def create_invoice(payload: InvoiceCreate, user=Depends(admin_user)):
     connection = await dashboard_db()
     try:
         items = await (await connection.execute("""
-            SELECT id,manga,chapter,role,final_rate,assigned_at,approved_at
+            SELECT id,manga,chapter,role,final_rate,assigned_at,approved_at,
+                   COALESCE(chapter_count,1) chapter_count,COALESCE(rate_per_chapter,final_rate) rate_per_chapter
             FROM assignments a WHERE staff_id=? AND status='approved' AND approved_at LIKE ?
               AND NOT EXISTS (SELECT 1 FROM dashboard_assignment_billing b WHERE b.assignment_id=a.id)
             ORDER BY id
         """, (payload.staff_id, f"{payload.period}%"))).fetchall()
         if not items:
             raise HTTPException(status_code=422, detail="Tidak ada tugas approved yang belum dibayar pada periode ini.")
-        chapter_count = len(items)
+        chapter_count = sum(item["chapter_count"] or 1 for item in items)
         total_amount = sum(item["final_rate"] for item in items)
         invoice_number = f"RYU-{payload.period.replace('-', '')}-{payload.staff_id}-{secrets.token_hex(2).upper()}"
         try:
@@ -881,11 +917,12 @@ async def create_invoice(payload: InvoiceCreate, user=Depends(admin_user)):
             invoice_id = cursor.lastrowid
             await connection.executemany("""
                 INSERT INTO dashboard_invoice_items
-                    (invoice_id,assignment_id,manga,chapter,role,amount,assigned_at,approved_at)
-                VALUES(?,?,?,?,?,?,?,?)
+                    (invoice_id,assignment_id,manga,chapter,role,amount,assigned_at,approved_at,chapter_count,rate_per_chapter)
+                VALUES(?,?,?,?,?,?,?,?,?,?)
             """, [(
                 invoice_id, item["id"], item["manga"], item["chapter"], item["role"],
-                item["final_rate"], item["assigned_at"], item["approved_at"]
+                item["final_rate"], item["assigned_at"], item["approved_at"],
+                item["chapter_count"] or 1, item["rate_per_chapter"] or item["final_rate"]
             ) for item in items])
             await connection.executemany(
                 "INSERT INTO dashboard_assignment_billing(assignment_id,invoice_id) VALUES(?,?)",
@@ -913,16 +950,17 @@ async def _replace_invoice_items(connection, invoice, items, actor_id: int):
     await connection.execute("DELETE FROM dashboard_invoice_items WHERE invoice_id=?", (invoice["id"],))
     try:
         await connection.executemany("""INSERT INTO dashboard_invoice_items
-            (invoice_id,assignment_id,manga,chapter,role,amount,assigned_at,approved_at)
-            VALUES(?,?,?,?,?,?,?,?)""", [(invoice["id"], item["id"], item["manga"], item["chapter"], item["role"],
-                                           item["final_rate"], item["assigned_at"], item["approved_at"]) for item in items])
+            (invoice_id,assignment_id,manga,chapter,role,amount,assigned_at,approved_at,chapter_count,rate_per_chapter)
+            VALUES(?,?,?,?,?,?,?,?,?,?)""", [(invoice["id"], item["id"], item["manga"], item["chapter"], item["role"],
+                                           item["final_rate"], item["assigned_at"], item["approved_at"],
+                                           item["chapter_count"] or 1, item["rate_per_chapter"] or item["final_rate"]) for item in items])
         await connection.executemany("INSERT INTO dashboard_assignment_billing(assignment_id,invoice_id) VALUES(?,?)",
                                      [(item["id"], invoice["id"]) for item in items])
     except aiosqlite.IntegrityError:
         raise HTTPException(status_code=409, detail="Salah satu tugas sudah ditagihkan pada invoice lain.")
     await connection.execute("""UPDATE dashboard_invoices SET chapter_count=?,total_amount=?,
         revised_at=CURRENT_TIMESTAMP,revised_by=? WHERE id=?""",
-        (len(items), sum(item["final_rate"] for item in items), actor_id, invoice["id"]))
+        (sum(item["chapter_count"] or 1 for item in items), sum(item["final_rate"] for item in items), actor_id, invoice["id"]))
     return old_ids
 
 
@@ -934,7 +972,8 @@ async def refresh_invoice(invoice_id: int, user=Depends(admin_user)):
         if not invoice:
             raise HTTPException(status_code=404, detail="Invoice tidak ditemukan.")
         items = await (await connection.execute("""
-            SELECT a.id,a.manga,a.chapter,a.role,a.final_rate,a.assigned_at,a.approved_at
+            SELECT a.id,a.manga,a.chapter,a.role,a.final_rate,a.assigned_at,a.approved_at,
+                   COALESCE(a.chapter_count,1) chapter_count,COALESCE(a.rate_per_chapter,a.final_rate) rate_per_chapter
             FROM assignments a WHERE a.staff_id=? AND a.status='approved' AND a.approved_at LIKE ?
               AND (NOT EXISTS (SELECT 1 FROM dashboard_assignment_billing b WHERE b.assignment_id=a.id)
                    OR EXISTS (SELECT 1 FROM dashboard_assignment_billing b WHERE b.assignment_id=a.id AND b.invoice_id=?))
@@ -942,7 +981,7 @@ async def refresh_invoice(invoice_id: int, user=Depends(admin_user)):
         """, (invoice["staff_id"], f"{invoice['period']}%", invoice_id))).fetchall()
         before_items = await _replace_invoice_items(connection, invoice, items, user["id"])
         await connection.commit()
-        after = {"chapter_count": len(items), "total_amount": sum(item["final_rate"] for item in items),
+        after = {"chapter_count": sum(item["chapter_count"] or 1 for item in items), "total_amount": sum(item["final_rate"] for item in items),
                  "assignment_ids": [item["id"] for item in items]}
     except Exception:
         await connection.rollback()
@@ -960,7 +999,8 @@ async def create_correction_invoice(invoice_id: int, user=Depends(admin_user)):
         parent = await (await connection.execute("SELECT * FROM dashboard_invoices WHERE id=?", (invoice_id,))).fetchone()
         if not parent or parent["status"] != "paid":
             raise HTTPException(status_code=409, detail="Invoice koreksi hanya dapat dibuat dari invoice yang sudah lunas.")
-        items = await (await connection.execute("""SELECT a.id,a.manga,a.chapter,a.role,a.final_rate,a.assigned_at,a.approved_at
+        items = await (await connection.execute("""SELECT a.id,a.manga,a.chapter,a.role,a.final_rate,a.assigned_at,a.approved_at,
+                   COALESCE(a.chapter_count,1) chapter_count,COALESCE(a.rate_per_chapter,a.final_rate) rate_per_chapter
             FROM assignments a WHERE a.staff_id=? AND a.status='approved' AND a.approved_at LIKE ?
               AND NOT EXISTS (SELECT 1 FROM dashboard_assignment_billing b WHERE b.assignment_id=a.id) ORDER BY a.id""",
             (parent["staff_id"], f"{parent['period']}%"))).fetchall()
@@ -971,11 +1011,13 @@ async def create_correction_invoice(invoice_id: int, user=Depends(admin_user)):
         cursor = await connection.execute("""INSERT INTO dashboard_invoices
             (invoice_number,staff_id,period,chapter_count,total_amount,status,issued_by,invoice_type,parent_invoice_id)
             VALUES(?,?,?,?,?,'issued',?,'correction',?)""",
-            (number, parent["staff_id"], parent["period"], len(items), sum(i["final_rate"] for i in items), user["id"], invoice_id))
+            (number, parent["staff_id"], parent["period"], sum(i["chapter_count"] or 1 for i in items), sum(i["final_rate"] for i in items), user["id"], invoice_id))
         correction_id = cursor.lastrowid
         await connection.executemany("""INSERT INTO dashboard_invoice_items
-            (invoice_id,assignment_id,manga,chapter,role,amount,assigned_at,approved_at) VALUES(?,?,?,?,?,?,?,?)""",
-            [(correction_id,i["id"],i["manga"],i["chapter"],i["role"],i["final_rate"],i["assigned_at"],i["approved_at"]) for i in items])
+            (invoice_id,assignment_id,manga,chapter,role,amount,assigned_at,approved_at,chapter_count,rate_per_chapter)
+            VALUES(?,?,?,?,?,?,?,?,?,?)""",
+            [(correction_id,i["id"],i["manga"],i["chapter"],i["role"],i["final_rate"],i["assigned_at"],i["approved_at"],
+              i["chapter_count"] or 1,i["rate_per_chapter"] or i["final_rate"]) for i in items])
         await connection.executemany("INSERT INTO dashboard_assignment_billing(assignment_id,invoice_id) VALUES(?,?)",
                                      [(i["id"], correction_id) for i in items])
         await connection.commit()

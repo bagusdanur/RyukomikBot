@@ -12,6 +12,9 @@ export type Assignment = {
   staff_id: string | null;
   role: string;
   final_rate: number;
+  rate_per_chapter?: number;
+  chapter_count?: number;
+  chapters?: string;
   status: string;
   deadline_at: string | null;
   assigned_at: string;
@@ -63,6 +66,8 @@ export type InvoiceDetail = Invoice & {
     chapter: string;
     role: string;
     amount: number;
+    chapter_count?: number;
+    rate_per_chapter?: number;
     assigned_at: string | null;
     approved_at: string | null;
   }>;

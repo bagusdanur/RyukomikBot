@@ -1,9 +1,11 @@
 import os
+import shutil
 from typing import Any, Dict, List, Optional
 
 import aiohttp
 
 from config import ASURA_API
+from .retry import get_bytes, get_json
 
 
 DEFAULT_HEADERS = {
@@ -39,17 +41,11 @@ class AsuraDownloader:
 
     async def search_manga(self, query: str) -> List[Dict[str, Any]]:
         async with _create_session() as session:
-            try:
-                async with session.get(
-                    f"{self.api_url}/search",
-                    params={"q": query},
-                    timeout=aiohttp.ClientTimeout(total=20),
-                ) as response:
-                    if response.status != 200:
-                        return []
-                    payload = await response.json()
-                    results = payload.get("data", payload.get("results", []))
-                    return [
+            payload = await get_json(session, f"{self.api_url}/search", source="asura", stage="search", params={"q": query}, timeout=20)
+            if not payload:
+                return []
+            results = payload.get("data", payload.get("results", []))
+            return [
                         {
                             "id": _clean_id(item.get("slug", item.get("id", ""))),
                             "title": item.get("title", "Unknown"),
@@ -60,25 +56,12 @@ class AsuraDownloader:
                             "source": "asura",
                         }
                         for item in results
-                    ]
-            except (aiohttp.ClientError, TimeoutError, ValueError) as error:
-                print(f"Error searching Asura manga: {error}")
-                return []
+            ]
 
     async def get_manga_info(self, manga_id: str) -> Optional[Dict[str, Any]]:
         async with _create_session() as session:
-            try:
-                async with session.get(
-                    f"{self.api_url}/detail/{_clean_id(manga_id)}",
-                    timeout=aiohttp.ClientTimeout(total=20),
-                ) as response:
-                    if response.status != 200:
-                        return None
-                    payload = await response.json()
-                    return payload.get("data", payload)
-            except (aiohttp.ClientError, TimeoutError, ValueError) as error:
-                print(f"Error getting Asura manga info: {error}")
-                return None
+            payload = await get_json(session, f"{self.api_url}/detail/{_clean_id(manga_id)}", source="asura", stage=f"detail:{_clean_id(manga_id)}", timeout=20)
+            return payload.get("data", payload) if payload else None
 
     async def get_chapter_list(self, manga_id: str) -> List[Dict[str, Any]]:
         info = await self.get_manga_info(manga_id)
@@ -100,32 +83,20 @@ class AsuraDownloader:
         clean_manga = _clean_id(manga_id)
         clean_chapter = _clean_chapter(chapter_id)
         async with _create_session() as session:
-            try:
-                async with session.get(
-                    f"{self.api_url}/chapter/{clean_manga}/{clean_chapter}",
-                    timeout=aiohttp.ClientTimeout(total=30),
-                ) as response:
-                    if response.status != 200:
-                        return []
-                    payload = await response.json()
-                    return payload.get("images", [])
-            except (aiohttp.ClientError, TimeoutError, ValueError) as error:
-                print(f"Error getting Asura chapter images: {error}")
-                return []
+            payload = await get_json(session, f"{self.api_url}/chapter/{clean_manga}/{clean_chapter}", source="asura", stage=f"chapter:{clean_manga}:{clean_chapter}", timeout=30)
+            return payload.get("images", []) if payload else []
 
     async def download_image(self, url: str, save_path: str) -> bool:
         async with _create_session() as session:
             try:
-                async with session.get(
-                    url, timeout=aiohttp.ClientTimeout(total=60)
-                ) as response:
-                    if response.status != 200:
-                        return False
-                    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-                    with open(save_path, "wb") as image_file:
-                        image_file.write(await response.read())
-                    return True
-            except (aiohttp.ClientError, TimeoutError, OSError) as error:
+                content = await get_bytes(session, url, source="asura", stage=f"image:{os.path.basename(save_path)}")
+                if not content:
+                    return False
+                os.makedirs(os.path.dirname(save_path), exist_ok=True)
+                with open(save_path, "wb") as image_file:
+                    image_file.write(content)
+                return True
+            except OSError as error:
                 print(f"Error downloading Asura image: {error}")
                 return False
 
@@ -146,7 +117,10 @@ class AsuraDownloader:
                 url, os.path.join(chapter_dir, f"{index:03d}.{extension}")
             ):
                 downloaded += 1
-        return chapter_dir if downloaded else None
+        if downloaded == len(images):
+            return chapter_dir
+        shutil.rmtree(chapter_dir, ignore_errors=True)
+        return None
 
 
 downloader = AsuraDownloader()

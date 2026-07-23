@@ -8,6 +8,7 @@ from helpers.utils import (
     calculate_final_rate, find_or_create_staff_ticket, format_currency, get_or_fetch_member,
     is_admin, is_popular_series, normalize_role,
 )
+from helpers.chapters import chapter_display, parse_chapters
 from panels.claim_view import ClaimView
 from views.ticket_views import TicketSubmitView
 
@@ -67,8 +68,8 @@ class AssignStaffSelect(discord.ui.UserSelect):
 
 class AssignModal(discord.ui.Modal, title="Detail Tugas Baru"):
     manga = discord.ui.TextInput(label="Judul Manga", placeholder="Contoh: Solo Leveling")
-    chapter = discord.ui.TextInput(label="Chapter", placeholder="Contoh: 100")
-    rate_override = discord.ui.TextInput(label="Bayaran Manual (Opsional)", placeholder="Contoh: 15000", required=False)
+    chapter = discord.ui.TextInput(label="Chapter (Maks. 5)", placeholder="Rentang 1-5 atau daftar 1,3,7,8.5")
+    rate_override = discord.ui.TextInput(label="Bayaran per Chapter (Opsional)", placeholder="Contoh: 12000", required=False)
     page_count = discord.ui.TextInput(label="Jumlah Halaman (Opsional)", placeholder="Contoh: 24", required=False)
     deadline = discord.ui.TextInput(label="Deadline (Opsional)", placeholder="YYYY-MM-DD, contoh: 2026-07-25", required=False)
 
@@ -81,6 +82,10 @@ class AssignModal(discord.ui.Modal, title="Detail Tugas Baru"):
         role = normalize_role(self.selected_role)
         if not is_admin(interaction.user) or not role:
             return await interaction.response.send_message("Data assign tidak valid.")
+        try:
+            chapters = parse_chapters(self.chapter.value)
+        except ValueError as error:
+            return await interaction.response.send_message(str(error))
         base_rate = await db.get_role_payrate(role)
         override = False
         if self.rate_override.value:
@@ -114,16 +119,21 @@ class AssignModal(discord.ui.Modal, title="Detail Tugas Baru"):
         if pages > 20: multiplier += .2; bonuses.append(">20 halaman +20%")
         if tight: multiplier += .1; bonuses.append("Deadline ≤2 hari +10%")
         if override:
-            final_rate, multiplier, bonuses = base_rate, 1.0, ["Bayaran manual"]
+            rate_per_chapter, multiplier, bonuses = base_rate, 1.0, ["Bayaran manual per chapter"]
         else:
-            final_rate = calculate_final_rate(base_rate, role, multiplier)
-        payload = dict(manga=self.manga.value.strip(), chapter=self.chapter.value.strip(), role=role,
-                       base_rate=base_rate, final_rate=final_rate, multiplier=multiplier,
+            rate_per_chapter = calculate_final_rate(base_rate, role, multiplier)
+        final_rate = rate_per_chapter * len(chapters)
+        payload = dict(manga=self.manga.value.strip(), chapter=chapter_display(chapters), chapters=chapters, role=role,
+                       base_rate=base_rate, rate_per_chapter=rate_per_chapter,
+                       final_rate=final_rate, multiplier=multiplier,
                        staff_id=self.staff_id, deadline_at=deadline_at, bonuses=bonuses)
         target = f"<@{self.staff_id}> (langsung)" if self.staff_id else "Open claim untuk semua Staff"
         embed = discord.Embed(title="Konfirmasi Tugas", description="Periksa sebelum tugas diterbitkan.", color=discord.Color.gold())
         embed.add_field(name="Manga / Chapter", value=f"{payload['manga']} — Ch. {payload['chapter']}", inline=False)
-        embed.add_field(name="Role", value=role); embed.add_field(name="Bayaran", value=format_currency(final_rate))
+        embed.add_field(name="Role", value=role)
+        embed.add_field(name="Rate / Chapter", value=format_currency(rate_per_chapter))
+        embed.add_field(name="Jumlah Chapter", value=str(len(chapters)))
+        embed.add_field(name="Total Bayaran", value=format_currency(final_rate))
         embed.add_field(name="Tujuan", value=target, inline=False)
         embed.add_field(name="Deadline", value=deadline_at or "Tidak ditentukan")
         embed.add_field(name="Perhitungan", value=", ".join(bonuses) or "Rate default", inline=False)
@@ -141,7 +151,7 @@ class ConfirmAssignmentView(discord.ui.View):
             return await interaction.response.send_message("Hanya administrator yang dapat mengonfirmasi.")
         await interaction.response.defer()
         p = self.payload
-        assignment_id = await db.create_assignment(**{k: p[k] for k in ("manga", "chapter", "role", "base_rate", "final_rate", "multiplier", "staff_id", "deadline_at")})
+        assignment_id = await db.create_assignment(**{k: p[k] for k in ("manga", "chapter", "chapters", "role", "base_rate", "rate_per_chapter", "final_rate", "multiplier", "staff_id", "deadline_at")})
         target_channel = None
         if p["staff_id"]:
             member = await get_or_fetch_member(interaction.guild, p["staff_id"])
@@ -174,7 +184,10 @@ class ConfirmAssignmentView(discord.ui.View):
 
 def build_task_embed(assignment_id, payload, status):
     embed = discord.Embed(title=f"Tugas #{assignment_id}", description=f"**{payload['manga']}** — Chapter {payload['chapter']}", color=discord.Color.blue())
-    embed.add_field(name="Role", value=payload["role"]); embed.add_field(name="Bayaran", value=format_currency(payload["final_rate"])); embed.add_field(name="Status", value=status)
+    embed.add_field(name="Role", value=payload["role"])
+    embed.add_field(name="Rate / Chapter", value=format_currency(payload["rate_per_chapter"]))
+    embed.add_field(name="Total Bayaran", value=format_currency(payload["final_rate"]))
+    embed.add_field(name="Status", value=status)
     embed.add_field(name="Deadline", value=payload["deadline_at"] or "Tidak ditentukan", inline=False)
     embed.set_footer(text="Gunakan tombol di bawah untuk melanjutkan alur tugas.")
     return embed

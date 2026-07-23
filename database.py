@@ -1,5 +1,6 @@
 import aiosqlite
 import os
+import json
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
@@ -87,6 +88,19 @@ async def setup_database():
         columns = {row[1] for row in await (await db.execute("PRAGMA table_info(assignments)")).fetchall()}
         if "deadline_at" not in columns:
             await db.execute("ALTER TABLE assignments ADD COLUMN deadline_at DATETIME")
+        if "chapters" not in columns:
+            await db.execute("ALTER TABLE assignments ADD COLUMN chapters TEXT")
+        if "chapter_count" not in columns:
+            await db.execute("ALTER TABLE assignments ADD COLUMN chapter_count INTEGER NOT NULL DEFAULT 1")
+        if "rate_per_chapter" not in columns:
+            await db.execute("ALTER TABLE assignments ADD COLUMN rate_per_chapter INTEGER")
+        await db.execute("""
+            UPDATE assignments
+            SET chapters = COALESCE(chapters, json_array(chapter)),
+                chapter_count = COALESCE(NULLIF(chapter_count, 0), 1),
+                rate_per_chapter = COALESCE(rate_per_chapter, final_rate)
+            WHERE chapters IS NULL OR rate_per_chapter IS NULL OR chapter_count IS NULL OR chapter_count=0
+        """)
         
         await db.commit()
     finally:
@@ -104,6 +118,8 @@ async def create_assignment(
     ticket_channel_id: Optional[int] = None,
     staff_id: Optional[int] = None,
     deadline_at: Optional[str] = None,
+    chapters: Optional[List[str]] = None,
+    rate_per_chapter: Optional[int] = None,
 ) -> int:
     """Create a new assignment and return its ID."""
     db = await get_db()
@@ -111,13 +127,15 @@ async def create_assignment(
         cursor = await db.execute("""
             INSERT INTO assignments
                 (manga, chapter, staff_id, role, base_rate, final_rate, multiplier,
-                 status, message_id, ticket_channel_id, claimed_at, deadline_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 status, message_id, ticket_channel_id, claimed_at, deadline_at,
+                 chapters, chapter_count, rate_per_chapter)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             manga, chapter, staff_id, role, base_rate, final_rate, multiplier,
             "claimed" if staff_id else "open", message_id, ticket_channel_id,
             datetime.now().isoformat(timespec="seconds") if staff_id else None,
-            deadline_at,
+            deadline_at, json.dumps(chapters or [chapter], ensure_ascii=False),
+            len(chapters or [chapter]), rate_per_chapter if rate_per_chapter is not None else final_rate,
         ))
         await db.commit()
         return cursor.lastrowid

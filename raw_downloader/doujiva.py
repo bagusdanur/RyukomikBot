@@ -1,8 +1,10 @@
 import aiohttp
 import os
+import shutil
 from typing import Optional, Dict, List, Any
 from urllib.parse import parse_qs, unquote, urlparse
 from config import DOUJIVA_API
+from .retry import get_bytes, get_json
 
 
 DEFAULT_HEADERS = {
@@ -79,17 +81,11 @@ class DoujivaDownloader:
     async def search_manga(self, query: str) -> List[Dict[str, Any]]:
         """Search for manga by title."""
         async with _create_session() as session:
-            try:
-                async with session.get(
-                    f"{self.api_url}/search",
-                    params={"q": query},
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        results = data.get("data", [])
-                        normalized = []
-                        for item in results:
+            data = await get_json(session, f"{self.api_url}/search", source="doujiva", stage="search", params={"q": query}, timeout=20)
+            if data:
+                results = data.get("data", [])
+                normalized = []
+                for item in results:
                             raw_slug = item.get("slug", "")
                             clean_id = _clean_manga_id(raw_slug)
                             normalized.append({
@@ -101,28 +97,15 @@ class DoujivaDownloader:
                                 "image": item.get("image", ""),
                                 "source": "doujiva"
                             })
-                        return normalized
-                    return []
-            except Exception as e:
-                print(f"Error searching Doujiva manga: {e}")
-                return []
+                return normalized
+            return []
 
     async def get_manga_info(self, manga_id: str) -> Optional[Dict[str, Any]]:
         """Get manga information."""
         clean_id = _clean_manga_id(manga_id)
         async with _create_session() as session:
-            try:
-                async with session.get(
-                    f"{self.api_url}/detail/{clean_id}",
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        return data.get("data")
-                    return None
-            except Exception as e:
-                print(f"Error getting Doujiva manga info: {e}")
-                return None
+            data = await get_json(session, f"{self.api_url}/detail/{clean_id}", source="doujiva", stage=f"detail:{clean_id}", timeout=20)
+            return data.get("data") if data else None
 
     async def get_chapter_list(self, manga_id: str) -> List[Dict[str, Any]]:
         """Get list of chapters for a manga."""
@@ -152,39 +135,28 @@ class DoujivaDownloader:
         clean_chap = _clean_chapter_id(chapter_id)
 
         async with _create_session() as session:
-            try:
-                url = f"{self.api_url}/chapter/{clean_manga}/{clean_chap}"
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        return _normalize_chapter_images(data.get("images", []))
-
-                url_fallback = f"{self.api_url}/chapter/manga/{clean_manga}/{clean_chap}"
-                async with session.get(url_fallback, timeout=aiohttp.ClientTimeout(total=30)) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        return _normalize_chapter_images(data.get("images", []))
-
-                return []
-            except Exception as e:
-                print(f"Error getting Doujiva chapter images: {e}")
-                return []
+            url = f"{self.api_url}/chapter/{clean_manga}/{clean_chap}"
+            data = await get_json(session, url, source="doujiva", stage=f"chapter:{clean_manga}:{clean_chap}", timeout=30)
+            if data:
+                images = _normalize_chapter_images(data.get("images", []))
+                if images:
+                    return images
+            url_fallback = f"{self.api_url}/chapter/manga/{clean_manga}/{clean_chap}"
+            data = await get_json(session, url_fallback, source="doujiva", stage=f"chapter-fallback:{clean_manga}:{clean_chap}", timeout=30)
+            return _normalize_chapter_images(data.get("images", [])) if data else []
 
     async def download_image(self, url: str, save_path: str) -> bool:
         """Download a single image."""
         async with _create_session() as session:
             try:
-                async with session.get(
-                    url,
-                    timeout=aiohttp.ClientTimeout(total=60)
-                ) as response:
-                    if response.status == 200:
-                        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-                        with open(save_path, "wb") as f:
-                            f.write(await response.read())
-                        return True
+                content = await get_bytes(session, url, source="doujiva", stage=f"image:{os.path.basename(save_path)}")
+                if not content:
                     return False
-            except Exception as e:
+                os.makedirs(os.path.dirname(save_path), exist_ok=True)
+                with open(save_path, "wb") as f:
+                    f.write(content)
+                return True
+            except OSError as e:
                 print(f"Error downloading image from Doujiva: {e}")
                 return False
 
@@ -213,8 +185,9 @@ class DoujivaDownloader:
             if await self.download_image(url, save_path):
                 downloaded += 1
 
-        if downloaded > 0:
+        if downloaded == len(images):
             return chapter_dir
+        shutil.rmtree(chapter_dir, ignore_errors=True)
         return None
 
 

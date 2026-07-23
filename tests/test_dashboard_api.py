@@ -18,7 +18,8 @@ class DashboardApiTests(unittest.TestCase):
                 role TEXT, base_rate INTEGER, final_rate INTEGER, multiplier REAL,
                 status TEXT, deadline_at TEXT, assigned_at TEXT, approved_at TEXT,
                 paid_period TEXT, message_id INTEGER, ticket_channel_id INTEGER,
-                claimed_at TEXT, submitted_at TEXT, gdrive_link TEXT, admin_notes TEXT
+                claimed_at TEXT, submitted_at TEXT, gdrive_link TEXT, admin_notes TEXT,
+                chapters TEXT, chapter_count INTEGER DEFAULT 1, rate_per_chapter INTEGER
             );
             CREATE TABLE payments (
                 id INTEGER PRIMARY KEY, staff_id INTEGER, period TEXT, total_amount INTEGER,
@@ -28,10 +29,10 @@ class DashboardApiTests(unittest.TestCase):
                 role TEXT PRIMARY KEY, base_rate INTEGER, updated_at TEXT
             );
             INSERT INTO assignments VALUES
-                (1,'Project A','1',100,'TL',3000,5000,1,'claimed','2026-07-23','2026-07-20',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),
-                (2,'Project B','2',200,'TS',3000,8000,1,'submitted','2026-07-24','2026-07-20',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),
-                (3,'Project C','3',100,'TL',3000,6000,1,'paid',NULL,'2026-07-01','2026-07-02','2026-07',NULL,NULL,NULL,NULL,NULL,NULL),
-                (4,'Project D','4',100,'TL',3000,7000,1,'approved',NULL,'2026-07-03','2026-07-04',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+                (1,'Project A','1',100,'TL',3000,5000,1,'claimed','2026-07-23','2026-07-20',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'["1"]',1,5000),
+                (2,'Project B','2',200,'TS',3000,8000,1,'submitted','2026-07-24','2026-07-20',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'["2"]',1,8000),
+                (3,'Project C','3',100,'TL',3000,6000,1,'paid',NULL,'2026-07-01','2026-07-02','2026-07',NULL,NULL,NULL,NULL,NULL,NULL,'["3"]',1,6000),
+                (4,'Project D','4',100,'TL',3000,7000,1,'approved',NULL,'2026-07-03','2026-07-04',NULL,NULL,NULL,NULL,NULL,NULL,NULL,'["4"]',1,7000);
             INSERT INTO payrates VALUES ('TL',3000,CURRENT_TIMESTAMP),('TS',3000,CURRENT_TIMESTAMP),('TL+TS',5000,CURRENT_TIMESTAMP);
         """)
         connection.commit()
@@ -71,7 +72,7 @@ class DashboardApiTests(unittest.TestCase):
         user = {"id": 1, "username": "Admin", "role": "admin"}
         payload = self.module.AssignmentCreate(
             manga="Project Baru", chapter="5", staff_id=100, role="TL",
-            final_rate=5000, deadline_at="2026-07-30",
+            rate_per_chapter=5000, deadline_at="2026-07-30",
         )
         result = asyncio.run(self.module.create_dashboard_assignment(payload, user))
         assignment = asyncio.run(self.module.assignments(status="claimed", search="Project Baru", user=user))[0]
@@ -117,13 +118,13 @@ class DashboardApiTests(unittest.TestCase):
         user = {"id": 1, "username": "Admin", "role": "admin"}
         created = asyncio.run(self.module.create_invoice(self.module.InvoiceCreate(staff_id=100, period="2026-07"), user))
         connection = sqlite3.connect(self.db_path)
-        connection.execute("INSERT INTO assignments VALUES (5,'Late','5',100,'TL',3000,4000,1,'approved',NULL,'2026-07-05','2026-07-06',NULL,NULL,NULL,NULL,NULL,NULL,NULL)")
+        connection.execute("INSERT INTO assignments VALUES (5,'Late','5',100,'TL',3000,4000,1,'approved',NULL,'2026-07-05','2026-07-06',NULL,NULL,NULL,NULL,NULL,NULL,NULL,'[\"5\"]',1,4000)")
         connection.commit(); connection.close()
         refreshed = asyncio.run(self.module.refresh_invoice(created["id"], user))
         self.assertEqual(refreshed["total_amount"], 11000)
         asyncio.run(self.module.pay_invoice(created["id"], user))
         connection = sqlite3.connect(self.db_path)
-        connection.execute("INSERT INTO assignments VALUES (6,'Very Late','6',100,'TL',3000,9000,1,'approved',NULL,'2026-07-07','2026-07-08',NULL,NULL,NULL,NULL,NULL,NULL,NULL)")
+        connection.execute("INSERT INTO assignments VALUES (6,'Very Late','6',100,'TL',3000,9000,1,'approved',NULL,'2026-07-07','2026-07-08',NULL,NULL,NULL,NULL,NULL,NULL,NULL,'[\"6\"]',1,9000)")
         connection.commit(); connection.close()
         correction = asyncio.run(self.module.create_correction_invoice(created["id"], user))
         detail = asyncio.run(self.module.invoice_detail(correction["id"], user))

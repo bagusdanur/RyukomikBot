@@ -125,6 +125,18 @@ const recapTotal = computed(() =>
 const submissionByTask = computed(
   () => new Map(submissions.value.map((item) => [item.assignment_id, item])),
 );
+function chapterCount(value: string) {
+  const raw = value.trim();
+  const range = raw.match(/^(\d+)\s*-\s*(\d+)$/);
+  if (range) {
+    const count = Number(range[2]) - Number(range[1]) + 1;
+    return count > 0 && count <= 5 ? count : 0;
+  }
+  const parts = raw.split(",").map((part) => part.trim()).filter(Boolean);
+  return parts.length <= 5 && new Set(parts).size === parts.length ? parts.length : 0;
+}
+const taskChapterCount = computed(() => chapterCount(task.value.chapter));
+const taskTotalRate = computed(() => task.value.final_rate * taskChapterCount.value);
 
 async function run<T>(op: () => Promise<T>, target: { value: T }) {
   loading.value = true;
@@ -177,6 +189,7 @@ async function createTask() {
     loading.value = true;
     const result = await api.createAssignment({
       ...task.value,
+      rate_per_chapter: task.value.final_rate,
       staff_id: task.value.staff_id,
       deadline_at: task.value.deadline_at || null,
     });
@@ -911,10 +924,10 @@ onMounted(async () => {
               required
               placeholder="Contoh: Let's Do It After Work" /></label
           ><label
-            >Chapter<InputText
+            >Chapter (maks. 5)<InputText
               v-model="task.chapter"
               required
-              placeholder="20" /></label
+              placeholder="1-5 atau 1,3,7,8.5" /></label
           ><label
             >Role<select v-model="task.role">
               <option>TL</option>
@@ -929,12 +942,16 @@ onMounted(async () => {
               </option>
             </select></label
           ><label
-            >Bayaran<InputNumber
+            >Bayaran per chapter<InputNumber
               v-model="task.final_rate"
               mode="currency"
               currency="IDR"
               locale="id-ID"
               :min="0" /></label
+          ><div class="wide upload-tip">
+            <i class="pi pi-calculator"></i>
+            <span>{{ taskChapterCount || 0 }} chapter × {{ money(task.final_rate) }} = <b>{{ money(taskTotalRate) }}</b></span>
+          </div
           ><label
             >Deadline<input v-model="task.deadline_at" type="date"
           /></label>
