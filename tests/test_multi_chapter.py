@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 import database
-from helpers.chapters import chapter_display, normalize_chapter, parse_chapters
+from chapter_utils import chapter_display, normalize_chapter, parse_chapters
 from raw_downloader.retry import get_json
 from views.raw_views import filter_allowed_chapters
 

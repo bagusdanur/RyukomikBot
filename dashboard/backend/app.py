@@ -25,7 +25,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from config import GUILD_ID, ROLE_ADMIN_ID, ROLE_STAFF_ID, STAFF_LOG_CHANNEL_ID, TOKEN
 import database as staff_db
 from database import DB_PATH, setup_database
-from helpers.chapters import chapter_display, parse_chapters
+from chapter_utils import chapter_display, parse_chapters
 
 ROLE_RATE_LIMITS = {"TL": 8000, "TS": 12000, "TL+TS": 15000}
 

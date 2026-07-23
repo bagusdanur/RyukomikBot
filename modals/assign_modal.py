@@ -8,7 +8,7 @@ from helpers.utils import (
     calculate_final_rate, find_or_create_staff_ticket, format_currency, get_or_fetch_member,
     is_admin, is_popular_series, normalize_role,
 )
-from helpers.chapters import chapter_display, parse_chapters
+from chapter_utils import chapter_display, parse_chapters
 from panels.claim_view import ClaimView
 from views.ticket_views import TicketSubmitView
 

@@ -9,7 +9,7 @@ import time
 import discord
 
 from helpers.utils import is_staff
-from helpers.chapters import chapters_from_assignment, normalize_chapter
+from chapter_utils import chapters_from_assignment, normalize_chapter
 from raw_downloader import get_downloader
 from raw_downloader.retry import RETRYABLE_STATUSES
 
