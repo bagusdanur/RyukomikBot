@@ -224,12 +224,14 @@ async def deactivate_method(staff_id, method_id):
         if not row:
             raise ValueError("Metode pembayaran tidak ditemukan.")
         object_key = row["qris_object_key"]
+        was_default = bool(row["is_default"])
         await connection.execute("UPDATE staff_payment_methods SET is_active=0,is_default=0,updated_at=CURRENT_TIMESTAMP WHERE id=?", (method_id,))
-        replacement = await (await connection.execute(
-            "SELECT id FROM staff_payment_methods WHERE staff_id=? AND is_active=1 ORDER BY id LIMIT 1", (staff_id,)
-        )).fetchone()
-        if replacement:
-            await connection.execute("UPDATE staff_payment_methods SET is_default=1 WHERE id=?", (replacement["id"],))
+        if was_default:
+            replacement = await (await connection.execute(
+                "SELECT id FROM staff_payment_methods WHERE staff_id=? AND is_active=1 ORDER BY id DESC LIMIT 1", (staff_id,)
+            )).fetchone()
+            if replacement:
+                await connection.execute("UPDATE staff_payment_methods SET is_default=1 WHERE id=?", (replacement["id"],))
         referenced = await (await connection.execute(
             "SELECT 1 FROM payout_requests WHERE payment_method_id=? LIMIT 1", (method_id,)
         )).fetchone()
@@ -302,6 +304,22 @@ async def create_qris_method(staff_id, provider, account_name, content, content_
             finally:
                 await connection.close()
         raise
+
+
+async def replace_qris_method(staff_id, provider, account_name, content, content_type):
+    """Create a new default QRIS and retire prior QRIS methods without altering snapshots."""
+    old_methods = [
+        item for item in await list_methods(staff_id)
+        if item["method_type"] == "qris"
+    ]
+    method_id = await create_qris_method(
+        staff_id, provider, account_name, content, content_type
+    )
+    await set_default_method(staff_id, method_id)
+    for item in old_methods:
+        if int(item["id"]) != int(method_id):
+            await deactivate_method(staff_id, int(item["id"]))
+    return method_id
 
 
 async def qris_download_url(object_key, expires=600):

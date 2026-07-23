@@ -87,27 +87,53 @@ class PaymentMethodsView(discord.ui.View):
     async def ewallet(self, interaction, _button):
         await interaction.response.send_modal(AccountMethodModal("ewallet"))
 
-    @discord.ui.button(label="Upload QRIS", style=discord.ButtonStyle.success, row=1)
+    @discord.ui.button(label="Ganti / Upload QRIS", style=discord.ButtonStyle.success, row=1)
     async def qris(self, interaction, _button):
-        await interaction.response.send_modal(QrisMethodModal())
+        try:
+            await interaction.response.send_modal(QrisMethodModal())
+        except discord.HTTPException as error:
+            logger.exception("Discord rejected QRIS modal")
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    f"Form QRIS gagal dibuka: {error}", ephemeral=True
+                )
 
 
-class QrisMethodModal(discord.ui.Modal, title="Tambah QRIS"):
-    account_name = discord.ui.TextInput(label="Nama Pemilik QRIS", min_length=2, max_length=100)
-    qris_file = discord.ui.FileUpload(custom_id="payment_qris_file", min_values=1, max_values=1, required=True)
+class QrisMethodModal(discord.ui.Modal, title="Ganti / Upload QRIS"):
+    def __init__(self):
+        super().__init__()
+        self.account_name_input = discord.ui.TextInput(
+            custom_id="payment_qris_name", min_length=2, max_length=100,
+            placeholder="Nama sesuai QRIS",
+        )
+        self.qris_file_input = discord.ui.FileUpload(
+            custom_id="payment_qris_file", min_values=1, max_values=1, required=True
+        )
+        self.add_item(discord.ui.Label(
+            text="Nama Pemilik QRIS", component=self.account_name_input
+        ))
+        self.add_item(discord.ui.Label(
+            text="Gambar QRIS",
+            description="PNG, JPG, atau WebP • maksimal 5 MB",
+            component=self.qris_file_input,
+        ))
 
     async def on_submit(self, interaction):
         if not is_staff(interaction.user):
             return await interaction.response.send_message("Hanya staff yang dapat menyimpan QRIS.", ephemeral=True)
-        attachment = self.qris_file.values[0]
+        attachment = self.qris_file_input.values[0]
         await interaction.response.defer(ephemeral=True)
         try:
             content = await attachment.read()
-            method_id = await payments.create_qris_method(
-                interaction.user.id, "QRIS", self.account_name.value,
+            method_id = await payments.replace_qris_method(
+                interaction.user.id, "QRIS", self.account_name_input.value,
                 content, attachment.content_type or "",
             )
-            await interaction.followup.send(f"QRIS berhasil disimpan secara privat (metode #{method_id}).", ephemeral=True)
+            await interaction.followup.send(
+                f"QRIS berhasil diganti dan dijadikan metode utama (metode #{method_id}). "
+                "Invoice lama tetap memakai snapshot tujuan sebelumnya.",
+                ephemeral=True,
+            )
         except (ValueError, RuntimeError, discord.HTTPException) as error:
             await interaction.followup.send(f"Upload QRIS gagal: {error}", ephemeral=True)
 

@@ -132,7 +132,11 @@ class PaymentDiscordUiTests(unittest.TestCase):
 
     def test_qris_uses_modal_file_upload(self):
         modal = QrisMethodModal()
-        uploads = [item for item in modal.children if item.__class__.__name__ == "FileUpload"]
+        uploads = [
+            item.component for item in modal.children
+            if item.__class__.__name__ == "Label"
+            and item.component.__class__.__name__ == "FileUpload"
+        ]
         self.assertEqual(len(uploads), 1)
 
 
