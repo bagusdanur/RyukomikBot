@@ -158,6 +158,35 @@ def _styles():
         textColor=TEXT,
     ))
     styles.add(ParagraphStyle(
+        name="SlipName",
+        parent=styles["BodyText"],
+        fontName="Helvetica-Bold",
+        fontSize=13,
+        leading=16,
+        textColor=TEXT,
+    ))
+    styles.add(ParagraphStyle(
+        name="SlipNameRight",
+        parent=styles["SlipName"],
+        alignment=TA_RIGHT,
+        fontSize=12,
+        leading=15,
+    ))
+    styles.add(ParagraphStyle(
+        name="SlipMutedRight",
+        parent=styles["SlipMuted"],
+        alignment=TA_RIGHT,
+    ))
+    styles.add(ParagraphStyle(
+        name="SlipAmount",
+        parent=styles["BodyText"],
+        fontName="Helvetica-Bold",
+        fontSize=18,
+        leading=22,
+        alignment=TA_RIGHT,
+        textColor=GREEN,
+    ))
+    styles.add(ParagraphStyle(
         name="SlipCenter",
         parent=styles["BodyText"],
         alignment=TA_CENTER,
@@ -226,18 +255,16 @@ def render_paid_invoice(detail, staff_name=None, admin_name=None):
         Paragraph("SLIP GAJI STAFF", styles["SlipSection"]),
         Table(
             [[
-                Paragraph(
-                    f"<font color='#68748A'>DIBAYARKAN KEPADA</font><br/>"
-                    f"<font size='13'><b>{receiver}</b></font><br/>"
-                    f"<font color='#68748A'>Discord ID: {detail.get('staff_id') or '-'}</font>",
-                    styles["SlipBody"],
-                ),
-                Paragraph(
-                    f"<font color='#68748A'>PERIODE KERJA</font><br/>"
-                    f"<font size='12'><b>{detail.get('period') or '-'}</b></font><br/>"
-                    f"<font color='#68748A'>{work_range}</font>",
-                    styles["SlipRight"],
-                ),
+                [
+                    Paragraph("DIBAYARKAN KEPADA", styles["SlipMuted"]),
+                    Paragraph(receiver, styles["SlipName"]),
+                    Paragraph(f"Discord ID: {detail.get('staff_id') or '-'}", styles["SlipMuted"]),
+                ],
+                [
+                    Paragraph("PERIODE KERJA", styles["SlipMutedRight"]),
+                    Paragraph(str(detail.get("period") or "-"), styles["SlipNameRight"]),
+                    Paragraph(work_range, styles["SlipMutedRight"]),
+                ],
             ]],
             colWidths=[89 * mm, 89 * mm],
             style=TableStyle([
@@ -309,19 +336,18 @@ def render_paid_invoice(detail, staff_name=None, admin_name=None):
 
     payment_info = Table(
         [[
-            Paragraph(
-                "<font color='#68748A'>METODE PEMBAYARAN</font><br/>"
-                f"<b>{masked_method(detail.get('method'))}</b><br/><br/>"
-                "<font color='#68748A'>TANGGAL TRANSFER</font><br/>"
-                f"<b>{processed_at}</b>",
-                styles["SlipBody"],
-            ),
-            Paragraph(
-                "<font color='#68748A'>TOTAL PEMBAYARAN</font><br/>"
-                f"<font size='18' color='#159A6C'><b>{currency(detail.get('total_amount'))}</b></font><br/>"
-                f"<font color='#68748A'>{chapter_count} chapter telah dibayar</font>",
-                styles["SlipRight"],
-            ),
+            [
+                Paragraph("METODE PEMBAYARAN", styles["SlipMuted"]),
+                Paragraph(masked_method(detail.get("method")), styles["SlipValue"]),
+                Spacer(1, 3 * mm),
+                Paragraph("TANGGAL TRANSFER", styles["SlipMuted"]),
+                Paragraph(processed_at, styles["SlipValue"]),
+            ],
+            [
+                Paragraph("TOTAL PEMBAYARAN", styles["SlipMutedRight"]),
+                Paragraph(currency(detail.get("total_amount")), styles["SlipAmount"]),
+                Paragraph(f"{chapter_count} chapter telah dibayar", styles["SlipMutedRight"]),
+            ],
         ]],
         colWidths=[89 * mm, 89 * mm],
         style=TableStyle([
