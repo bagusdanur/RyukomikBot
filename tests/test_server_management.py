@@ -7,6 +7,7 @@ from server_management import (
     _plain_name,
     build_goodbye_embed,
     build_welcome_embed,
+    build_welcome_view,
 )
 
 
@@ -45,3 +46,33 @@ def test_welcome_and_goodbye_cards_are_mobile_friendly():
     assert "Rules" in welcome.description
     assert len(welcome.fields) <= 3
     assert goodbye.title == "Sampai Jumpa"
+
+
+def test_welcome_view_links_to_existing_channels_only():
+    channels = [
+        SimpleNamespace(name="・rules", id=10),
+        SimpleNamespace(name="・ambil-role", id=11),
+        SimpleNamespace(name="・staff-rekrutmen", id=12),
+    ]
+    guild = SimpleNamespace(
+        id=99,
+        text_channels=channels,
+        get_channel=lambda channel_id: next(
+            (channel for channel in channels if channel.id == channel_id),
+            None,
+        ),
+    )
+    original = discord.TextChannel
+    try:
+        discord.TextChannel = SimpleNamespace
+        view = build_welcome_view(guild)
+    finally:
+        discord.TextChannel = original
+
+    assert view is not None
+    assert [button.label for button in view.children] == [
+        "Baca Rules",
+        "Ambil Role",
+        "Info Rekrutmen",
+    ]
+    assert view.children[0].url == "https://discord.com/channels/99/10"

@@ -19,6 +19,8 @@ log = logging.getLogger(__name__)
 
 WELCOME_NAMES = ("welcome", "selamat-datang", "welcome-goodbye")
 RULES_NAMES = ("rules", "peraturan")
+ROLE_NAMES = ("ambil-role", "roles", "pilih-role")
+RECRUITMENT_NAMES = ("staff-rekrutmen", "rekrutmen", "recruitment")
 
 
 def _plain_name(value: str) -> str:
@@ -73,6 +75,28 @@ def build_goodbye_embed(member: discord.Member) -> discord.Embed:
     embed.set_thumbnail(url=member.display_avatar.url)
     embed.set_footer(text="Terima kasih pernah menjadi bagian dari Ryukomik")
     return embed
+
+
+def build_welcome_view(guild: discord.Guild) -> discord.ui.View | None:
+    """Build channel-link buttons using the existing server layout."""
+    targets = (
+        ("Baca Rules", "📜", _find_text_channel(guild, names=RULES_NAMES)),
+        ("Ambil Role", "🎭", _find_text_channel(guild, names=ROLE_NAMES)),
+        ("Info Rekrutmen", "📨", _find_text_channel(guild, names=RECRUITMENT_NAMES)),
+    )
+    view = discord.ui.View(timeout=None)
+    for label, emoji, channel in targets:
+        if channel is None:
+            continue
+        view.add_item(
+            discord.ui.Button(
+                label=label,
+                emoji=emoji,
+                style=discord.ButtonStyle.link,
+                url=f"https://discord.com/channels/{guild.id}/{channel.id}",
+            )
+        )
+    return view if view.children else None
 
 
 def build_rules_embed() -> discord.Embed:
@@ -252,7 +276,10 @@ async def send_welcome(member: discord.Member) -> bool:
     if not channel:
         log.warning("Welcome channel not found in guild=%s", member.guild.id)
         return False
-    await channel.send(embed=build_welcome_embed(member))
+    await channel.send(
+        embed=build_welcome_embed(member),
+        view=build_welcome_view(member.guild),
+    )
     return True
 
 
