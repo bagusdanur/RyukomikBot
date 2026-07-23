@@ -272,7 +272,7 @@ async def apply_server_housekeeping(guild: discord.Guild) -> dict[str, bool]:
             if message.author.id != me.id or not message.embeds:
                 continue
             if message.embeds[0].title in {"Perlu Revisi", "Tugas Disetujui"}:
-                await message.delete(reason="Status review dipindahkan ke tiket privat staff")
+                await message.delete()
         result["review_cleanup"] = True
 
     log.info("Server housekeeping completed for guild=%s result=%s", guild.id, result)
