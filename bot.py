@@ -26,7 +26,7 @@ from helpers.utils import ROLE_PAYRATES, find_or_create_staff_ticket, is_admin, 
 from helpers.panel_content import build_admin_panel_embed, build_guide_embed, build_staff_panel_embed
 import payment_service as payments
 from views.payment_views import (
-    IncomeMenuView, PayPayoutDynamic, PayoutAdminView, RejectPayoutDynamic,
+    ConfirmPayPayoutDynamic, IncomeMenuView, PayPayoutDynamic, PayoutAdminView, RejectPayoutDynamic,
     RetryInvoiceDynamic,
 )
 import database as db
@@ -67,7 +67,10 @@ class RyukomikBot(commands.Bot):
         self.add_view(IncomeMenuView())
         self.add_view(LegacyTaskView())
         self.add_dynamic_items(SubmitDynamicItem, ApproveDynamicItem, ReviseDynamicItem)
-        self.add_dynamic_items(PayPayoutDynamic, RejectPayoutDynamic, RetryInvoiceDynamic)
+        self.add_dynamic_items(
+            PayPayoutDynamic, ConfirmPayPayoutDynamic,
+            RejectPayoutDynamic, RetryInvoiceDynamic,
+        )
         open_assignments = await get_assignments_by_status("open")
         for assignment in open_assignments:
             if assignment.get("message_id"):

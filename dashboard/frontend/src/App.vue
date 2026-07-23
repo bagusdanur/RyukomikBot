@@ -230,18 +230,13 @@ async function confirmPayout(item: Payout) {
     ? payoutDetail.value
     : await api.payout(item.id);
   const destination = detail.method.account_number || "QRIS";
-  const expectedHint = destination.slice(-4);
-  const amount = prompt(
-    `PENGAMANAN TRANSFER\nStaff: ${item.staff_name}\nNominal: ${money(item.total_amount)}\nTujuan: ${detail.method.provider} • ${destination}\n\nKetik nominal angka tanpa titik:`,
-  )?.trim();
-  if (!amount) return;
-  const last4 = prompt(
-    `Ketik 4 karakter terakhir tujuan pembayaran (${expectedHint === "QRIS" ? "QRIS" : "contoh " + expectedHint}):`,
-  )?.trim();
-  if (!last4) return;
+  if (!confirm(
+    `KONFIRMASI TRANSFER\n\nStaff: ${item.staff_name}\nInvoice: ${item.invoice_number}\nNominal: ${money(item.total_amount)}\nMetode: ${detail.method.provider}\nNama: ${detail.method.account_name}\nTujuan: ${destination}\nJumlah: ${item.chapter_count} chapter\n\nPastikan uang sudah benar-benar ditransfer. Lanjutkan?`,
+  )) return;
+  const last4 = destination === "QRIS" ? "QRIS" : destination.slice(-4);
   try {
     loading.value = true;
-    await api.payPayout(item.id, Number(amount), last4);
+    await api.payPayout(item.id, item.total_amount, last4);
     payoutDetail.value = null;
     success.value = "Transfer dikonfirmasi dan tugas terkait ditandai dibayar.";
     await loadPage();
