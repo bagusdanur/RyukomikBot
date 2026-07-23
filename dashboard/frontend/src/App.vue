@@ -10,6 +10,8 @@ import {
   api,
   type Assignment,
   type Invoice,
+  type Payout,
+  type PayoutDetail,
   type Recap,
   type Staff,
   type Submission,
@@ -17,7 +19,7 @@ import {
 } from "./api";
 
 type Page =
-  "overview" | "tasks" | "staff" | "payrates" | "deadlines" | "recap" | "audit";
+  "overview" | "tasks" | "staff" | "payrates" | "deadlines" | "recap" | "payouts" | "audit";
 const user = ref<User | null>(null),
   authChecked = ref(false),
   loading = ref(false),
@@ -37,6 +39,9 @@ const payrates = ref<
   deadlines = ref<Assignment[]>([]),
   recap = ref<Recap[]>([]),
   invoices = ref<Invoice[]>([]),
+  payouts = ref<Payout[]>([]),
+  payoutDetail = ref<PayoutDetail | null>(null),
+  payoutStatus = ref(""),
   audit = ref<Array<Record<string, string | number | null>>>([]);
 const search = ref(""),
   status = ref(""),
@@ -67,6 +72,7 @@ const navItems = computed(() => [
         { id: "staff", label: "Tim Staff", icon: "pi pi-users" },
         { id: "payrates", label: "Payrate", icon: "pi pi-wallet" },
         { id: "recap", label: "Gaji & Invoice", icon: "pi pi-receipt" },
+        { id: "payouts", label: "Permintaan Gaji", icon: "pi pi-money-bill" },
         { id: "audit", label: "Audit Log", icon: "pi pi-shield" },
       ]
     : []),
@@ -170,7 +176,61 @@ async function loadPage() {
       run(() => api.invoices(period.value), invoices),
     ]);
   }
+  if (page.value === "payouts")
+    await run(() => api.payouts(payoutStatus.value), payouts);
   if (page.value === "audit") await run(api.audit, audit);
+}
+async function openPayout(item: Payout) {
+  try {
+    loading.value = true;
+    payoutDetail.value = await api.payout(item.id);
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "Gagal membuka permintaan.";
+  } finally {
+    loading.value = false;
+  }
+}
+async function openQris(item: PayoutDetail) {
+  try {
+    const result = await api.payoutQris(item.id);
+    window.open(result.download_url, "_blank", "noopener");
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "QRIS tidak dapat dibuka.";
+  }
+}
+async function copyAccount(value: string | null) {
+  if (!value) return;
+  await window.navigator.clipboard.writeText(value);
+  success.value = "Nomor tujuan berhasil disalin.";
+}
+async function confirmPayout(item: Payout) {
+  if (!confirm(`Konfirmasi transfer ${money(item.total_amount)} untuk ${item.staff_name}?`)) return;
+  try {
+    loading.value = true;
+    await api.payPayout(item.id);
+    payoutDetail.value = null;
+    success.value = "Transfer dikonfirmasi dan tugas terkait ditandai dibayar.";
+    await loadPage();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "Konfirmasi pembayaran gagal.";
+  } finally {
+    loading.value = false;
+  }
+}
+async function rejectPayout(item: Payout) {
+  const reason = prompt("Alasan penolakan pengajuan gaji:")?.trim();
+  if (!reason) return;
+  try {
+    loading.value = true;
+    await api.rejectPayout(item.id, reason);
+    payoutDetail.value = null;
+    success.value = "Pengajuan ditolak dan tugas kembali tersedia.";
+    await loadPage();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "Penolakan gagal.";
+  } finally {
+    loading.value = false;
+  }
 }
 async function saveRate(item: { role: string; base_rate: number }) {
   try {
@@ -414,6 +474,8 @@ watch(status, () => page.value === "tasks" && loadPage());
 onMounted(async () => {
   try {
     user.value = await api.me();
+    if (new URLSearchParams(location.search).get("page") === "payouts")
+      page.value = "payouts";
     await loadPage();
   } catch {
     user.value = null;
@@ -907,7 +969,60 @@ onMounted(async () => {
               header="Target" /><Column field="target_id" header="ID"
           /></DataTable></div
       ></template>
+      <template v-if="page === 'payouts'">
+        <div class="toolbar">
+          <select v-model="payoutStatus" @change="loadPage">
+            <option value="">Semua status</option><option value="issued">Menunggu transfer</option>
+            <option value="paid">Sudah dibayar</option><option value="rejected">Ditolak</option>
+          </select>
+          <Button label="Muat ulang" icon="pi pi-refresh" @click="loadPage" />
+        </div>
+        <div class="table-card">
+          <DataTable :value="payouts" :loading="loading" paginator :rows="10" responsiveLayout="scroll">
+            <Column header="Staff"><template #body="{ data }"><div class="person">
+              <img v-if="data.staff_avatar" :src="data.staff_avatar" /><span v-else class="mini-avatar">{{ initials(data.staff_name) }}</span>
+              <span>{{ data.staff_name }}</span></div></template></Column>
+            <Column header="Jenis"><template #body="{ data }">{{ data.payout_type === "instant" ? "Langsung" : "Terjadwal" }}</template></Column>
+            <Column field="invoice_number" header="Invoice" />
+            <Column header="Jumlah"><template #body="{ data }">{{ data.chapter_count }} chapter · {{ money(data.total_amount) }}</template></Column>
+            <Column header="Status"><template #body="{ data }"><Tag
+              :value="data.status === 'issued' ? 'Menunggu transfer' : data.status === 'paid' ? 'Dibayar' : 'Ditolak'"
+              :severity="data.status === 'paid' ? 'success' : data.status === 'issued' ? 'warn' : 'danger'" /></template></Column>
+            <Column header="Aksi"><template #body="{ data }"><div class="button-row">
+              <Button label="Detail" size="small" severity="secondary" @click="openPayout(data)" />
+              <Button v-if="data.status === 'issued'" label="Sudah ditransfer" size="small" @click="confirmPayout(data)" />
+              <Button v-if="data.status === 'issued'" label="Tolak" size="small" severity="danger" @click="rejectPayout(data)" />
+            </div></template></Column>
+          </DataTable>
+        </div>
+      </template>
     </section>
+    <div v-if="payoutDetail" class="modal-backdrop" @click.self="payoutDetail = null">
+      <section class="modal-card payout-detail">
+        <div class="modal-head"><div><p class="eyebrow">PAYMENT DESTINATION</p><h3>{{ payoutDetail.staff_name }}</h3></div>
+          <button type="button" @click="payoutDetail = null">×</button></div>
+        <div class="payment-destination">
+          <span><small>Metode</small><b>{{ payoutDetail.method.method_type.toUpperCase() }} · {{ payoutDetail.method.provider }}</b></span>
+          <span><small>Nama pemilik</small><b>{{ payoutDetail.method.account_name }}</b></span>
+          <span v-if="payoutDetail.method.account_number"><small>Nomor tujuan</small><b>{{ payoutDetail.method.account_number }}</b>
+            <Button label="Salin" size="small" text @click="copyAccount(payoutDetail!.method.account_number)" /></span>
+          <Button v-if="payoutDetail.method.method_type === 'qris'" label="Buka QRIS (10 menit)" icon="pi pi-qrcode" @click="openQris(payoutDetail)" />
+        </div>
+        <div class="salary-summary payout-summary">
+          <article><small>Total transfer</small><strong>{{ money(payoutDetail.total_amount) }}</strong></article>
+          <article><small>Jumlah pekerjaan</small><strong>{{ payoutDetail.chapter_count }} chapter</strong></article>
+          <article><small>Invoice</small><strong>{{ payoutDetail.invoice_number }}</strong></article>
+        </div>
+        <div class="table-card"><DataTable :value="payoutDetail.items" scrollable scrollHeight="260px">
+          <Column field="manga" header="Judul" /><Column field="chapter" header="Chapter" /><Column field="role" header="Role" />
+          <Column header="Bayaran"><template #body="{ data }">{{ money(data.amount) }}</template></Column>
+        </DataTable></div>
+        <div v-if="payoutDetail.status === 'issued'" class="modal-actions">
+          <Button label="Tolak" severity="danger" @click="rejectPayout(payoutDetail!)" />
+          <Button label="Konfirmasi Sudah Ditransfer" icon="pi pi-check" @click="confirmPayout(payoutDetail!)" />
+        </div>
+      </section>
+    </div>
     <div v-if="showTask" class="modal-backdrop" @click.self="showTask = false">
       <form class="modal-card" @submit.prevent="createTask">
         <div class="modal-head">

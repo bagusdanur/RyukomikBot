@@ -24,6 +24,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from config import GUILD_ID, ROLE_ADMIN_ID, ROLE_STAFF_ID, STAFF_LOG_CHANNEL_ID, TOKEN
 import database as staff_db
+import payment_service as payout_service
 from database import DB_PATH, setup_database
 from chapter_utils import chapter_display, parse_chapters
 
@@ -197,6 +198,7 @@ async def setup_dashboard_tables():
 async def lifespan(_app: FastAPI):
     await setup_database()
     await setup_dashboard_tables()
+    await payout_service.setup_payment_tables()
     yield
 
 
@@ -349,6 +351,10 @@ class InvoiceCreate(BaseModel):
 
 class RevisionRequest(BaseModel):
     notes: str = Field(min_length=3, max_length=1500)
+
+
+class PayoutRejectRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
 
 
 class UploadRequest(BaseModel):
@@ -548,6 +554,23 @@ async def send_ticket_review_notice(assignment: dict, approved: bool, notes: str
     return bool(await discord_api("POST", f"/channels/{channel_id}/messages", {
         "content": f"<@{assignment['staff_id']}>",
         "embeds": [{"title": title, "description": description, "color": 5763719 if approved else 16753920, "fields": fields}],
+    }))
+
+
+async def send_payout_ticket_notice(staff_id: int, title: str, description: str, success: bool):
+    connection = await dashboard_db()
+    try:
+        row = await (await connection.execute("""SELECT ticket_channel_id FROM assignments
+            WHERE staff_id=? AND ticket_channel_id IS NOT NULL ORDER BY id DESC LIMIT 1""", (staff_id,))).fetchone()
+    finally:
+        await connection.close()
+    if DEV_BYPASS:
+        return True
+    if not row:
+        return False
+    return bool(await discord_api("POST", f"/channels/{row['ticket_channel_id']}/messages", {
+        "content": f"<@{staff_id}>",
+        "embeds": [{"title": title, "description": description, "color": 5763719 if success else 15548997}],
     }))
 
 
@@ -858,6 +881,67 @@ async def invoices(period: str | None = Query(default=None, pattern=r"^\d{4}-\d{
         return await enrich_staff(rows)
     finally:
         await connection.close()
+
+
+@app.get("/api/payouts")
+async def payout_requests(status: str | None = None, _user=Depends(admin_user)):
+    if status and status not in {"issued", "paid", "rejected", "cancelled"}:
+        raise HTTPException(status_code=422, detail="Status pencairan tidak valid.")
+    return await enrich_staff(await payout_service.list_payouts(status))
+
+
+@app.get("/api/payouts/{payout_id}")
+async def payout_request_detail(payout_id: int, _user=Depends(admin_user)):
+    detail = await payout_service.payout_detail(payout_id, include_sensitive=True)
+    if not detail:
+        raise HTTPException(status_code=404, detail="Permintaan gaji tidak ditemukan.")
+    return (await enrich_staff([detail]))[0]
+
+
+@app.get("/api/payouts/{payout_id}/qris")
+async def payout_qris(payout_id: int, _user=Depends(admin_user)):
+    detail = await payout_service.payout_detail(payout_id, include_sensitive=True)
+    object_key = detail and detail["method"].get("qris_object_key")
+    if not object_key:
+        raise HTTPException(status_code=404, detail="QRIS tidak tersedia.")
+    try:
+        url = await payout_service.qris_download_url(object_key, 600)
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error))
+    return {"download_url": url, "expires_in": 600}
+
+
+@app.post("/api/payouts/{payout_id}/pay")
+async def pay_payout_request(payout_id: int, user=Depends(admin_user)):
+    before = await payout_service.payout_detail(payout_id)
+    if not before:
+        raise HTTPException(status_code=404, detail="Permintaan gaji tidak ditemukan.")
+    try:
+        payout = await payout_service.pay_payout(payout_id, int(user["id"]))
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error))
+    await audit(user["id"], "payout.pay", "payout", payout_id, {"status": before["status"]}, {"status": "paid"})
+    await send_payout_ticket_notice(
+        int(payout["staff_id"]), "Gaji Sudah Ditransfer",
+        f"Pembayaran sebesar **Rp {payout['total_amount']:,.0f}** sudah dikonfirmasi administrator.".replace(",", "."),
+        True,
+    )
+    return {"ok": True}
+
+
+@app.post("/api/payouts/{payout_id}/reject")
+async def reject_payout_request(payout_id: int, payload: PayoutRejectRequest, user=Depends(admin_user)):
+    before = await payout_service.payout_detail(payout_id)
+    if not before:
+        raise HTTPException(status_code=404, detail="Permintaan gaji tidak ditemukan.")
+    try:
+        payout = await payout_service.reject_payout(payout_id, int(user["id"]), payload.reason)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error))
+    await audit(user["id"], "payout.reject", "payout", payout_id, {"status": before["status"]},
+                {"status": "rejected", "reason": payload.reason})
+    await send_payout_ticket_notice(int(payout["staff_id"]), "Pengajuan Gaji Ditolak", payload.reason, False)
+    return {"ok": True}
 
 
 @app.get("/api/invoices/{invoice_id}")

@@ -83,6 +83,32 @@ export type Submission = {
   chapter: string;
   role: string;
 };
+export type Payout = {
+  id: number;
+  staff_id: string;
+  staff_name: string;
+  staff_avatar: string | null;
+  payout_type: "scheduled" | "instant";
+  cycle_key: string | null;
+  invoice_id: number;
+  invoice_number: string;
+  chapter_count: number;
+  total_amount: number;
+  status: string;
+  requested_at: string;
+  processed_at: string | null;
+  rejection_reason: string | null;
+};
+export type PayoutDetail = Payout & {
+  method: {
+    method_type: "bank" | "ewallet" | "qris";
+    provider: string;
+    account_name: string;
+    account_number: string | null;
+    qris_object_key: string | null;
+  };
+  items: InvoiceDetail["items"];
+};
 
 let csrfToken = "";
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -160,6 +186,14 @@ const liveApi = {
     request(`/api/invoices/${id}/refresh`, { method: "POST" }),
   correctionInvoice: (id: number) =>
     request(`/api/invoices/${id}/correction`, { method: "POST" }),
+  payouts: (status = "") =>
+    request<Payout[]>(`/api/payouts${status ? `?status=${encodeURIComponent(status)}` : ""}`),
+  payout: (id: number) => request<PayoutDetail>(`/api/payouts/${id}`),
+  payoutQris: (id: number) =>
+    request<{ download_url: string; expires_in: number }>(`/api/payouts/${id}/qris`),
+  payPayout: (id: number) => request(`/api/payouts/${id}/pay`, { method: "POST" }),
+  rejectPayout: (id: number, reason: string) =>
+    request(`/api/payouts/${id}/reject`, { method: "POST", body: JSON.stringify({ reason }) }),
   submissions: (assignmentId?: number) =>
     request<Submission[]>(
       `/api/submissions${assignmentId ? `?assignment_id=${assignmentId}` : ""}`,
@@ -354,6 +388,19 @@ const demoApi = {
   deleteInvoice: async () => ({ ok: true }),
   refreshInvoice: async () => ({ ok: true }),
   correctionInvoice: async () => ({ id: 2 }),
+  payouts: async () => [] as Payout[],
+  payout: async (id: number) => ({
+    id, staff_id: "1001", staff_name: "Aira", staff_avatar: null,
+    payout_type: "instant" as const, cycle_key: null, invoice_id: 1,
+    invoice_number: "RYU-DEMO", chapter_count: 2, total_amount: 18000,
+    status: "issued", requested_at: "2026-07-23", processed_at: null,
+    rejection_reason: null,
+    method: { method_type: "bank" as const, provider: "BCA", account_name: "Aira", account_number: "1234567890", qris_object_key: null },
+    items: [],
+  }),
+  payoutQris: async () => ({ download_url: "#", expires_in: 600 }),
+  payPayout: async () => ({ ok: true }),
+  rejectPayout: async () => ({ ok: true }),
   submissions: async () => [],
   downloadSubmission: async () => ({ download_url: "#" }),
   audit: async () => [

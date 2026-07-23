@@ -50,3 +50,5 @@
   .recap-toolbar{align-items:stretch;flex-direction:column}.recap-toolbar .p-button{width:100%}
   .login-page{padding:14px}.login-card{padding:34px 18px;border-radius:22px}.brand-mark{width:62px;height:62px;font-size:32px}.discord-login{min-height:48px;align-items:center}
 }
+.payout-detail{width:min(820px,100%)}.payment-destination{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:18px}.payment-destination>span{padding:15px;border:1px solid var(--line);border-radius:13px;background:#0c111a}.payment-destination small,.payment-destination b{display:block}.payment-destination small{margin-bottom:6px;color:var(--muted)}.payment-destination .p-button{margin-top:6px}.payout-summary{margin-top:12px}
+@media(max-width:580px){.payment-destination{grid-template-columns:1fr}.payout-detail .table-card .p-datatable{min-width:620px}}

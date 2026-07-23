@@ -1,5 +1,5 @@
 ﻿import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import asyncio
 import os
 import time
@@ -23,6 +23,8 @@ from recruitment.ticket import setup_recruitment, RecruitmentView
 from raw_downloader import get_downloader
 from helpers.utils import ROLE_PAYRATES, find_or_create_staff_ticket, is_admin, is_staff
 from helpers.panel_content import build_admin_panel_embed, build_guide_embed, build_staff_panel_embed
+import payment_service as payments
+from views.payment_views import PayPayoutDynamic, PayoutAdminView, RejectPayoutDynamic
 import database as db
 
 
@@ -52,6 +54,7 @@ class RyukomikBot(commands.Bot):
         """Called when the bot is starting up."""
         # Setup database
         await setup_database()
+        await payments.setup_payment_tables()
         
         # Add persistent views
         self.recruitment.register_persistent_views()
@@ -59,11 +62,14 @@ class RyukomikBot(commands.Bot):
         self.add_view(StaffPanelView())
         self.add_view(LegacyTaskView())
         self.add_dynamic_items(SubmitDynamicItem, ApproveDynamicItem, ReviseDynamicItem)
+        self.add_dynamic_items(PayPayoutDynamic, RejectPayoutDynamic)
         open_assignments = await get_assignments_by_status("open")
         for assignment in open_assignments:
             if assignment.get("message_id"):
                 self.add_view(ClaimView(assignment["id"]), message_id=assignment["message_id"])
         
+        if not scheduled_payout_loop.is_running():
+            scheduled_payout_loop.start()
         print("[OK] Bot setup complete!")
     
     async def on_ready(self):
@@ -96,6 +102,48 @@ class RyukomikBot(commands.Bot):
 
 # Create bot instance
 bot = RyukomikBot()
+
+
+@tasks.loop(hours=1)
+async def scheduled_payout_loop():
+    """Create idempotent 4/19 payout batches and notify private/admin channels."""
+    created = await payments.create_due_scheduled_payouts()
+    guild = bot.get_guild(GUILD_ID)
+    if not guild:
+        return
+    admin_channel = guild.get_channel(STAFF_LOG_CHANNEL_ID)
+    for item in created:
+        staff_id = int(item.get("staff_id") or 0)
+        if item.get("missing_method"):
+            from helpers.utils import find_ticket
+            ticket = await find_ticket(guild, staff_id)
+            if ticket:
+                member = guild.get_member(staff_id)
+                await ticket.send(
+                    content=member.mention if member else None,
+                    embed=discord.Embed(
+                        title="Lengkapi Metode Pembayaran",
+                        description=f"Siklus gaji **{item['cycle_key']}** belum dapat dibuat karena tujuan transfer belum tersedia.",
+                        color=discord.Color.orange(),
+                    ),
+                )
+            continue
+        detail = await payments.payout_detail(item["id"])
+        if admin_channel and detail:
+            member = guild.get_member(int(detail["staff_id"]))
+            embed = discord.Embed(
+                title=f"Gajian Terjadwal #{detail['id']}",
+                description=f"Siklus **{detail['cycle_key']}** untuk {member.mention if member else detail['staff_id']}.",
+                color=discord.Color.gold(),
+            )
+            embed.add_field(name="Total", value=f"Rp {detail['total_amount']:,.0f}".replace(",", "."), inline=True)
+            embed.add_field(name="Chapter", value=str(detail["chapter_count"]), inline=True)
+            await admin_channel.send(embed=embed, view=PayoutAdminView(detail["id"]))
+
+
+@scheduled_payout_loop.before_loop
+async def before_scheduled_payout_loop():
+    await bot.wait_until_ready()
 
 
 # ==================== SLASH COMMANDS ====================
