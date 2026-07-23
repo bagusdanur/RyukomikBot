@@ -504,13 +504,32 @@ const safeHtml = (value: unknown) =>
         "'": "&#039;",
       })[char]!,
   );
+const storedUtcDate = (value: string) => {
+  let normalized = value.trim().replace(" ", "T");
+  if (!normalized.includes("T")) normalized += "T00:00:00";
+  if (!/(Z|[+-]\d{2}:\d{2})$/i.test(normalized)) normalized += "Z";
+  return new Date(normalized);
+};
 const invoiceDate = (value: string | null) =>
   value
-    ? new Date(value).toLocaleDateString("id-ID", {
+    ? storedUtcDate(value).toLocaleDateString("id-ID", {
         day: "2-digit",
         month: "long",
         year: "numeric",
+        timeZone: "Asia/Jakarta",
       })
+    : "—";
+const invoiceDateTime = (value: string | null) =>
+  value
+    ? `${storedUtcDate(value).toLocaleString("id-ID", {
+        day: "2-digit",
+        month: "long",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+        timeZone: "Asia/Jakarta",
+      })} WIB`
     : "—";
 async function printInvoice(item: Invoice) {
   const w = window.open("", "_blank", "width=900,height=900");
@@ -528,7 +547,7 @@ async function printInvoice(item: Invoice) {
       .join("");
     w.document.open();
     w.document.write(
-      `<html><head><title>${safeHtml(detail.invoice_number)}</title><style>@page{size:A4;margin:16mm}*{box-sizing:border-box}body{font:13px Arial,sans-serif;margin:0;color:#162033}.sheet{max-width:900px;margin:auto;padding:34px}.top{display:flex;justify-content:space-between;gap:24px;border-bottom:3px solid #6574f7;padding-bottom:22px}.brand h1{margin:0;font-size:29px;letter-spacing:1px}.brand small,.muted{color:#68748a}.number{text-align:right}.number strong{display:block;font-size:15px;margin-bottom:7px}.status{display:inline-block;padding:6px 10px;border-radius:20px;background:${detail.status === "paid" ? "#daf7e9" : "#fff1cf"};color:${detail.status === "paid" ? "#087443" : "#8a5b00"};font-weight:700}.info{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:28px 0}.card{padding:17px;border:1px solid #dde2eb;border-radius:10px}.card p{margin:7px 0}.card h3{margin:0 0 10px;font-size:12px;text-transform:uppercase;color:#68748a}table{width:100%;border-collapse:collapse;margin-top:12px}th{background:#f1f3f8;text-align:left;padding:11px 9px;font-size:11px;text-transform:uppercase;color:#5d687d}td{padding:12px 9px;border-bottom:1px solid #e4e8ef;vertical-align:top}td small{display:block;color:#8892a4;margin-top:4px}.money{text-align:right;white-space:nowrap}.summary{margin:24px 0 0 auto;width:310px}.summary div{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #e3e7ee}.summary .total{font-size:19px;font-weight:800;border-bottom:3px double #6574f7}.footer{margin-top:45px;padding-top:18px;border-top:1px solid #dde2eb;display:flex;justify-content:space-between;color:#778196;font-size:11px}@media print{.sheet{padding:0}}</style></head><body><main class="sheet"><header class="top"><div class="brand"><h1>RYUKOMIK</h1><small>Staff Payment Invoice · Scanlation Operations</small></div><div class="number"><strong>${safeHtml(detail.invoice_number)}</strong><span class="status">${detail.status === "paid" ? "LUNAS" : "MENUNGGU PEMBAYARAN"}</span></div></header><section class="info"><div class="card"><h3>Penerima</h3><p><b>${safeHtml(detail.staff_name)}</b></p><p class="muted">Discord ID ${detail.staff_id}</p></div><div class="card"><h3>Informasi Periode</h3><p>Periode: <b>${safeHtml(detail.period)}</b></p><p>Rentang kerja: <b>${invoiceDate(detail.work_started_at)} – ${invoiceDate(detail.work_ended_at)}</b></p><p>Diterbitkan: ${invoiceDate(detail.issued_at)}</p><p>Dibayar: ${invoiceDate(detail.paid_at)}</p></div></section><h3>Rincian Pekerjaan</h3><table><thead><tr><th>No.</th><th>Judul / Task</th><th>Chapter</th><th>Role</th><th>Disetujui</th><th class="money">Bayaran</th></tr></thead><tbody>${rows || '<tr><td colspan="6">Rincian tugas tidak tersedia.</td></tr>'}</tbody></table><section class="summary"><div><span>Jumlah pekerjaan</span><b>${detail.chapter_count} chapter</b></div><div class="total"><span>Total gaji</span><span>${money(detail.total_amount)}</span></div></section><footer class="footer"><span>Dokumen dibuat otomatis oleh Ryukomik Staff Management.</span><span>${safeHtml(detail.invoice_number)}</span></footer></main><script>window.onload=()=>window.print()<\/script></body></html>`,
+      `<html><head><title>${safeHtml(detail.invoice_number)}</title><style>@page{size:A4;margin:16mm}*{box-sizing:border-box}body{font:13px Arial,sans-serif;margin:0;color:#162033}.sheet{max-width:900px;margin:auto;padding:34px}.top{display:flex;justify-content:space-between;gap:24px;border-bottom:3px solid #6574f7;padding-bottom:22px}.brand h1{margin:0;font-size:29px;letter-spacing:1px}.brand small,.muted{color:#68748a}.number{text-align:right}.number strong{display:block;font-size:15px;margin-bottom:7px}.status{display:inline-block;padding:6px 10px;border-radius:20px;background:${detail.status === "paid" ? "#daf7e9" : "#fff1cf"};color:${detail.status === "paid" ? "#087443" : "#8a5b00"};font-weight:700}.info{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:28px 0}.card{padding:17px;border:1px solid #dde2eb;border-radius:10px}.card p{margin:7px 0}.card h3{margin:0 0 10px;font-size:12px;text-transform:uppercase;color:#68748a}table{width:100%;border-collapse:collapse;margin-top:12px}th{background:#f1f3f8;text-align:left;padding:11px 9px;font-size:11px;text-transform:uppercase;color:#5d687d}td{padding:12px 9px;border-bottom:1px solid #e4e8ef;vertical-align:top}td small{display:block;color:#8892a4;margin-top:4px}.money{text-align:right;white-space:nowrap}.summary{margin:24px 0 0 auto;width:310px}.summary div{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #e3e7ee}.summary .total{font-size:19px;font-weight:800;border-bottom:3px double #6574f7}.footer{margin-top:45px;padding-top:18px;border-top:1px solid #dde2eb;display:flex;justify-content:space-between;color:#778196;font-size:11px}@media print{.sheet{padding:0}}</style></head><body><main class="sheet"><header class="top"><div class="brand"><h1>RYUKOMIK</h1><small>Staff Payment Invoice · Scanlation Operations</small></div><div class="number"><strong>${safeHtml(detail.invoice_number)}</strong><span class="status">${detail.status === "paid" ? "LUNAS" : "MENUNGGU PEMBAYARAN"}</span></div></header><section class="info"><div class="card"><h3>Penerima</h3><p><b>${safeHtml(detail.staff_name)}</b></p><p class="muted">Discord ID ${detail.staff_id}</p></div><div class="card"><h3>Informasi Periode</h3><p>Periode: <b>${safeHtml(detail.period)}</b></p><p>Rentang kerja: <b>${invoiceDate(detail.work_started_at)} – ${invoiceDate(detail.work_ended_at)}</b></p><p>Diterbitkan: ${invoiceDate(detail.issued_at)}</p><p>Dibayar: ${invoiceDateTime(detail.paid_at)}</p></div></section><h3>Rincian Pekerjaan</h3><table><thead><tr><th>No.</th><th>Judul / Task</th><th>Chapter</th><th>Role</th><th>Disetujui</th><th class="money">Bayaran</th></tr></thead><tbody>${rows || '<tr><td colspan="6">Rincian tugas tidak tersedia.</td></tr>'}</tbody></table><section class="summary"><div><span>Jumlah pekerjaan</span><b>${detail.chapter_count} chapter</b></div><div class="total"><span>Total gaji</span><span>${money(detail.total_amount)}</span></div></section><footer class="footer"><span>Dokumen dibuat otomatis oleh Ryukomik Staff Management.</span><span>${safeHtml(detail.invoice_number)}</span></footer></main><script>window.onload=()=>window.print()<\/script></body></html>`,
     );
     w.document.close();
   } catch (e) {

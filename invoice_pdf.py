@@ -1,6 +1,8 @@
 """Generate a professional paid salary slip for Discord and the dashboard."""
 
 from io import BytesIO
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
@@ -45,10 +47,31 @@ def masked_method(method):
     return f"{method.get('provider') or '-'} - ****{number[-4:] if number else '----'}"
 
 
+INDONESIAN_MONTHS = (
+    "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+    "Juli", "Agustus", "September", "Oktober", "November", "Desember",
+)
+
+
 def clean_date(value):
+    """Convert SQLite's naive UTC timestamp into an explicit Jakarta time."""
     if not value:
         return "-"
-    return str(value).replace("T", " ")[:19]
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        raw = str(value).strip().replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(raw)
+        except ValueError:
+            return str(value)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    jakarta = parsed.astimezone(ZoneInfo("Asia/Jakarta"))
+    return (
+        f"{jakarta.day:02d} {INDONESIAN_MONTHS[jakarta.month - 1]} "
+        f"{jakarta.year}, {jakarta:%H:%M} WIB"
+    )
 
 
 class SalarySlipHeader(Flowable):

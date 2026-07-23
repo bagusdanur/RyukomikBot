@@ -1,4 +1,4 @@
-from invoice_pdf import masked_method, render_paid_invoice
+from invoice_pdf import clean_date, masked_method, render_paid_invoice
 
 
 def sample_detail(item_count=2):
@@ -48,3 +48,7 @@ def test_salary_slip_handles_multi_page_work_table():
 
 def test_payment_destination_remains_masked():
     assert masked_method(sample_detail()["method"]) == "BCA - ****7890"
+
+
+def test_sqlite_utc_timestamp_is_rendered_as_jakarta_time():
+    assert clean_date("2026-07-23 17:48:56") == "24 Juli 2026, 00:48 WIB"
