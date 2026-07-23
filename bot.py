@@ -24,7 +24,10 @@ from raw_downloader import get_downloader
 from helpers.utils import ROLE_PAYRATES, find_or_create_staff_ticket, is_admin, is_staff
 from helpers.panel_content import build_admin_panel_embed, build_guide_embed, build_staff_panel_embed
 import payment_service as payments
-from views.payment_views import PayPayoutDynamic, PayoutAdminView, RejectPayoutDynamic
+from views.payment_views import (
+    IncomeMenuView, PayPayoutDynamic, PayoutAdminView, RejectPayoutDynamic,
+    RetryInvoiceDynamic,
+)
 import database as db
 
 
@@ -60,9 +63,10 @@ class RyukomikBot(commands.Bot):
         self.recruitment.register_persistent_views()
         self.add_view(AdminPanelView())
         self.add_view(StaffPanelView())
+        self.add_view(IncomeMenuView())
         self.add_view(LegacyTaskView())
         self.add_dynamic_items(SubmitDynamicItem, ApproveDynamicItem, ReviseDynamicItem)
-        self.add_dynamic_items(PayPayoutDynamic, RejectPayoutDynamic)
+        self.add_dynamic_items(PayPayoutDynamic, RejectPayoutDynamic, RetryInvoiceDynamic)
         open_assignments = await get_assignments_by_status("open")
         for assignment in open_assignments:
             if assignment.get("message_id"):
@@ -127,7 +131,6 @@ async def scheduled_payout_loop():
                         color=discord.Color.orange(),
                     ),
                 )
-            continue
         detail = await payments.payout_detail(item["id"])
         if admin_channel and detail:
             member = guild.get_member(int(detail["staff_id"]))
@@ -138,7 +141,9 @@ async def scheduled_payout_loop():
             )
             embed.add_field(name="Total", value=f"Rp {detail['total_amount']:,.0f}".replace(",", "."), inline=True)
             embed.add_field(name="Chapter", value=str(detail["chapter_count"]), inline=True)
-            await admin_channel.send(embed=embed, view=PayoutAdminView(detail["id"]))
+            if detail["status"] == "awaiting_method":
+                embed.add_field(name="Status", value="Menunggu metode pembayaran staff", inline=False)
+            await admin_channel.send(embed=embed, view=PayoutAdminView(detail["id"], detail["status"]))
 
 
 @scheduled_payout_loop.before_loop

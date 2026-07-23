@@ -1,4 +1,4 @@
-import asyncio
+from io import BytesIO
 import logging
 
 import discord
@@ -6,6 +6,7 @@ import discord
 import payment_service as payments
 from config import DASHBOARD_URL, STAFF_LOG_CHANNEL_ID
 from helpers.utils import format_currency, is_admin, is_staff
+from invoice_pdf import render_paid_invoice
 
 logger = logging.getLogger(__name__)
 
@@ -88,32 +89,83 @@ class PaymentMethodsView(discord.ui.View):
 
     @discord.ui.button(label="Upload QRIS", style=discord.ButtonStyle.success, row=1)
     async def qris(self, interaction, _button):
-        await interaction.response.send_message(
-            "Kirim **satu gambar QRIS** (PNG/JPG/WebP, maksimal 5 MB) ke tiket ini dalam 2 menit. "
-            "Pesan gambarnya akan dihapus setelah tersimpan privat di R2.",
-            ephemeral=True,
-        )
-        try:
-            message = await interaction.client.wait_for(
-                "message", timeout=120,
-                check=lambda item: item.author.id == interaction.user.id and item.channel.id == interaction.channel.id and len(item.attachments) == 1,
-            )
-        except asyncio.TimeoutError:
-            return await interaction.followup.send("Waktu upload QRIS habis. Tekan tombol Upload QRIS untuk mencoba lagi.", ephemeral=True)
-        attachment = message.attachments[0]
+        await interaction.response.send_modal(QrisMethodModal())
+
+
+class QrisMethodModal(discord.ui.Modal, title="Tambah QRIS"):
+    account_name = discord.ui.TextInput(label="Nama Pemilik QRIS", min_length=2, max_length=100)
+    qris_file = discord.ui.FileUpload(custom_id="payment_qris_file", min_values=1, max_values=1, required=True)
+
+    async def on_submit(self, interaction):
+        if not is_staff(interaction.user):
+            return await interaction.response.send_message("Hanya staff yang dapat menyimpan QRIS.", ephemeral=True)
+        attachment = self.qris_file.values[0]
+        await interaction.response.defer(ephemeral=True)
         try:
             content = await attachment.read()
             method_id = await payments.create_qris_method(
-                interaction.user.id, "QRIS", interaction.user.display_name,
+                interaction.user.id, "QRIS", self.account_name.value,
                 content, attachment.content_type or "",
             )
-            try:
-                await message.delete()
-            except discord.HTTPException:
-                pass
             await interaction.followup.send(f"QRIS berhasil disimpan secara privat (metode #{method_id}).", ephemeral=True)
         except (ValueError, RuntimeError, discord.HTTPException) as error:
             await interaction.followup.send(f"Upload QRIS gagal: {error}", ephemeral=True)
+
+
+async def show_payment_methods(interaction):
+    methods = await payments.list_methods(interaction.user.id)
+    description = "Belum ada metode pembayaran." if not methods else "\n".join(
+        f"**#{item['id']}** {item['provider']} • {item['account_name']} • "
+        f"{'QRIS' if item['method_type'] == 'qris' else item['masked_account']}"
+        f"{' • Utama' if item['is_default'] else ''}"
+        for item in methods
+    )
+    await interaction.response.send_message(
+        embed=discord.Embed(title="Metode Pembayaran Saya", description=description, color=discord.Color.blue()),
+        view=PaymentMethodsView(methods), ephemeral=True,
+    )
+
+
+async def show_payout_request(interaction):
+    methods = await payments.list_methods(interaction.user.id)
+    if not methods:
+        return await interaction.response.send_message(
+            "Atur rekening bank, e-wallet, atau QRIS terlebih dahulu.", ephemeral=True
+        )
+    await interaction.response.send_message(
+        embed=discord.Embed(
+            title="Ambil Gaji Sekarang",
+            description="Pilih tujuan transfer. Hanya saldo approved yang belum ditagihkan yang akan dimasukkan.",
+            color=discord.Color.gold(),
+        ),
+        view=PayoutMethodView(methods), ephemeral=True,
+    )
+
+
+class IncomeMenuView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Atur Metode", style=discord.ButtonStyle.secondary, custom_id="income:methods:v1")
+    async def methods(self, interaction, _button):
+        await show_payment_methods(interaction)
+
+    @discord.ui.button(label="Ambil Gaji Sekarang", style=discord.ButtonStyle.success, custom_id="income:request:v1")
+    async def request(self, interaction, _button):
+        await show_payout_request(interaction)
+
+    @discord.ui.button(label="Riwayat Pembayaran", style=discord.ButtonStyle.primary, custom_id="income:history:v1")
+    async def history(self, interaction, _button):
+        rows = await payments.list_staff_payouts(interaction.user.id)
+        description = "Belum ada riwayat pembayaran." if not rows else "\n".join(
+            f"**{item['invoice_number']}** • {format_currency(item['total_amount'])} • "
+            f"{'Menunggu rekening' if item['status'] == 'awaiting_method' else item['status']}"
+            for item in rows
+        )
+        await interaction.response.send_message(
+            embed=discord.Embed(title="Riwayat Gaji", description=description, color=discord.Color.blue()),
+            ephemeral=True,
+        )
 
 
 class PayoutMethodSelect(discord.ui.Select):
@@ -203,6 +255,45 @@ async def notify_staff_ticket(interaction, staff_id, title, description, color):
         await channel.send(content=member.mention if member else None, embed=discord.Embed(title=title, description=description, color=color))
 
 
+async def send_paid_invoice_to_ticket(interaction, payout_id):
+    detail = await payments.payout_detail(payout_id, include_sensitive=True)
+    if not detail:
+        return False, "Data invoice tidak ditemukan."
+    if not interaction.guild:
+        return False, "Guild tidak tersedia."
+    from helpers.utils import find_ticket
+    channel = await find_ticket(interaction.guild, int(detail["staff_id"]))
+    if not channel:
+        error = "Tiket privat staff tidak ditemukan."
+        await payments.record_invoice_delivery(payout_id, error=error)
+        return False, error
+    staff = interaction.guild.get_member(int(detail["staff_id"]))
+    admin_name = getattr(interaction.user, "display_name", str(interaction.user))
+    try:
+        pdf = render_paid_invoice(
+            detail, staff_name=staff.display_name if staff else None, admin_name=admin_name
+        )
+        embed = discord.Embed(
+            title="Invoice Gaji Lunas",
+            description=f"Pembayaran **{format_currency(detail['total_amount'])}** telah ditransfer.",
+            color=discord.Color.green(),
+        )
+        embed.add_field(name="Invoice", value=detail["invoice_number"], inline=False)
+        embed.add_field(name="Periode", value=detail["period"], inline=True)
+        embed.add_field(name="Chapter", value=str(detail["chapter_count"]), inline=True)
+        message = await channel.send(
+            content=staff.mention if staff else None, embed=embed,
+            file=discord.File(BytesIO(pdf), filename=f"{detail['invoice_number']}.pdf"),
+        )
+        await payments.record_invoice_delivery(payout_id, message_id=message.id)
+        return True, None
+    except Exception as error:
+        logger.exception("Failed to send paid invoice %s", payout_id)
+        message = str(error)[:500]
+        await payments.record_invoice_delivery(payout_id, error=message)
+        return False, message
+
+
 class PayPayoutDynamic(discord.ui.DynamicItem[discord.ui.Button], template=r"payout:pay:(?P<payout_id>\d+):v1"):
     def __init__(self, payout_id):
         self.payout_id = payout_id
@@ -216,8 +307,16 @@ class PayPayoutDynamic(discord.ui.DynamicItem[discord.ui.Button], template=r"pay
             payout = await payments.pay_payout(self.payout_id, interaction.user.id)
         except ValueError as error:
             return await interaction.response.send_message(str(error), ephemeral=True)
-        await interaction.response.edit_message(embed=discord.Embed(title="Pembayaran Selesai", description="Transfer sudah dikonfirmasi.", color=discord.Color.green()), view=None)
-        await notify_staff_ticket(interaction, payout["staff_id"], "Gaji Sudah Ditransfer", f"Pembayaran **{format_currency(payout['total_amount'])}** sudah dikonfirmasi administrator.", discord.Color.green())
+        sent, error = await send_paid_invoice_to_ticket(interaction, self.payout_id)
+        description = "Transfer dikonfirmasi dan invoice PDF dikirim ke tiket staff."
+        view = None
+        if not sent:
+            description = f"Transfer berhasil, tetapi invoice gagal dikirim: {error}"
+            view = InvoiceRetryView(self.payout_id)
+        await interaction.response.edit_message(
+            embed=discord.Embed(title="Pembayaran Selesai", description=description, color=discord.Color.green()),
+            view=view,
+        )
 
 
 class RejectPayoutDynamic(discord.ui.DynamicItem[discord.ui.Button], template=r"payout:reject:(?P<payout_id>\d+):v1"):
@@ -232,9 +331,36 @@ class RejectPayoutDynamic(discord.ui.DynamicItem[discord.ui.Button], template=r"
         await interaction.response.send_modal(RejectPayoutModal(self.payout_id))
 
 
-class PayoutAdminView(discord.ui.View):
+class RetryInvoiceDynamic(discord.ui.DynamicItem[discord.ui.Button], template=r"payout:invoice-retry:(?P<payout_id>\d+):v1"):
+    def __init__(self, payout_id):
+        self.payout_id = payout_id
+        super().__init__(discord.ui.Button(
+            label="Kirim Ulang Invoice", style=discord.ButtonStyle.primary,
+            custom_id=f"payout:invoice-retry:{payout_id}:v1",
+        ))
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match): return cls(int(match["payout_id"]))
+    async def callback(self, interaction):
+        if not is_admin(interaction.user):
+            return await interaction.response.send_message("Hanya administrator.", ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+        sent, error = await send_paid_invoice_to_ticket(interaction, self.payout_id)
+        await interaction.followup.send(
+            "Invoice berhasil dikirim ulang." if sent else f"Invoice masih gagal dikirim: {error}",
+            ephemeral=True,
+        )
+
+
+class InvoiceRetryView(discord.ui.View):
     def __init__(self, payout_id):
         super().__init__(timeout=None)
-        self.add_item(PayPayoutDynamic(payout_id))
-        self.add_item(RejectPayoutDynamic(payout_id))
+        self.add_item(RetryInvoiceDynamic(payout_id))
+
+
+class PayoutAdminView(discord.ui.View):
+    def __init__(self, payout_id, status="issued"):
+        super().__init__(timeout=None)
+        if status == "issued":
+            self.add_item(PayPayoutDynamic(payout_id))
+            self.add_item(RejectPayoutDynamic(payout_id))
         self.add_item(discord.ui.Button(label="Buka Dashboard", style=discord.ButtonStyle.link, url=f"{DASHBOARD_URL}/?page=payouts&id={payout_id}"))

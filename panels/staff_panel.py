@@ -7,7 +7,7 @@ from views.select_views import StaffTaskView, SubmitSelectView
 from views.raw_views import RawAssignmentView
 from views.support_views import TaskSupportView
 import payment_service as payments
-from views.payment_views import PaymentMethodsView, PayoutMethodView
+from views.payment_views import IncomeMenuView
 
 
 class StaffPanelView(discord.ui.View):
@@ -69,7 +69,7 @@ class StaffPanelView(discord.ui.View):
         )
         await interaction.followup.send(embed=embed, view=SubmitSelectView(available[:25]))
 
-    @discord.ui.button(label="Penghasilan", style=discord.ButtonStyle.secondary, custom_id="staff_income")
+    @discord.ui.button(label="Penghasilan & Gaji", style=discord.ButtonStyle.secondary, custom_id="staff_income")
     async def income_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=False)
         period = get_current_period()
@@ -85,13 +85,26 @@ class StaffPanelView(discord.ui.View):
         embed.add_field(name="Menunggu", value=str(stats["pending"]), inline=True)
         methods = await payments.list_methods(interaction.user.id)
         default = next((item for item in methods if item["is_default"]), None)
+        payouts = await payments.list_staff_payouts(interaction.user.id)
+        active_invoice = next(
+            (item for item in payouts if item["status"] in ("awaiting_method", "issued")), None
+        )
         embed.add_field(
             name="Tujuan Pembayaran",
             value=(f"{default['provider']} • {default['masked_account'] if default['method_type'] != 'qris' else 'QRIS'}" if default else "Belum diatur"),
             inline=False,
         )
+        embed.add_field(
+            name="Invoice Aktif",
+            value=(
+                f"{active_invoice['invoice_number']} • "
+                f"{'Menunggu metode pembayaran' if active_invoice['status'] == 'awaiting_method' else 'Menunggu transfer'}"
+                if active_invoice else "Tidak ada invoice aktif"
+            ),
+            inline=False,
+        )
         embed.set_footer(text="Jadwal gajian: tanggal 4 dan 19 • Pencairan langsung memerlukan konfirmasi admin.")
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed, view=IncomeMenuView())
 
     @discord.ui.button(label="Download RAW", style=discord.ButtonStyle.primary, custom_id="staff_raw_download", row=1)
     async def raw_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -124,43 +137,6 @@ class StaffPanelView(discord.ui.View):
     @discord.ui.button(label="Panduan", style=discord.ButtonStyle.secondary, custom_id="staff_guide", row=1)
     async def guide_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(embed=build_guide_embed("staff"), ephemeral=False)
-
-    @discord.ui.button(label="Metode Pembayaran", style=discord.ButtonStyle.secondary, custom_id="staff_payment_methods", row=2)
-    async def payment_methods_button(self, interaction: discord.Interaction, _button: discord.ui.Button):
-        try:
-            methods = await payments.list_methods(interaction.user.id)
-        except RuntimeError as error:
-            return await interaction.response.send_message(str(error), ephemeral=True)
-        description = "Belum ada metode pembayaran." if not methods else "\n".join(
-            f"**#{item['id']}** {item['provider']} • {item['account_name']} • "
-            f"{'QRIS' if item['method_type'] == 'qris' else item['masked_account']}"
-            f"{' • Utama' if item['is_default'] else ''}"
-            for item in methods
-        )
-        await interaction.response.send_message(
-            embed=discord.Embed(title="Metode Pembayaran Saya", description=description, color=discord.Color.blue()),
-            view=PaymentMethodsView(methods),
-            ephemeral=True,
-        )
-
-    @discord.ui.button(label="Ambil Gaji Sekarang", style=discord.ButtonStyle.success, custom_id="staff_request_payout", row=2)
-    async def payout_button(self, interaction: discord.Interaction, _button: discord.ui.Button):
-        methods = await payments.list_methods(interaction.user.id)
-        if not methods:
-            return await interaction.response.send_message(
-                "Atur rekening bank, e-wallet, atau QRIS melalui **Metode Pembayaran** terlebih dahulu.",
-                ephemeral=True,
-            )
-        await interaction.response.send_message(
-            embed=discord.Embed(
-                title="Ambil Gaji Sekarang",
-                description="Pilih tujuan transfer. Bot hanya memasukkan tugas approved yang belum ditagihkan.",
-                color=discord.Color.gold(),
-            ),
-            view=PayoutMethodView(methods),
-            ephemeral=True,
-        )
-
 
 async def upsert_staff_panel(channel: discord.TextChannel, staff: discord.Member):
     """Update and pin the sole staff panel so chat history cannot bury it."""

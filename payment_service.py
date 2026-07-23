@@ -132,6 +132,19 @@ async def setup_payment_tables():
                 PRIMARY KEY(cycle_key,staff_id,event_type)
             );
         """)
+        payout_columns = {
+            row["name"] for row in await (
+                await connection.execute("PRAGMA table_info(payout_requests)")
+            ).fetchall()
+        }
+        for name, definition in (
+            ("invoice_sent_at", "DATETIME"),
+            ("invoice_message_id", "TEXT"),
+            ("invoice_send_attempts", "INTEGER NOT NULL DEFAULT 0"),
+            ("invoice_send_error", "TEXT"),
+        ):
+            if name not in payout_columns:
+                await connection.execute(f"ALTER TABLE payout_requests ADD COLUMN {name} {definition}")
         await connection.commit()
     finally:
         await connection.close()
@@ -156,9 +169,11 @@ async def create_method(staff_id, method_type, provider, account_name, account_n
             VALUES(?,?,?,?,?,?,?,?)""",
             (staff_id, method_type, provider.strip(), account_name.strip(), encrypted, last4, qris_object_key, 0 if has_default else 1))
         await connection.commit()
-        return cursor.lastrowid
+        method_id = cursor.lastrowid
     finally:
         await connection.close()
+    await attach_payment_method_to_waiting(staff_id, method_id if not has_default else None)
+    return method_id
 
 
 async def list_methods(staff_id, include_sensitive=False):
@@ -312,13 +327,29 @@ def scheduled_cycles(today=None):
     return cycles
 
 
-async def create_payout(staff_id, method_id, payout_type="instant", cutoff_start=None, cutoff_end=None, cycle_key=None, actor_id=0):
+def _method_snapshot(method):
+    if not method:
+        return {
+            "method_type": None, "provider": None, "account_name": None,
+            "account_number": None, "qris_object_key": None,
+        }
+    return {
+        "method_type": method["method_type"], "provider": method["provider"],
+        "account_name": method["account_name"],
+        "account_number": decrypt_value(method["account_encrypted"]) if method["account_encrypted"] else None,
+        "qris_object_key": method["qris_object_key"],
+    }
+
+
+async def create_payout(staff_id, method_id=None, payout_type="instant", cutoff_start=None, cutoff_end=None, cycle_key=None, actor_id=0):
     connection = await _db()
     try:
         await connection.execute("BEGIN IMMEDIATE")
-        method = await (await connection.execute("""SELECT * FROM staff_payment_methods
-            WHERE id=? AND staff_id=? AND is_active=1""", (method_id, staff_id))).fetchone()
-        if not method:
+        method = None
+        if method_id:
+            method = await (await connection.execute("""SELECT * FROM staff_payment_methods
+                WHERE id=? AND staff_id=? AND is_active=1""", (method_id, staff_id))).fetchone()
+        if payout_type == "instant" and not method:
             raise ValueError("Metode pembayaran tidak ditemukan.")
         clauses = ["a.staff_id=?", "a.status='approved'",
                    "NOT EXISTS(SELECT 1 FROM dashboard_assignment_billing b WHERE b.assignment_id=a.id)"]
@@ -330,12 +361,8 @@ async def create_payout(staff_id, method_id, payout_type="instant", cutoff_start
             WHERE {' AND '.join(clauses)} ORDER BY a.id""", params)).fetchall()
         if not items:
             raise ValueError("Tidak ada saldo approved yang tersedia untuk dicairkan.")
-        snapshot = {
-            "method_type": method["method_type"], "provider": method["provider"],
-            "account_name": method["account_name"],
-            "account_number": decrypt_value(method["account_encrypted"]) if method["account_encrypted"] else None,
-            "qris_object_key": method["qris_object_key"],
-        }
+        snapshot = _method_snapshot(method)
+        payout_status = "issued" if method else "awaiting_method"
         period = (cutoff_end or datetime.now(ZoneInfo("Asia/Jakarta")).date()).strftime("%Y-%m")
         number = f"RYU-{period.replace('-', '')}-{staff_id}-{secrets.token_hex(2).upper()}"
         chapter_count = sum(item["chapter_count"] or 1 for item in items)
@@ -359,14 +386,124 @@ async def create_payout(staff_id, method_id, payout_type="instant", cutoff_start
         cursor = await connection.execute("""INSERT INTO payout_requests
             (staff_id,payout_type,cycle_key,cutoff_start,cutoff_end,invoice_id,payment_method_id,
              method_snapshot_encrypted,chapter_count,total_amount,status)
-            VALUES(?,?,?,?,?,?,?,?,?,?,'issued')""", (
+            VALUES(?,?,?,?,?,?,?,?,?,?,?)""", (
                 staff_id, payout_type, cycle_key, str(cutoff_start) if cutoff_start else None,
                 str(cutoff_end) if cutoff_end else None, invoice_id, method_id,
-                encrypt_value(json.dumps(snapshot)), chapter_count, total,
+                encrypt_value(json.dumps(snapshot)), chapter_count, total, payout_status,
             ))
         await connection.commit()
         return {"id": cursor.lastrowid, "invoice_id": invoice_id, "invoice_number": number,
-                "chapter_count": chapter_count, "total_amount": total, "snapshot": snapshot}
+                "chapter_count": chapter_count, "total_amount": total, "snapshot": snapshot,
+                "staff_id": staff_id, "cycle_key": cycle_key, "status": payout_status}
+    except Exception:
+        await connection.rollback()
+        raise
+    finally:
+        await connection.close()
+
+
+async def ensure_payout_for_invoice(invoice_id):
+    """Wrap a legacy/manual issued invoice so every payment uses the shared payout flow."""
+    connection = await _db()
+    try:
+        existing = await (await connection.execute(
+            "SELECT id FROM payout_requests WHERE invoice_id=?", (invoice_id,)
+        )).fetchone()
+        if existing:
+            return existing["id"]
+        invoice = await (await connection.execute(
+            "SELECT * FROM dashboard_invoices WHERE id=? AND status='issued'", (invoice_id,)
+        )).fetchone()
+        if not invoice:
+            raise ValueError("Invoice tidak ditemukan atau sudah diproses.")
+        method = await (await connection.execute("""SELECT * FROM staff_payment_methods
+            WHERE staff_id=? AND is_active=1 AND is_default=1 ORDER BY id LIMIT 1""",
+            (invoice["staff_id"],))).fetchone()
+        snapshot = _method_snapshot(method)
+        status = "issued" if method else "awaiting_method"
+        cursor = await connection.execute("""INSERT INTO payout_requests
+            (staff_id,payout_type,invoice_id,payment_method_id,method_snapshot_encrypted,
+             chapter_count,total_amount,status)
+            VALUES(?,'instant',?,?,?,?,?,?)""", (
+                invoice["staff_id"], invoice_id, method["id"] if method else None,
+                encrypt_value(json.dumps(snapshot)), invoice["chapter_count"], invoice["total_amount"], status,
+            ))
+        await connection.commit()
+        return cursor.lastrowid
+    finally:
+        await connection.close()
+
+
+async def attach_payment_method_to_waiting(staff_id, preferred_method_id=None):
+    connection = await _db()
+    try:
+        method = None
+        if preferred_method_id:
+            method = await (await connection.execute("""SELECT * FROM staff_payment_methods
+                WHERE id=? AND staff_id=? AND is_active=1""", (preferred_method_id, staff_id))).fetchone()
+        if not method:
+            method = await (await connection.execute("""SELECT * FROM staff_payment_methods
+                WHERE staff_id=? AND is_active=1 AND is_default=1 ORDER BY id LIMIT 1""", (staff_id,))).fetchone()
+        if not method:
+            return 0
+        cursor = await connection.execute("""UPDATE payout_requests SET payment_method_id=?,
+            method_snapshot_encrypted=?,status='issued'
+            WHERE staff_id=? AND status='awaiting_method'""",
+            (method["id"], encrypt_value(json.dumps(_method_snapshot(method))), staff_id))
+        await connection.commit()
+        return cursor.rowcount
+    finally:
+        await connection.close()
+
+
+async def _wrap_existing_invoice(staff_id, method, cycle_key, start, end):
+    """Reuse a legacy/manual issued invoice and add other eligible unbilled cutoff items."""
+    connection = await _db()
+    try:
+        await connection.execute("BEGIN IMMEDIATE")
+        invoice = await (await connection.execute("""SELECT DISTINCT i.* FROM dashboard_invoices i
+            JOIN dashboard_invoice_items x ON x.invoice_id=i.id
+            WHERE i.staff_id=? AND i.status='issued'
+              AND date(x.approved_at) BETWEEN ? AND ?
+              AND NOT EXISTS(SELECT 1 FROM payout_requests p WHERE p.invoice_id=i.id)
+            ORDER BY i.issued_at DESC LIMIT 1""", (staff_id, str(start), str(end)))).fetchone()
+        if not invoice:
+            await connection.rollback()
+            return None
+        additions = await (await connection.execute("""SELECT a.* FROM assignments a
+            WHERE a.staff_id=? AND a.status='approved' AND date(a.approved_at) BETWEEN ? AND ?
+              AND NOT EXISTS(SELECT 1 FROM dashboard_assignment_billing b WHERE b.assignment_id=a.id)
+            ORDER BY a.id""", (staff_id, str(start), str(end)))).fetchall()
+        if additions:
+            await connection.executemany("""INSERT INTO dashboard_invoice_items
+                (invoice_id,assignment_id,manga,chapter,role,amount,assigned_at,approved_at,chapter_count,rate_per_chapter)
+                VALUES(?,?,?,?,?,?,?,?,?,?)""", [(
+                    invoice["id"], item["id"], item["manga"], item["chapter"], item["role"], item["final_rate"],
+                    item["assigned_at"], item["approved_at"], item["chapter_count"] or 1,
+                    item["rate_per_chapter"] or item["final_rate"],
+                ) for item in additions])
+            await connection.executemany(
+                "INSERT INTO dashboard_assignment_billing(assignment_id,invoice_id) VALUES(?,?)",
+                [(item["id"], invoice["id"]) for item in additions],
+            )
+        totals = await (await connection.execute("""SELECT SUM(chapter_count) chapters,SUM(amount) total
+            FROM dashboard_invoice_items WHERE invoice_id=?""", (invoice["id"],))).fetchone()
+        await connection.execute(
+            "UPDATE dashboard_invoices SET chapter_count=?,total_amount=?,invoice_type='scheduled' WHERE id=?",
+            (totals["chapters"], totals["total"], invoice["id"]))
+        snapshot = _method_snapshot(method)
+        status = "issued" if method else "awaiting_method"
+        cursor = await connection.execute("""INSERT INTO payout_requests
+            (staff_id,payout_type,cycle_key,cutoff_start,cutoff_end,invoice_id,payment_method_id,
+             method_snapshot_encrypted,chapter_count,total_amount,status)
+            VALUES(?,'scheduled',?,?,?,?,?,?,?,?,?)""", (
+                staff_id, cycle_key, str(start), str(end), invoice["id"], method["id"] if method else None,
+                encrypt_value(json.dumps(snapshot)), totals["chapters"], totals["total"], status,
+            ))
+        await connection.commit()
+        return {"id": cursor.lastrowid, "invoice_id": invoice["id"], "invoice_number": invoice["invoice_number"],
+                "chapter_count": totals["chapters"], "total_amount": totals["total"], "staff_id": staff_id,
+                "cycle_key": cycle_key, "status": status}
     except Exception:
         await connection.rollback()
         raise
@@ -385,22 +522,27 @@ async def create_due_scheduled_payouts(today=None):
         finally:
             await connection.close()
         for row in staff_rows:
+            existing = await _db()
+            try:
+                already = await (await existing.execute(
+                    "SELECT id FROM payout_requests WHERE cycle_key=? AND staff_id=?",
+                    (cycle_key, row["staff_id"]))).fetchone()
+            finally:
+                await existing.close()
+            if already:
+                await attach_payment_method_to_waiting(row["staff_id"])
+                continue
             methods = await list_methods(row["staff_id"])
             default = next((item for item in methods if item["is_default"]), None)
-            if not default:
-                connection = await _db()
-                try:
-                    cursor = await connection.execute("""INSERT OR IGNORE INTO payout_cycle_events
-                        (cycle_key,staff_id,event_type) VALUES(?,?,'missing_method')""",
-                        (cycle_key, row["staff_id"]))
-                    await connection.commit()
-                finally:
-                    await connection.close()
-                if cursor.rowcount:
-                    created.append({"staff_id": row["staff_id"], "cycle_key": cycle_key, "missing_method": True})
-                continue
             try:
-                result = await create_payout(row["staff_id"], default["id"], "scheduled", start, end, cycle_key)
+                result = await _wrap_existing_invoice(row["staff_id"], default, cycle_key, start, end)
+                if not result:
+                    result = await create_payout(
+                        row["staff_id"], default["id"] if default else None,
+                        "scheduled", start, end, cycle_key,
+                    )
+                if not default:
+                    result["missing_method"] = True
                 created.append(result)
             except (ValueError, aiosqlite.IntegrityError):
                 pass
@@ -419,10 +561,21 @@ async def list_payouts(status=None):
         await connection.close()
 
 
+async def list_staff_payouts(staff_id, limit=10):
+    connection = await _db()
+    try:
+        rows = await (await connection.execute("""SELECT p.*,i.invoice_number
+            FROM payout_requests p JOIN dashboard_invoices i ON i.id=p.invoice_id
+            WHERE p.staff_id=? ORDER BY p.requested_at DESC LIMIT ?""", (staff_id, limit))).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        await connection.close()
+
+
 async def payout_detail(payout_id, include_sensitive=False):
     connection = await _db()
     try:
-        row = await (await connection.execute("""SELECT p.*,i.invoice_number,i.period
+        row = await (await connection.execute("""SELECT p.*,i.invoice_number,i.period,i.paid_at
             FROM payout_requests p JOIN dashboard_invoices i ON i.id=p.invoice_id WHERE p.id=?""",
             (payout_id,))).fetchone()
         if not row:
@@ -470,10 +623,24 @@ async def pay_payout(payout_id, actor_id):
         await connection.execute("""UPDATE payout_requests SET status='paid',processed_at=CURRENT_TIMESTAMP,
             processed_by=? WHERE id=?""", (actor_id, payout_id))
         await connection.commit()
-        return dict(payout)
     except Exception:
         await connection.rollback()
         raise
+    finally:
+        await connection.close()
+    return await payout_detail(payout_id, include_sensitive=True)
+
+
+async def record_invoice_delivery(payout_id, message_id=None, error=None):
+    connection = await _db()
+    try:
+        await connection.execute("""UPDATE payout_requests
+            SET invoice_send_attempts=COALESCE(invoice_send_attempts,0)+1,
+                invoice_sent_at=CASE WHEN ? IS NULL THEN CURRENT_TIMESTAMP ELSE invoice_sent_at END,
+                invoice_message_id=CASE WHEN ? IS NULL THEN ? ELSE invoice_message_id END,
+                invoice_send_error=?
+            WHERE id=?""", (error, error, str(message_id) if message_id else None, error, payout_id))
+        await connection.commit()
     finally:
         await connection.close()
 

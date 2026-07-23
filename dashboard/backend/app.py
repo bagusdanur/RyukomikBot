@@ -18,7 +18,7 @@ from authlib.integrations.starlette_client import OAuth
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -27,6 +27,7 @@ import database as staff_db
 import payment_service as payout_service
 from database import DB_PATH, setup_database
 from chapter_utils import chapter_display, parse_chapters
+from invoice_pdf import render_paid_invoice
 
 ROLE_RATE_LIMITS = {"TL": 8000, "TS": 12000, "TL+TS": 15000}
 
@@ -574,6 +575,66 @@ async def send_payout_ticket_notice(staff_id: int, title: str, description: str,
     }))
 
 
+async def send_paid_invoice_pdf(payout_id: int, admin_name: str):
+    detail = await payout_service.payout_detail(payout_id, include_sensitive=True)
+    if not detail:
+        return False, "Data invoice tidak ditemukan."
+    if DEV_BYPASS:
+        await payout_service.record_invoice_delivery(payout_id, message_id="dev")
+        return True, None
+    connection = await dashboard_db()
+    try:
+        row = await (await connection.execute("""SELECT ticket_channel_id FROM assignments
+            WHERE staff_id=? AND ticket_channel_id IS NOT NULL ORDER BY id DESC LIMIT 1""",
+            (detail["staff_id"],))).fetchone()
+    finally:
+        await connection.close()
+    if not row:
+        error = "Tiket privat staff tidak ditemukan."
+        await payout_service.record_invoice_delivery(payout_id, error=error)
+        return False, error
+    profile = next((item for item in await staff_directory() if int(item["id"]) == int(detail["staff_id"])), None)
+    try:
+        pdf = render_paid_invoice(
+            detail, staff_name=(profile or {}).get("username"), admin_name=admin_name
+        )
+        payload = {
+            "content": f"<@{detail['staff_id']}>",
+            "embeds": [{
+                "title": "Invoice Gaji Lunas",
+                "description": f"Pembayaran **Rp {detail['total_amount']:,.0f}** telah ditransfer.".replace(",", "."),
+                "color": 5763719,
+                "fields": [
+                    {"name": "Invoice", "value": detail["invoice_number"], "inline": False},
+                    {"name": "Periode", "value": detail["period"], "inline": True},
+                    {"name": "Chapter", "value": str(detail["chapter_count"]), "inline": True},
+                ],
+            }],
+            "attachments": [{"id": 0, "filename": f"{detail['invoice_number']}.pdf"}],
+        }
+        form = aiohttp.FormData()
+        form.add_field("payload_json", json.dumps(payload))
+        form.add_field(
+            "files[0]", pdf, filename=f"{detail['invoice_number']}.pdf",
+            content_type="application/pdf",
+        )
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"https://discord.com/api/v10/channels/{row['ticket_channel_id']}/messages",
+                headers={"Authorization": f"Bot {TOKEN}"}, data=form,
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as response:
+                body = await response.json(content_type=None)
+                if response.status >= 300:
+                    raise RuntimeError(f"Discord HTTP {response.status}")
+        await payout_service.record_invoice_delivery(payout_id, message_id=body.get("id"))
+        return True, None
+    except Exception as error:
+        message = str(error)[:500]
+        await payout_service.record_invoice_delivery(payout_id, error=message)
+        return False, message
+
+
 @app.get("/health")
 async def health():
     database_status = "ok"
@@ -895,7 +956,7 @@ async def invoices(period: str | None = Query(default=None, pattern=r"^\d{4}-\d{
 
 @app.get("/api/payouts")
 async def payout_requests(status: str | None = None, _user=Depends(admin_user)):
-    if status and status not in {"issued", "paid", "rejected", "cancelled"}:
+    if status and status not in {"awaiting_method", "issued", "paid", "rejected", "cancelled"}:
         raise HTTPException(status_code=422, detail="Status pencairan tidak valid.")
     return await enrich_staff(await payout_service.list_payouts(status))
 
@@ -921,6 +982,32 @@ async def payout_qris(payout_id: int, _user=Depends(admin_user)):
     return {"download_url": url, "expires_in": 600}
 
 
+@app.get("/api/payouts/{payout_id}/pdf")
+async def payout_invoice_pdf(payout_id: int, _user=Depends(admin_user)):
+    detail = await payout_service.payout_detail(payout_id, include_sensitive=True)
+    if not detail:
+        raise HTTPException(status_code=404, detail="Permintaan gaji tidak ditemukan.")
+    detail = (await enrich_staff([detail]))[0]
+    pdf = render_paid_invoice(detail, staff_name=detail.get("staff_name"))
+    return Response(
+        content=pdf, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{detail["invoice_number"]}.pdf"'},
+    )
+
+
+@app.post("/api/payouts/{payout_id}/resend-invoice")
+async def resend_payout_invoice(payout_id: int, user=Depends(admin_user)):
+    detail = await payout_service.payout_detail(payout_id)
+    if not detail or detail["status"] != "paid":
+        raise HTTPException(status_code=409, detail="Invoice hanya dapat dikirim untuk pembayaran lunas.")
+    sent, error = await send_paid_invoice_pdf(payout_id, user["username"])
+    await audit(user["id"], "payout.invoice_resend", "payout", payout_id,
+                after={"sent": sent, "error": error})
+    if not sent:
+        raise HTTPException(status_code=502, detail=f"Invoice gagal dikirim: {error}")
+    return {"ok": True}
+
+
 @app.post("/api/payouts/{payout_id}/pay")
 async def pay_payout_request(payout_id: int, user=Depends(admin_user)):
     before = await payout_service.payout_detail(payout_id)
@@ -931,12 +1018,8 @@ async def pay_payout_request(payout_id: int, user=Depends(admin_user)):
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error))
     await audit(user["id"], "payout.pay", "payout", payout_id, {"status": before["status"]}, {"status": "paid"})
-    await send_payout_ticket_notice(
-        int(payout["staff_id"]), "Gaji Sudah Ditransfer",
-        f"Pembayaran sebesar **Rp {payout['total_amount']:,.0f}** sudah dikonfirmasi administrator.".replace(",", "."),
-        True,
-    )
-    return {"ok": True}
+    sent, error = await send_paid_invoice_pdf(payout_id, user["username"])
+    return {"ok": True, "invoice_sent": sent, "invoice_error": error}
 
 
 @app.post("/api/payouts/{payout_id}/reject")
@@ -1126,40 +1209,20 @@ async def create_correction_invoice(invoice_id: int, user=Depends(admin_user)):
 
 @app.post("/api/invoices/{invoice_id}/pay")
 async def pay_invoice(invoice_id: int, user=Depends(admin_user)):
-    connection = await dashboard_db()
     try:
-        invoice = await (await connection.execute(
-            "SELECT * FROM dashboard_invoices WHERE id=?", (invoice_id,)
-        )).fetchone()
-        if not invoice or invoice["status"] != "issued":
-            raise HTTPException(status_code=409, detail="Invoice tidak ditemukan atau sudah dibayar.")
-        item_ids = [row["assignment_id"] for row in await (await connection.execute(
-            "SELECT assignment_id FROM dashboard_invoice_items WHERE invoice_id=?", (invoice_id,)
-        )).fetchall()]
-        if item_ids:
-            placeholders = ",".join("?" for _ in item_ids)
-            await connection.execute(
-                f"UPDATE assignments SET status='paid', paid_period=? WHERE status='approved' AND id IN ({placeholders})",
-                [invoice["period"], *item_ids],
+        payout_id = await payout_service.ensure_payout_for_invoice(invoice_id)
+        before = await payout_service.payout_detail(payout_id)
+        if before["status"] == "awaiting_method":
+            raise HTTPException(
+                status_code=409,
+                detail="Staff belum memiliki metode pembayaran utama. Invoice belum dapat dibayar.",
             )
-        else:
-            await connection.execute("""
-                UPDATE assignments SET status='paid', paid_period=?
-                WHERE staff_id=? AND status='approved' AND approved_at LIKE ?
-            """, (invoice["period"], invoice["staff_id"], f"{invoice['period']}%"))
-        await connection.execute(
-            "UPDATE dashboard_invoices SET status='paid', paid_at=CURRENT_TIMESTAMP WHERE id=?",
-            (invoice_id,),
-        )
-        await connection.execute("""
-            INSERT INTO payments(staff_id,period,total_amount,chapter_count,status,paid_at)
-            VALUES(?,?,?,?, 'paid', CURRENT_TIMESTAMP)
-        """, (invoice["staff_id"], invoice["period"], invoice["total_amount"], invoice["chapter_count"]))
-        await connection.commit()
-    finally:
-        await connection.close()
-    await audit(user["id"], "invoice.pay", "invoice", invoice_id, before=dict(invoice), after={"status": "paid"})
-    return {"ok": True}
+        await payout_service.pay_payout(payout_id, int(user["id"]))
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error))
+    await audit(user["id"], "invoice.pay", "invoice", invoice_id, before={"status": "issued"}, after={"status": "paid"})
+    sent, error = await send_paid_invoice_pdf(payout_id, user["username"])
+    return {"ok": True, "invoice_sent": sent, "invoice_error": error}
 
 
 @app.delete("/api/invoices/{invoice_id}")

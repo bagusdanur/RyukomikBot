@@ -198,6 +198,22 @@ async function openQris(item: PayoutDetail) {
     error.value = e instanceof Error ? e.message : "QRIS tidak dapat dibuka.";
   }
 }
+function openPayoutPdf(item: Payout) {
+  window.open(api.payoutPdfUrl(item.id), "_blank", "noopener");
+}
+async function resendInvoice(item: Payout) {
+  try {
+    loading.value = true;
+    await api.resendPayoutInvoice(item.id);
+    success.value = "Invoice PDF berhasil dikirim ulang ke tiket staff.";
+    payoutDetail.value = await api.payout(item.id);
+    await loadPage();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "Invoice gagal dikirim ulang.";
+  } finally {
+    loading.value = false;
+  }
+}
 async function copyAccount(value: string | null) {
   if (!value) return;
   await window.navigator.clipboard.writeText(value);
@@ -973,6 +989,7 @@ onMounted(async () => {
         <div class="toolbar">
           <select v-model="payoutStatus" @change="loadPage">
             <option value="">Semua status</option><option value="issued">Menunggu transfer</option>
+            <option value="awaiting_method">Menunggu metode</option>
             <option value="paid">Sudah dibayar</option><option value="rejected">Ditolak</option>
           </select>
           <Button label="Muat ulang" icon="pi pi-refresh" @click="loadPage" />
@@ -986,10 +1003,12 @@ onMounted(async () => {
             <Column field="invoice_number" header="Invoice" />
             <Column header="Jumlah"><template #body="{ data }">{{ data.chapter_count }} chapter · {{ money(data.total_amount) }}</template></Column>
             <Column header="Status"><template #body="{ data }"><Tag
-              :value="data.status === 'issued' ? 'Menunggu transfer' : data.status === 'paid' ? 'Dibayar' : 'Ditolak'"
-              :severity="data.status === 'paid' ? 'success' : data.status === 'issued' ? 'warn' : 'danger'" /></template></Column>
+              :value="data.status === 'awaiting_method' ? 'Menunggu metode' : data.status === 'issued' ? 'Menunggu transfer' : data.status === 'paid' ? 'Dibayar' : 'Ditolak'"
+              :severity="data.status === 'paid' ? 'success' : ['issued','awaiting_method'].includes(data.status) ? 'warn' : 'danger'" /></template></Column>
             <Column header="Aksi"><template #body="{ data }"><div class="button-row">
               <Button label="Detail" size="small" severity="secondary" @click="openPayout(data)" />
+              <Button v-if="data.status === 'paid'" label="PDF" size="small" icon="pi pi-file-pdf" text @click="openPayoutPdf(data)" />
+              <Button v-if="data.status === 'paid' && (!data.invoice_sent_at || data.invoice_send_error)" label="Kirim ulang" size="small" text @click="resendInvoice(data)" />
               <Button v-if="data.status === 'issued'" label="Sudah ditransfer" size="small" @click="confirmPayout(data)" />
               <Button v-if="data.status === 'issued'" label="Tolak" size="small" severity="danger" @click="rejectPayout(data)" />
             </div></template></Column>
@@ -1017,6 +1036,12 @@ onMounted(async () => {
           <Column field="manga" header="Judul" /><Column field="chapter" header="Chapter" /><Column field="role" header="Role" />
           <Column header="Bayaran"><template #body="{ data }">{{ money(data.amount) }}</template></Column>
         </DataTable></div>
+        <div v-if="payoutDetail.status === 'paid'" class="button-row payout-pdf-actions">
+          <Button label="Download PDF" icon="pi pi-file-pdf" @click="openPayoutPdf(payoutDetail)" />
+          <Button label="Kirim Ulang ke Tiket" severity="secondary" icon="pi pi-send" @click="resendInvoice(payoutDetail)" />
+          <small v-if="payoutDetail.invoice_sent_at">Terakhir dikirim: {{ payoutDetail.invoice_sent_at }}</small>
+          <small v-if="payoutDetail.invoice_send_error" class="notice-error">{{ payoutDetail.invoice_send_error }}</small>
+        </div>
         <div v-if="payoutDetail.status === 'issued'" class="modal-actions">
           <Button label="Tolak" severity="danger" @click="rejectPayout(payoutDetail!)" />
           <Button label="Konfirmasi Sudah Ditransfer" icon="pi pi-check" @click="confirmPayout(payoutDetail!)" />

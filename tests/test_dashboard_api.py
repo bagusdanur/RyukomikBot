@@ -4,6 +4,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from cryptography.fernet import Fernet
 
 
 class DashboardApiTests(unittest.TestCase):
@@ -41,7 +42,11 @@ class DashboardApiTests(unittest.TestCase):
         self.module = importlib.import_module("dashboard.backend.app")
         self.module.DB_PATH = self.db_path
         self.module.staff_db.DB_PATH = self.db_path
+        self.module.payout_service.DB_PATH = self.db_path
+        self.module.payout_service.PAYMENT_DATA_ENCRYPTION_KEY = Fernet.generate_key().decode()
         asyncio.run(self.module.setup_dashboard_tables())
+        asyncio.run(self.module.payout_service.setup_payment_tables())
+        asyncio.run(self.module.payout_service.create_method(100, "bank", "BCA", "Staff", "1234567890"))
 
     def tearDown(self):
         self.temp_dir.cleanup()
@@ -92,6 +97,8 @@ class DashboardApiTests(unittest.TestCase):
         asyncio.run(self.module.pay_invoice(created["id"], user))
         paid_rows = asyncio.run(self.module.invoices(period="2026-07", _user=user))
         self.assertEqual(paid_rows[0]["status"], "paid")
+        payouts = asyncio.run(self.module.payout_requests(status="paid", _user=user))
+        self.assertTrue(payouts[0]["invoice_sent_at"])
         with self.assertRaises(self.module.HTTPException):
             asyncio.run(self.module.delete_invoice(created["id"], user))
 

@@ -10,6 +10,9 @@ from cryptography.fernet import Fernet
 
 import database
 import payment_service as payments
+from invoice_pdf import render_paid_invoice
+from panels.staff_panel import StaffPanelView
+from views.payment_views import QrisMethodModal
 
 
 class PaymentServiceTests(unittest.TestCase):
@@ -82,6 +85,55 @@ class PaymentServiceTests(unittest.TestCase):
         self.assertIn(("2026-07-19", date(2026, 7, 1), date(2026, 7, 15)), cycles)
         cycles = payments.scheduled_cycles(date(2026, 8, 4))
         self.assertIn(("2026-08-04", date(2026, 7, 16), date(2026, 7, 31)), cycles)
+
+    def test_scheduled_invoice_exists_before_method_and_is_reconciled(self):
+        self.add_approved()
+        created = asyncio.run(payments.create_due_scheduled_payouts(date(2026, 7, 19)))
+        target = next(item for item in created if item.get("cycle_key") == "2026-07-19")
+        self.assertEqual(target["status"], "awaiting_method")
+        connection = sqlite3.connect(self.path)
+        self.assertEqual(connection.execute("SELECT COUNT(*) FROM dashboard_invoices").fetchone()[0], 1)
+        connection.close()
+        asyncio.run(payments.create_method(100, "bank", "BCA", "Staff", "1234567890"))
+        detail = asyncio.run(payments.payout_detail(target["id"]))
+        self.assertEqual(detail["status"], "issued")
+        asyncio.run(payments.create_due_scheduled_payouts(date(2026, 7, 19)))
+        connection = sqlite3.connect(self.path)
+        self.assertEqual(connection.execute("SELECT COUNT(*) FROM dashboard_invoices").fetchone()[0], 1)
+        connection.close()
+
+    def test_paid_invoice_pdf(self):
+        self.add_approved(chapters=2, amount=24000)
+        method_id = asyncio.run(payments.create_method(100, "bank", "BCA", "Staff", "1234567890"))
+        payout = asyncio.run(payments.create_payout(100, method_id))
+        detail = asyncio.run(payments.pay_payout(payout["id"], 999))
+        pdf = render_paid_invoice(detail, staff_name="Staff", admin_name="Admin")
+        self.assertTrue(pdf.startswith(b"%PDF"))
+        self.assertGreater(len(pdf), 1000)
+
+    def test_invoice_delivery_metadata(self):
+        self.add_approved()
+        method_id = asyncio.run(payments.create_method(100, "bank", "BCA", "Staff", "1234567890"))
+        payout = asyncio.run(payments.create_payout(100, method_id))
+        asyncio.run(payments.record_invoice_delivery(payout["id"], error="Discord unavailable"))
+        asyncio.run(payments.record_invoice_delivery(payout["id"], message_id="123"))
+        detail = asyncio.run(payments.payout_detail(payout["id"]))
+        self.assertEqual(detail["invoice_send_attempts"], 2)
+        self.assertEqual(detail["invoice_message_id"], "123")
+        self.assertIsNone(detail["invoice_send_error"])
+
+
+class PaymentDiscordUiTests(unittest.TestCase):
+    def test_staff_panel_has_six_primary_actions(self):
+        labels = [item.label for item in StaffPanelView().children]
+        self.assertEqual(len(labels), 6)
+        self.assertIn("Penghasilan & Gaji", labels)
+        self.assertNotIn("Metode Pembayaran", labels)
+
+    def test_qris_uses_modal_file_upload(self):
+        modal = QrisMethodModal()
+        uploads = [item for item in modal.children if item.__class__.__name__ == "FileUpload"]
+        self.assertEqual(len(uploads), 1)
 
 
 if __name__ == "__main__":

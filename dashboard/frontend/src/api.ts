@@ -98,6 +98,10 @@ export type Payout = {
   requested_at: string;
   processed_at: string | null;
   rejection_reason: string | null;
+  invoice_sent_at?: string | null;
+  invoice_message_id?: string | null;
+  invoice_send_attempts?: number;
+  invoice_send_error?: string | null;
 };
 export type PayoutDetail = Payout & {
   method: {
@@ -191,6 +195,9 @@ const liveApi = {
   payout: (id: number) => request<PayoutDetail>(`/api/payouts/${id}`),
   payoutQris: (id: number) =>
     request<{ download_url: string; expires_in: number }>(`/api/payouts/${id}/qris`),
+  payoutPdfUrl: (id: number) => `/api/payouts/${id}/pdf`,
+  resendPayoutInvoice: (id: number) =>
+    request(`/api/payouts/${id}/resend-invoice`, { method: "POST" }),
   payPayout: (id: number) => request(`/api/payouts/${id}/pay`, { method: "POST" }),
   rejectPayout: (id: number, reason: string) =>
     request(`/api/payouts/${id}/reject`, { method: "POST", body: JSON.stringify({ reason }) }),
@@ -399,6 +406,8 @@ const demoApi = {
     items: [],
   }),
   payoutQris: async () => ({ download_url: "#", expires_in: 600 }),
+  payoutPdfUrl: () => "#",
+  resendPayoutInvoice: async () => ({ ok: true }),
   payPayout: async () => ({ ok: true }),
   rejectPayout: async () => ({ ok: true }),
   submissions: async () => [],
