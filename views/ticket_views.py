@@ -48,9 +48,76 @@ async def _validated_assignment(interaction: discord.Interaction, assignment_id:
 async def _notify_ticket(interaction: discord.Interaction, assignment: dict, embed: discord.Embed):
     channel_id = assignment.get("ticket_channel_id")
     channel = interaction.guild.get_channel(channel_id) if interaction.guild and channel_id else None
+    if interaction.guild and not isinstance(channel, discord.TextChannel):
+        from helpers.utils import find_ticket
+
+        channel = await find_ticket(interaction.guild, int(assignment["staff_id"]))
+        if isinstance(channel, discord.TextChannel):
+            await db.set_assignment_ticket_channel(int(assignment["id"]), channel.id)
     if isinstance(channel, discord.TextChannel):
         staff = interaction.guild.get_member(int(assignment["staff_id"]))
         await channel.send(content=staff.mention if staff else None, embed=embed)
+        return True
+    logger.error(
+        "Private ticket not found for assignment=%s staff=%s",
+        assignment.get("id"),
+        assignment.get("staff_id"),
+    )
+    return False
+
+
+def build_completed_embed(assignment: dict) -> discord.Embed:
+    """Build the final report delivered to the staff's private ticket."""
+    chapter_count = int(assignment.get("chapter_count") or 1)
+    total = int(assignment.get("final_rate") or 0)
+    rate = int(assignment.get("rate_per_chapter") or (total // chapter_count if chapter_count else total))
+    embed = discord.Embed(
+        title="✅ Tugas Selesai",
+        description=(
+            "Hasil kerja telah diperiksa dan **disetujui Administrator**. "
+            "Bayaran sudah masuk ke rekap gaji."
+        ),
+        color=discord.Color.green(),
+    )
+    embed.add_field(name="Manga", value=assignment["manga"], inline=False)
+    embed.add_field(name="Chapter", value=assignment["chapter"], inline=True)
+    embed.add_field(name="Role", value=assignment["role"], inline=True)
+    embed.add_field(name="Jumlah Chapter", value=str(chapter_count), inline=True)
+    embed.add_field(name="Rate per Chapter", value=f"Rp {rate:,.0f}".replace(",", "."), inline=True)
+    embed.add_field(name="Total Bayaran", value=f"Rp {total:,.0f}".replace(",", "."), inline=True)
+    embed.add_field(
+        name="Hasil Google Drive",
+        value=assignment.get("gdrive_link") or "Link tidak tersimpan",
+        inline=False,
+    )
+    embed.set_footer(text=f"Task #{assignment['id']} • Laporan akhir penyelesaian tugas")
+    return embed
+
+
+def build_revision_embed(assignment: dict, notes: str) -> discord.Embed:
+    embed = discord.Embed(
+        title="🔄 Tugas Perlu Revisi",
+        description=(
+            f"**{assignment['manga']}** chapter **{assignment['chapter']}** "
+            "perlu diperbaiki sebelum dikirim ulang."
+        ),
+        color=discord.Color.orange(),
+    )
+    embed.add_field(name="Catatan Administrator", value=notes, inline=False)
+    if assignment.get("gdrive_link"):
+        embed.add_field(name="Hasil Sebelumnya", value=assignment["gdrive_link"], inline=False)
+    embed.set_footer(text=f"Task #{assignment['id']} • Perbaiki hasil lalu tekan Submit Hasil")
+    return embed
+
+
+async def _remove_review_card(interaction: discord.Interaction) -> None:
+    """Remove a handled admin review card so staff-mod stays actionable."""
+    if not interaction.message:
+        return
+    try:
+        await interaction.message.delete()
+    except discord.HTTPException:
+        logger.warning("Could not remove processed review message %s", interaction.message.id)
 
 
 class TicketSubmitModal(discord.ui.Modal, title="Submit Hasil Kerja"):
@@ -98,12 +165,17 @@ async def approve_task(interaction: discord.Interaction, assignment_id: int):
     if not await db.approve_assignment(assignment_id):
         return await interaction.response.send_message("Approve gagal karena status tugas telah berubah.", ephemeral=True)
     assignment = await db.get_assignment(assignment_id)
-    embed = discord.Embed(title="Tugas Disetujui", description=f"**{assignment['manga']}** chapter **{assignment['chapter']}** telah disetujui.", color=discord.Color.green())
-    await interaction.response.edit_message(embed=embed, view=None)
-    completed = discord.Embed(title="✅ Tugas Selesai", description=f"Hasil **{assignment['manga']}** chapter **{assignment['chapter']}** telah disetujui administrator. Bayaran sudah masuk rekap gaji.", color=discord.Color.green())
-    completed.add_field(name="Role", value=assignment["role"], inline=True)
-    completed.add_field(name="Bayaran", value=f"Rp {assignment['final_rate']:,.0f}".replace(",", "."), inline=True)
-    await _notify_ticket(interaction, assignment, completed)
+    await interaction.response.defer(ephemeral=True)
+    notified = await _notify_ticket(interaction, assignment, build_completed_embed(assignment))
+    await _remove_review_card(interaction)
+    await interaction.followup.send(
+        (
+            f"Tugas #{assignment_id} disetujui dan laporan akhir dikirim ke tiket staff."
+            if notified
+            else f"Tugas #{assignment_id} disetujui, tetapi tiket staff tidak ditemukan. Periksa tiket staff."
+        ),
+        ephemeral=True,
+    )
 
 
 class TicketReviseModal(discord.ui.Modal, title="Revisi Tugas"):
@@ -120,10 +192,21 @@ class TicketReviseModal(discord.ui.Modal, title="Revisi Tugas"):
         if not await db.revise_assignment(self.assignment_id, self.catatan.value):
             return await interaction.response.send_message("Revisi gagal karena status tugas telah berubah.", ephemeral=True)
         assignment = await db.get_assignment(self.assignment_id)
-        embed = discord.Embed(title="Perlu Revisi", description=f"**{assignment['manga']}** chapter **{assignment['chapter']}** perlu revisi.", color=discord.Color.orange())
-        embed.add_field(name="Catatan", value=self.catatan.value, inline=False)
-        await interaction.response.edit_message(embed=embed, view=None)
-        await _notify_ticket(interaction, assignment, embed)
+        await interaction.response.defer(ephemeral=True)
+        notified = await _notify_ticket(
+            interaction,
+            assignment,
+            build_revision_embed(assignment, self.catatan.value),
+        )
+        await _remove_review_card(interaction)
+        await interaction.followup.send(
+            (
+                f"Revisi tugas #{self.assignment_id} sudah dikirim ke tiket staff."
+                if notified
+                else f"Revisi tersimpan, tetapi tiket staff tidak ditemukan. Periksa tiket staff."
+            ),
+            ephemeral=True,
+        )
 
 
 class SubmitDynamicItem(discord.ui.DynamicItem[discord.ui.Button], template=r"task:submit:(?P<assignment_id>\d+):v2"):

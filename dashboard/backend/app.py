@@ -595,14 +595,42 @@ async def send_ticket_review_notice(assignment: dict, approved: bool, notes: str
     if not channel_id:
         return False
     title = "✅ Tugas Selesai" if approved else "🔄 Tugas Perlu Revisi"
-    description = (f"**{assignment['manga']}** chapter **{assignment['chapter']}** " +
-                   ("telah disetujui. Bayaran masuk rekap gaji." if approved else "perlu diperbaiki sebelum dikirim ulang."))
-    fields = [{"name": "Status", "value": "Approved" if approved else "Revision", "inline": True}]
+    description = (
+        "Hasil kerja telah diperiksa dan **disetujui Administrator**. Bayaran sudah masuk ke rekap gaji."
+        if approved
+        else f"**{assignment['manga']}** chapter **{assignment['chapter']}** perlu diperbaiki sebelum dikirim ulang."
+    )
+    fields = [
+        {"name": "Manga", "value": assignment["manga"], "inline": False},
+        {"name": "Chapter", "value": assignment["chapter"], "inline": True},
+        {"name": "Role", "value": assignment["role"], "inline": True},
+    ]
+    if approved:
+        chapter_count = int(assignment.get("chapter_count") or 1)
+        total = int(assignment.get("final_rate") or 0)
+        rate = int(assignment.get("rate_per_chapter") or (total // chapter_count if chapter_count else total))
+        fields.extend([
+            {"name": "Jumlah Chapter", "value": str(chapter_count), "inline": True},
+            {"name": "Rate per Chapter", "value": f"Rp {rate:,.0f}".replace(",", "."), "inline": True},
+            {"name": "Total Bayaran", "value": f"Rp {total:,.0f}".replace(",", "."), "inline": True},
+        ])
+    if assignment.get("gdrive_link"):
+        fields.append({
+            "name": "Hasil Google Drive" if approved else "Hasil Sebelumnya",
+            "value": assignment["gdrive_link"],
+            "inline": False,
+        })
     if notes:
         fields.append({"name": "Catatan Admin", "value": notes[:1024], "inline": False})
     message = {
         "content": f"<@{assignment['staff_id']}>",
-        "embeds": [{"title": title, "description": description, "color": 5763719 if approved else 16753920, "fields": fields}],
+        "embeds": [{
+            "title": title,
+            "description": description,
+            "color": 5763719 if approved else 16753920,
+            "fields": fields,
+            "footer": {"text": f"Task #{assignment['id']} • {'Laporan akhir tugas' if approved else 'Perbaiki lalu submit kembali'}"},
+        }],
     }
     sent = bool(await discord_api("POST", f"/channels/{channel_id}/messages", message))
     if not sent:
