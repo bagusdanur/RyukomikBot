@@ -22,6 +22,22 @@ class StaffTaskSelect(discord.ui.Select):
         embed = discord.Embed(title=f"Tugas #{assignment['id']}", description=f"**{assignment['manga']}** — Chapter {assignment['chapter']}", color=discord.Color.blue())
         embed.add_field(name="Status", value=assignment["status"]); embed.add_field(name="Role", value=assignment["role"]); embed.add_field(name="Bayaran", value=format_currency(assignment["final_rate"]))
         embed.add_field(name="Deadline", value=assignment.get("deadline_at") or "Tidak ditentukan", inline=False)
+        timeline = await db.get_assignment_timeline(assignment["id"])
+        if timeline:
+            labels = {
+                "created": "Tugas dibuat", "assigned": "Tugas diberikan",
+                "claimed": "Diklaim", "submitted": "Hasil dikirim",
+                "revision": "Diminta revisi", "approved": "Disetujui", "paid": "Dibayar",
+            }
+            embed.add_field(
+                name="Riwayat Aktivitas",
+                value="\n".join(
+                    f"• **{labels.get(item['event_type'], item['event_type'])}** — "
+                    f"{item['created_at'][:16].replace('T', ' ')}"
+                    for item in timeline[-8:]
+                ),
+                inline=False,
+            )
         from views.ticket_views import TicketSubmitView
         view = TicketSubmitView(assignment["id"]) if assignment["status"] in ("claimed", "revision") else None
         if view:

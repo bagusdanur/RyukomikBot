@@ -81,6 +81,27 @@ async def setup_database():
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS assignment_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                assignment_id INTEGER NOT NULL,
+                event_type TEXT NOT NULL,
+                actor_id TEXT,
+                detail TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(assignment_id) REFERENCES assignments(id)
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS reminder_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                reminder_key TEXT NOT NULL UNIQUE,
+                assignment_id INTEGER,
+                recipient_type TEXT NOT NULL,
+                sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(assignment_id) REFERENCES assignments(id)
+            )
+        """)
         await db.executemany(
             "INSERT OR IGNORE INTO payrates (role, base_rate) VALUES (?, ?)",
             (("TL", 3000), ("TS", 3000), ("TL+TS", 5000)),
@@ -100,6 +121,16 @@ async def setup_database():
                 chapter_count = COALESCE(NULLIF(chapter_count, 0), 1),
                 rate_per_chapter = COALESCE(rate_per_chapter, final_rate)
             WHERE chapters IS NULL OR rate_per_chapter IS NULL OR chapter_count IS NULL OR chapter_count=0
+        """)
+        await db.execute("""
+            INSERT INTO assignment_events (assignment_id,event_type,actor_id,detail,created_at)
+            SELECT a.id,
+                   CASE WHEN a.status='open' THEN 'created' ELSE 'assigned' END,
+                   CAST(a.staff_id AS TEXT),'Riwayat awal dimigrasikan.',a.assigned_at
+            FROM assignments a
+            WHERE NOT EXISTS (
+                SELECT 1 FROM assignment_events e WHERE e.assignment_id=a.id
+            )
         """)
         
         await db.commit()
@@ -138,6 +169,10 @@ async def create_assignment(
             len(chapters or [chapter]), rate_per_chapter if rate_per_chapter is not None else final_rate,
         ))
         await db.commit()
+        await add_assignment_event(
+            cursor.lastrowid, "assigned" if staff_id else "created", staff_id,
+            "Tugas diberikan langsung." if staff_id else "Tugas dibuka untuk claim.",
+        )
         return cursor.lastrowid
     finally:
         await db.close()
@@ -153,6 +188,8 @@ async def claim_assignment(assignment_id: int, staff_id: int) -> bool:
             WHERE id = ? AND status = 'open'
         """, (staff_id, assignment_id))
         await db.commit()
+        if cursor.rowcount:
+            await add_assignment_event(assignment_id, "claimed", staff_id, "Tugas diklaim staff.")
         return cursor.rowcount > 0
     finally:
         await db.close()
@@ -168,6 +205,8 @@ async def submit_assignment(assignment_id: int, gdrive_link: str, catatan: Optio
             WHERE id = ? AND status IN ('claimed', 'revision')
         """, (gdrive_link, catatan, assignment_id))
         await db.commit()
+        if cursor.rowcount:
+            await add_assignment_event(assignment_id, "submitted", None, catatan or "Hasil dikirim untuk review.")
         return cursor.rowcount > 0
     finally:
         await db.close()
@@ -183,6 +222,8 @@ async def approve_assignment(assignment_id: int) -> bool:
             WHERE id = ? AND status = 'submitted'
         """, (assignment_id,))
         await db.commit()
+        if cursor.rowcount:
+            await add_assignment_event(assignment_id, "approved", None, "Hasil disetujui.")
         return cursor.rowcount > 0
     finally:
         await db.close()
@@ -198,6 +239,8 @@ async def revise_assignment(assignment_id: int, catatan: str) -> bool:
             WHERE id = ? AND status = 'submitted'
         """, (catatan, assignment_id))
         await db.commit()
+        if cursor.rowcount:
+            await add_assignment_event(assignment_id, "revision", None, catatan)
         return cursor.rowcount > 0
     finally:
         await db.close()
@@ -217,6 +260,9 @@ async def mark_paid(assignment_ids: List[int], period: str) -> bool:
             WHERE id IN ({placeholders}) AND status = 'approved'
         """, [period] + assignment_ids)
         await db.commit()
+        if cursor.rowcount:
+            for assignment_id in assignment_ids:
+                await add_assignment_event(assignment_id, "paid", None, f"Pembayaran periode {period}.")
         return cursor.rowcount > 0
     finally:
         await db.close()
@@ -355,6 +401,68 @@ async def set_role_payrate(role: str, base_rate: int) -> bool:
         )
         await db.commit()
         return True
+    finally:
+        await db.close()
+
+
+async def add_assignment_event(
+    assignment_id: int, event_type: str, actor_id=None, detail: Optional[str] = None
+) -> None:
+    """Append an immutable assignment timeline entry."""
+    db = await get_db()
+    try:
+        await db.execute(
+            """INSERT INTO assignment_events (assignment_id,event_type,actor_id,detail)
+               VALUES (?,?,?,?)""",
+            (assignment_id, event_type, str(actor_id) if actor_id else None, detail),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def get_assignment_timeline(assignment_id: int) -> List[Dict[str, Any]]:
+    db = await get_db()
+    try:
+        rows = await (await db.execute(
+            """SELECT event_type,actor_id,detail,created_at FROM assignment_events
+               WHERE assignment_id=? ORDER BY id ASC""",
+            (assignment_id,),
+        )).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        await db.close()
+
+
+async def claim_reminder(reminder_key: str, assignment_id: int, recipient_type: str) -> bool:
+    """Reserve a reminder once so hourly loops and restarts cannot duplicate it."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            """INSERT OR IGNORE INTO reminder_events
+               (reminder_key,assignment_id,recipient_type) VALUES (?,?,?)""",
+            (reminder_key, assignment_id, recipient_type),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+    finally:
+        await db.close()
+
+
+async def get_reminder_candidates() -> List[Dict[str, Any]]:
+    db = await get_db()
+    try:
+        rows = await (await db.execute("""
+            SELECT * FROM assignments
+            WHERE
+              (deadline_at IS NOT NULL AND status IN ('claimed','revision')
+               AND date(deadline_at) <= date('now','+1 day'))
+              OR
+              (status='submitted' AND submitted_at IS NOT NULL
+               AND datetime(submitted_at) <= datetime('now','-24 hours'))
+            ORDER BY deadline_at ASC
+        """)).fetchall()
+        return [dict(row) for row in rows]
     finally:
         await db.close()
 

@@ -4,6 +4,7 @@ import asyncio
 import os
 import time
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Literal
 
 from config import TOKEN, GUILD_ID, STAFF_TASKS_CHANNEL_ID, STAFF_LOG_CHANNEL_ID, ROLE_STAFF_ID, ROLE_ADMIN_ID
@@ -74,6 +75,8 @@ class RyukomikBot(commands.Bot):
         
         if not scheduled_payout_loop.is_running():
             scheduled_payout_loop.start()
+        if not workflow_reminder_loop.is_running():
+            workflow_reminder_loop.start()
         print("[OK] Bot setup complete!")
     
     async def on_ready(self):
@@ -148,6 +151,56 @@ async def scheduled_payout_loop():
 
 @scheduled_payout_loop.before_loop
 async def before_scheduled_payout_loop():
+    await bot.wait_until_ready()
+
+
+@tasks.loop(hours=1)
+async def workflow_reminder_loop():
+    """Send each actionable reminder once, even after process restarts."""
+    guild = bot.get_guild(GUILD_ID)
+    if not guild:
+        return
+    admin_channel = guild.get_channel(STAFF_LOG_CHANNEL_ID)
+    from helpers.utils import find_ticket
+    for item in await db.get_reminder_candidates():
+        assignment_id = int(item["id"])
+        if item["status"] == "submitted":
+            key = f"review-24h:{assignment_id}:{item.get('submitted_at')}"
+            if admin_channel and await db.claim_reminder(key, assignment_id, "admin"):
+                await admin_channel.send(embed=discord.Embed(
+                    title="⏳ Hasil Belum Direview",
+                    description=(
+                        f"Tugas **#{assignment_id} — {item['manga']} Ch. {item['chapter']}** "
+                        "sudah menunggu review lebih dari 24 jam."
+                    ),
+                    color=discord.Color.orange(),
+                ))
+            continue
+        deadline = str(item.get("deadline_at") or "")[:10]
+        today = datetime.now(ZoneInfo("Asia/Jakarta")).date().isoformat()
+        overdue = bool(deadline and deadline < today)
+        key = f"{'overdue' if overdue else 'deadline-h1'}:{assignment_id}:{deadline}"
+        if not await db.claim_reminder(key, assignment_id, "staff"):
+            continue
+        ticket = await find_ticket(guild, int(item.get("staff_id") or 0))
+        if ticket:
+            member = guild.get_member(int(item["staff_id"]))
+            await ticket.send(
+                content=member.mention if member else None,
+                embed=discord.Embed(
+                    title="⚠️ Tugas Melewati Deadline" if overdue else "⏰ Deadline Besok",
+                    description=(
+                        f"**#{assignment_id} — {item['manga']} Ch. {item['chapter']}**\n"
+                        f"Deadline: **{deadline}**. "
+                        + ("Gunakan **Bantuan Tugas** jika ada kendala." if overdue else "Pastikan hasil segera diselesaikan.")
+                    ),
+                    color=discord.Color.red() if overdue else discord.Color.gold(),
+                ),
+            )
+
+
+@workflow_reminder_loop.before_loop
+async def before_workflow_reminder_loop():
     await bot.wait_until_ready()
 
 

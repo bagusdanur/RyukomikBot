@@ -8,6 +8,7 @@ import InputText from "primevue/inputtext";
 import Tag from "primevue/tag";
 import {
   api,
+  type ActionItem,
   type Assignment,
   type Invoice,
   type Payout,
@@ -19,7 +20,7 @@ import {
 } from "./api";
 
 type Page =
-  "overview" | "tasks" | "staff" | "payrates" | "deadlines" | "recap" | "payouts" | "audit";
+  "overview" | "actions" | "tasks" | "staff" | "payrates" | "deadlines" | "recap" | "payouts" | "audit";
 const user = ref<User | null>(null),
   authChecked = ref(false),
   loading = ref(false),
@@ -43,6 +44,7 @@ const payrates = ref<
   payoutDetail = ref<PayoutDetail | null>(null),
   payoutStatus = ref(""),
   audit = ref<Array<Record<string, string | number | null>>>([]);
+const actionItems = ref<ActionItem[]>([]);
 const search = ref(""),
   status = ref(""),
   staffFilter = ref(""),
@@ -66,6 +68,9 @@ const uploadTask = ref<Assignment | null>(null),
 
 const navItems = computed(() => [
   { id: "overview", label: "Ringkasan", icon: "pi pi-home" },
+  ...(user.value?.role === "admin"
+    ? [{ id: "actions", label: "Perlu Tindakan", icon: "pi pi-bell" }]
+    : []),
   { id: "tasks", label: "Tugas", icon: "pi pi-list-check" },
   ...(user.value?.role === "admin"
     ? [
@@ -158,6 +163,7 @@ async function run<T>(op: () => Promise<T>, target: { value: T }) {
 async function loadPage() {
   if (!user.value) return;
   if (page.value === "overview") await run(api.overview, overview);
+  if (page.value === "actions") await run(api.actionCenter, actionItems);
   if (page.value === "tasks") {
     if (user.value.role === "admin" && !staff.value.length)
       staff.value = await api.staff();
@@ -220,10 +226,22 @@ async function copyAccount(value: string | null) {
   success.value = "Nomor tujuan berhasil disalin.";
 }
 async function confirmPayout(item: Payout) {
-  if (!confirm(`Konfirmasi transfer ${money(item.total_amount)} untuk ${item.staff_name}?`)) return;
+  const detail = payoutDetail.value?.id === item.id
+    ? payoutDetail.value
+    : await api.payout(item.id);
+  const destination = detail.method.account_number || "QRIS";
+  const expectedHint = destination.slice(-4);
+  const amount = prompt(
+    `PENGAMANAN TRANSFER\nStaff: ${item.staff_name}\nNominal: ${money(item.total_amount)}\nTujuan: ${detail.method.provider} • ${destination}\n\nKetik nominal angka tanpa titik:`,
+  )?.trim();
+  if (!amount) return;
+  const last4 = prompt(
+    `Ketik 4 karakter terakhir tujuan pembayaran (${expectedHint === "QRIS" ? "QRIS" : "contoh " + expectedHint}):`,
+  )?.trim();
+  if (!last4) return;
   try {
     loading.value = true;
-    await api.payPayout(item.id);
+    await api.payPayout(item.id, Number(amount), last4);
     payoutDetail.value = null;
     success.value = "Transfer dikonfirmasi dan tugas terkait ditandai dibayar.";
     await loadPage();
@@ -365,23 +383,9 @@ async function createInvoice(item: Recap) {
   }
 }
 async function payInvoice(item: Invoice) {
-  if (
-    !confirm(
-      `Tandai invoice ${item.invoice_number} sebesar ${money(item.total_amount)} sebagai dibayar?`,
-    )
-  )
-    return;
-  try {
-    loading.value = true;
-    await api.payInvoice(item.id);
-    success.value = "Pembayaran dikonfirmasi dan tugas ditandai paid.";
-    await loadPage();
-  } catch (e) {
-    error.value =
-      e instanceof Error ? e.message : "Gagal memproses pembayaran.";
-  } finally {
-    loading.value = false;
-  }
+  page.value = "payouts";
+  success.value = `Buka permintaan ${item.invoice_number}, periksa tujuan transfer, lalu gunakan konfirmasi aman.`;
+  await loadPage();
 }
 async function deleteInvoice(item: Invoice) {
   if (
@@ -650,6 +654,45 @@ onMounted(async () => {
             </div>
           </article></div
       ></template>
+      <template v-if="page === 'actions'">
+        <div class="toolbar">
+          <div>
+            <p class="eyebrow">ANTREAN ADMINISTRATOR</p>
+            <h3>Perlu Tindakan</h3>
+            <small>Diurutkan berdasarkan urgensi agar pekerjaan penting tidak terlewat.</small>
+          </div>
+          <Button label="Muat ulang" icon="pi pi-refresh" severity="secondary" @click="loadPage" />
+        </div>
+        <div v-if="!actionItems.length && !loading" class="empty-state">
+          <i class="pi pi-check-circle"></i>
+          <h3>Semua pekerjaan sudah tertangani</h3>
+          <p>Tidak ada review, deadline, pembayaran, atau invoice gagal yang menunggu.</p>
+        </div>
+        <div v-else class="action-list">
+          <article v-for="item in actionItems" :key="`${item.item_type}-${item.id}`" class="panel">
+            <div>
+              <Tag :severity="item.priority === 1 ? 'danger' : item.priority === 2 ? 'warn' : 'secondary'"
+                :value="({
+                  review: 'Review hasil',
+                  overdue: 'Terlambat',
+                  deadline: 'Deadline dekat',
+                  transfer: 'Transfer gaji',
+                  payment_method: 'Menunggu rekening',
+                  invoice_delivery: 'Kirim ulang invoice'
+                } as Record<string,string>)[item.action_type] || item.action_type" />
+              <h3>{{ item.title }}</h3>
+              <p>{{ item.staff_name }}<span v-if="item.due_at"> • {{ item.due_at }}</span></p>
+            </div>
+            <Button
+              label="Tangani"
+              icon="pi pi-arrow-right"
+              @click="item.item_type === 'payout'
+                ? (page = 'payouts', loadPage())
+                : (page = 'tasks', status = item.action_type === 'review' ? 'submitted' : '', loadPage())"
+            />
+          </article>
+        </div>
+      </template>
       <template v-if="page === 'tasks'"
         ><div class="toolbar">
           <span class="search"
@@ -954,7 +997,7 @@ onMounted(async () => {
                     @click="deleteInvoice(inv)"
                   /><Button
                     v-if="inv.status === 'issued'"
-                    label="Bayar"
+                    label="Proses pembayaran"
                     size="small"
                     @click="payInvoice(inv)"
                   /><Button

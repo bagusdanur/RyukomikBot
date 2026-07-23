@@ -113,6 +113,18 @@ export type PayoutDetail = Payout & {
   };
   items: InvoiceDetail["items"];
 };
+export type ActionItem = {
+  id: number;
+  item_type: "assignment" | "payout";
+  action_type: string;
+  title: string;
+  staff_id: string | null;
+  staff_name: string;
+  status: string;
+  due_at: string | null;
+  created_at: string | null;
+  priority: number;
+};
 
 let csrfToken = "";
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -146,6 +158,7 @@ const liveApi = {
       total_value: number;
       urgent_deadlines: number;
     }>("/api/overview"),
+  actionCenter: () => request<ActionItem[]>("/api/action-center"),
   assignments: (status = "", search = "") =>
     request<Assignment[]>(
       `/api/assignments?status=${encodeURIComponent(status)}&search=${encodeURIComponent(search)}`,
@@ -198,7 +211,11 @@ const liveApi = {
   payoutPdfUrl: (id: number) => `/api/payouts/${id}/pdf`,
   resendPayoutInvoice: (id: number) =>
     request(`/api/payouts/${id}/resend-invoice`, { method: "POST" }),
-  payPayout: (id: number) => request(`/api/payouts/${id}/pay`, { method: "POST" }),
+  payPayout: (id: number, amount: number, destination_last4: string) =>
+    request(`/api/payouts/${id}/pay`, {
+      method: "POST",
+      body: JSON.stringify({ amount, destination_last4 }),
+    }),
   rejectPayout: (id: number, reason: string) =>
     request(`/api/payouts/${id}/reject`, { method: "POST", body: JSON.stringify({ reason }) }),
   submissions: (assignmentId?: number) =>
@@ -289,6 +306,7 @@ const demoApi = {
     total_value: 584500,
     urgent_deadlines: 3,
   }),
+  actionCenter: async () => [] as ActionItem[],
   assignments: async (status = "", search = "") =>
     sampleAssignments.filter(
       (item) =>

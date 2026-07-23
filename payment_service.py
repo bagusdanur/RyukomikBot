@@ -613,6 +613,11 @@ async def pay_payout(payout_id, actor_id):
             f"UPDATE assignments SET status='paid',paid_period=? WHERE status='approved' AND id IN ({placeholders})",
             [period, *ids],
         )
+        await connection.executemany(
+            """INSERT INTO assignment_events (assignment_id,event_type,actor_id,detail)
+               VALUES (?,'paid',?,?)""",
+            [(assignment_id, str(actor_id), f"Pembayaran periode {period}.") for assignment_id in ids],
+        )
         await connection.execute(
             "UPDATE dashboard_invoices SET status='paid',paid_at=CURRENT_TIMESTAMP WHERE id=?",
             (payout["invoice_id"],),

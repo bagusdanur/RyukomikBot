@@ -358,6 +358,11 @@ class PayoutRejectRequest(BaseModel):
     reason: str = Field(min_length=3, max_length=500)
 
 
+class PayoutPayConfirmRequest(BaseModel):
+    amount: int = Field(gt=0)
+    destination_last4: str = Field(pattern=r"^[0-9A-Za-z]{4}$")
+
+
 class UploadRequest(BaseModel):
     assignment_id: int
     filename: str = Field(min_length=1, max_length=180)
@@ -747,6 +752,54 @@ async def overview(user=Depends(current_user)):
         await connection.close()
 
 
+@app.get("/api/action-center")
+async def action_center(_user=Depends(admin_user)):
+    """One prioritized queue for everything that currently needs an admin action."""
+    connection = await dashboard_db()
+    try:
+        rows = await (await connection.execute("""
+            SELECT id,'assignment' item_type,
+                   CASE
+                     WHEN status='submitted' THEN 'review'
+                     WHEN deadline_at IS NOT NULL AND date(deadline_at)<date('now') THEN 'overdue'
+                     ELSE 'deadline'
+                   END action_type,
+                   manga || ' • Ch. ' || chapter title,
+                   staff_id, status, deadline_at due_at, submitted_at created_at,
+                   CASE WHEN status='submitted' THEN 1
+                        WHEN deadline_at IS NOT NULL AND date(deadline_at)<date('now') THEN 2
+                        ELSE 3 END priority
+            FROM assignments
+            WHERE status='submitted'
+               OR (status IN ('claimed','revision') AND deadline_at IS NOT NULL
+                   AND date(deadline_at)<=date('now','+1 day'))
+            ORDER BY priority,id DESC
+        """)).fetchall()
+        payouts = await (await connection.execute("""
+            SELECT p.id,'payout' item_type,
+                   CASE WHEN p.status='awaiting_method' THEN 'payment_method'
+                        WHEN p.invoice_send_error IS NOT NULL THEN 'invoice_delivery'
+                        ELSE 'transfer' END action_type,
+                   i.invoice_number title,p.staff_id,p.status,NULL due_at,p.requested_at created_at,
+                   CASE WHEN p.invoice_send_error IS NOT NULL THEN 1
+                        WHEN p.status='issued' THEN 2 ELSE 3 END priority
+            FROM payout_requests p JOIN dashboard_invoices i ON i.id=p.invoice_id
+            WHERE p.status IN ('awaiting_method','issued')
+               OR (p.status='paid' AND p.invoice_send_error IS NOT NULL)
+            ORDER BY priority,p.id DESC
+        """)).fetchall()
+        return await enrich_staff([*rows, *payouts])
+    finally:
+        await connection.close()
+
+
+@app.get("/api/assignments/{assignment_id}/timeline")
+async def assignment_timeline(assignment_id: int, _user=Depends(current_user)):
+    if not await staff_db.get_assignment(assignment_id):
+        raise HTTPException(status_code=404, detail="Tugas tidak ditemukan.")
+    return await staff_db.get_assignment_timeline(assignment_id)
+
+
 @app.get("/api/assignments")
 async def assignments(
     status: str | None = Query(default=None),
@@ -1009,10 +1062,24 @@ async def resend_payout_invoice(payout_id: int, user=Depends(admin_user)):
 
 
 @app.post("/api/payouts/{payout_id}/pay")
-async def pay_payout_request(payout_id: int, user=Depends(admin_user)):
+async def pay_payout_request(
+    payout_id: int, payload: PayoutPayConfirmRequest, user=Depends(admin_user)
+):
     before = await payout_service.payout_detail(payout_id)
     if not before:
         raise HTTPException(status_code=404, detail="Permintaan gaji tidak ditemukan.")
+    sensitive = await payout_service.payout_detail(payout_id, include_sensitive=True)
+    destination = (
+        sensitive["method"].get("account_number")
+        or sensitive["method"].get("masked_account")
+        or "QRIS"
+    )
+    expected_last4 = "".join(char for char in str(destination) if char.isalnum())[-4:]
+    if payload.amount != int(before["total_amount"]) or payload.destination_last4.casefold() != expected_last4.casefold():
+        raise HTTPException(
+            status_code=422,
+            detail="Nominal atau 4 karakter terakhir tujuan pembayaran tidak cocok.",
+        )
     try:
         payout = await payout_service.pay_payout(payout_id, int(user["id"]))
     except ValueError as error:

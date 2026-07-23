@@ -294,17 +294,40 @@ async def send_paid_invoice_to_ticket(interaction, payout_id):
         return False, message
 
 
-class PayPayoutDynamic(discord.ui.DynamicItem[discord.ui.Button], template=r"payout:pay:(?P<payout_id>\d+):v1"):
+class ConfirmTransferModal(discord.ui.Modal, title="Konfirmasi Transfer Gaji"):
+    amount = discord.ui.TextInput(
+        label="Ketik nominal transfer", placeholder="Contoh: 60000", max_length=15
+    )
+    destination_last4 = discord.ui.TextInput(
+        label="4 karakter terakhir tujuan", placeholder="Contoh: 1234 atau QRIS",
+        min_length=4, max_length=4,
+    )
+
     def __init__(self, payout_id):
+        super().__init__()
         self.payout_id = payout_id
-        super().__init__(discord.ui.Button(label="Sudah Ditransfer", style=discord.ButtonStyle.success, custom_id=f"payout:pay:{payout_id}:v1"))
-    @classmethod
-    async def from_custom_id(cls, interaction, item, match): return cls(int(match["payout_id"]))
-    async def callback(self, interaction):
+
+    async def on_submit(self, interaction):
         if not is_admin(interaction.user):
             return await interaction.response.send_message("Hanya administrator.", ephemeral=True)
+        detail = await payments.payout_detail(self.payout_id, include_sensitive=True)
+        if not detail or detail["status"] != "issued":
+            return await interaction.response.send_message(
+                "Permintaan sudah diproses atau tidak ditemukan.", ephemeral=True
+            )
+        destination = detail["method"].get("account_number") or "QRIS"
+        expected = "".join(char for char in str(destination) if char.isalnum())[-4:]
         try:
-            payout = await payments.pay_payout(self.payout_id, interaction.user.id)
+            typed_amount = int(self.amount.value.replace(".", "").replace(",", "").strip())
+        except ValueError:
+            typed_amount = -1
+        if typed_amount != int(detail["total_amount"]) or self.destination_last4.value.casefold() != expected.casefold():
+            return await interaction.response.send_message(
+                "Konfirmasi ditolak: nominal atau 4 karakter terakhir tujuan tidak cocok.",
+                ephemeral=True,
+            )
+        try:
+            await payments.pay_payout(self.payout_id, interaction.user.id)
         except ValueError as error:
             return await interaction.response.send_message(str(error), ephemeral=True)
         sent, error = await send_paid_invoice_to_ticket(interaction, self.payout_id)
@@ -317,6 +340,22 @@ class PayPayoutDynamic(discord.ui.DynamicItem[discord.ui.Button], template=r"pay
             embed=discord.Embed(title="Pembayaran Selesai", description=description, color=discord.Color.green()),
             view=view,
         )
+
+
+class PayPayoutDynamic(discord.ui.DynamicItem[discord.ui.Button], template=r"payout:pay:(?P<payout_id>\d+):v1"):
+    def __init__(self, payout_id):
+        self.payout_id = payout_id
+        super().__init__(discord.ui.Button(label="Sudah Ditransfer", style=discord.ButtonStyle.success, custom_id=f"payout:pay:{payout_id}:v1"))
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match): return cls(int(match["payout_id"]))
+    async def callback(self, interaction):
+        if not is_admin(interaction.user):
+            return await interaction.response.send_message("Hanya administrator.", ephemeral=True)
+        detail = await payments.payout_detail(self.payout_id, include_sensitive=True)
+        if not detail or detail["status"] != "issued":
+            return await interaction.response.send_message("Permintaan sudah diproses.", ephemeral=True)
+        destination = detail["method"].get("account_number") or "QRIS"
+        await interaction.response.send_modal(ConfirmTransferModal(self.payout_id))
 
 
 class RejectPayoutDynamic(discord.ui.DynamicItem[discord.ui.Button], template=r"payout:reject:(?P<payout_id>\d+):v1"):
