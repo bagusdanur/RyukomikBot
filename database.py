@@ -132,6 +132,9 @@ async def setup_database():
                 SELECT 1 FROM assignment_events e WHERE e.assignment_id=a.id
             )
         """)
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_assignments_status_time ON assignments(status,assigned_at)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_assignments_staff_status ON assignments(staff_id,status)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_assignments_deadline_status ON assignments(deadline_at,status)")
         
         await db.commit()
     finally:

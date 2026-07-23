@@ -125,6 +125,13 @@ export type ActionItem = {
   created_at: string | null;
   priority: number;
 };
+export type OperationSnapshot = {
+  events: Array<Record<string, any>>;
+  outbox: Array<Record<string, any>>;
+  schedulers: Array<Record<string, any>>;
+  backups: Array<Record<string, any>>;
+  staff_cache: { count: number; updated_at: string | null; ttl_seconds: number };
+};
 
 let csrfToken = "";
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -159,6 +166,12 @@ const liveApi = {
       urgent_deadlines: number;
     }>("/api/overview"),
   actionCenter: () => request<ActionItem[]>("/api/action-center"),
+  operations: () => request<OperationSnapshot>("/api/operations"),
+  resolveOperation: (id: number) =>
+    request(`/api/operations/events/${id}/resolve`, { method: "POST" }),
+  retryNotification: (id: number) =>
+    request(`/api/operations/outbox/${id}/retry`, { method: "POST" }),
+  syncStaff: () => request<{ count: number; updated_at: string }>("/api/staff/sync", { method: "POST" }),
   assignments: (status = "", search = "") =>
     request<Assignment[]>(
       `/api/assignments?status=${encodeURIComponent(status)}&search=${encodeURIComponent(search)}`,
@@ -307,6 +320,13 @@ const demoApi = {
     urgent_deadlines: 3,
   }),
   actionCenter: async () => [] as ActionItem[],
+  operations: async () => ({
+    events: [], outbox: [], schedulers: [], backups: [],
+    staff_cache: { count: 3, updated_at: new Date().toISOString(), ttl_seconds: 600 },
+  }),
+  resolveOperation: async () => ({ ok: true }),
+  retryNotification: async () => ({ ok: true }),
+  syncStaff: async () => ({ count: 3, updated_at: new Date().toISOString() }),
   assignments: async (status = "", search = "") =>
     sampleAssignments.filter(
       (item) =>

@@ -25,6 +25,7 @@ from raw_downloader import get_downloader
 from helpers.utils import ROLE_PAYRATES, find_or_create_staff_ticket, is_admin, is_staff
 from helpers.panel_content import build_admin_panel_embed, build_guide_embed, build_staff_panel_embed
 import payment_service as payments
+import operations
 from views.payment_views import (
     ConfirmPayPayoutDynamic, IncomeMenuView, PayPayoutDynamic, PayoutAdminView, RejectPayoutDynamic,
     RetryInvoiceDynamic,
@@ -59,6 +60,8 @@ class RyukomikBot(commands.Bot):
         # Setup database
         await setup_database()
         await payments.setup_payment_tables()
+        await operations.setup_operations()
+        await operations.recover_outbox()
         
         # Add persistent views
         self.recruitment.register_persistent_views()
@@ -80,6 +83,10 @@ class RyukomikBot(commands.Bot):
             scheduled_payout_loop.start()
         if not workflow_reminder_loop.is_running():
             workflow_reminder_loop.start()
+        if not notification_outbox_loop.is_running():
+            notification_outbox_loop.start()
+        if not daily_backup_loop.is_running():
+            daily_backup_loop.start()
         print("[OK] Bot setup complete!")
     
     async def on_ready(self):
@@ -170,14 +177,18 @@ async def workflow_reminder_loop():
         if item["status"] == "submitted":
             key = f"review-24h:{assignment_id}:{item.get('submitted_at')}"
             if admin_channel and await db.claim_reminder(key, assignment_id, "admin"):
-                await admin_channel.send(embed=discord.Embed(
+                embed = discord.Embed(
                     title="⏳ Hasil Belum Direview",
                     description=(
                         f"Tugas **#{assignment_id} — {item['manga']} Ch. {item['chapter']}** "
                         "sudah menunggu review lebih dari 24 jam."
                     ),
                     color=discord.Color.orange(),
-                ))
+                )
+                await operations.enqueue_notification(
+                    key, "review_reminder", admin_channel.id,
+                    {"embed": embed.to_dict()},
+                )
             continue
         deadline = str(item.get("deadline_at") or "")[:10]
         today = datetime.now(ZoneInfo("Asia/Jakarta")).date().isoformat()
@@ -188,9 +199,7 @@ async def workflow_reminder_loop():
         ticket = await find_ticket(guild, int(item.get("staff_id") or 0))
         if ticket:
             member = guild.get_member(int(item["staff_id"]))
-            await ticket.send(
-                content=member.mention if member else None,
-                embed=discord.Embed(
+            embed = discord.Embed(
                     title="⚠️ Tugas Melewati Deadline" if overdue else "⏰ Deadline Besok",
                     description=(
                         f"**#{assignment_id} — {item['manga']} Ch. {item['chapter']}**\n"
@@ -198,12 +207,81 @@ async def workflow_reminder_loop():
                         + ("Gunakan **Bantuan Tugas** jika ada kendala." if overdue else "Pastikan hasil segera diselesaikan.")
                     ),
                     color=discord.Color.red() if overdue else discord.Color.gold(),
-                ),
+                )
+            await operations.enqueue_notification(
+                key, "deadline_reminder", ticket.id,
+                {"content": member.mention if member else None, "embed": embed.to_dict()},
             )
 
 
 @workflow_reminder_loop.before_loop
 async def before_workflow_reminder_loop():
+    await bot.wait_until_ready()
+
+
+@tasks.loop(seconds=15)
+async def notification_outbox_loop():
+    started = datetime.now(ZoneInfo("Asia/Jakarta"))
+    failure = None
+    try:
+        for item in await operations.due_notifications():
+            try:
+                channel = bot.get_channel(int(item["channel_id"]))
+                if channel is None:
+                    try:
+                        channel = await bot.fetch_channel(int(item["channel_id"]))
+                    except (discord.NotFound, discord.Forbidden):
+                        channel = None
+                if channel is None:
+                    await operations.finish_notification(
+                        item["id"], "Channel tidak ditemukan atau tidak dapat diakses.", permanent=True
+                    )
+                    continue
+                import json
+                payload = json.loads(item["payload_json"])
+                embed = discord.Embed.from_dict(payload["embed"]) if payload.get("embed") else None
+                await channel.send(content=payload.get("content"), embed=embed)
+                await operations.finish_notification(item["id"])
+            except (discord.NotFound, discord.Forbidden) as error:
+                await operations.finish_notification(item["id"], error, permanent=True)
+                await operations.record_event(
+                    "discord", "error", "Notifikasi Discord gagal permanen",
+                    {"outbox_id": item["id"], "error": str(error)[:300]},
+                )
+            except Exception as error:
+                await operations.finish_notification(item["id"], error)
+                await operations.record_event(
+                    "discord", "warning", "Notifikasi Discord akan dicoba ulang",
+                    {"outbox_id": item["id"], "error": str(error)[:300]},
+                )
+    except Exception as error:
+        failure = error
+        await operations.record_event("outbox", "error", "Worker outbox gagal", {"error": str(error)[:500]})
+    finally:
+        await operations.mark_scheduler("notification_outbox", started, failure)
+
+
+@notification_outbox_loop.before_loop
+async def before_notification_outbox_loop():
+    await bot.wait_until_ready()
+
+
+@tasks.loop(hours=1)
+async def daily_backup_loop():
+    now = datetime.now(ZoneInfo("Asia/Jakarta"))
+    if now.hour != 3 or not await operations.daily_job_due("daily_backup", now.date().isoformat()):
+        return
+    failure = None
+    try:
+        await operations.create_verified_backup(payments.r2_client(), payments.R2_BUCKET_NAME)
+    except Exception as error:
+        failure = error
+    finally:
+        await operations.mark_scheduler("daily_backup", now, failure)
+
+
+@daily_backup_loop.before_loop
+async def before_daily_backup_loop():
     await bot.wait_until_ready()
 
 

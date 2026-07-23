@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, defineAsyncComponent, onMounted, ref, watch } from "vue";
 import Button from "primevue/button";
 import Column from "primevue/column";
 import DataTable from "primevue/datatable";
@@ -20,7 +20,8 @@ import {
 } from "./api";
 
 type Page =
-  "overview" | "actions" | "tasks" | "staff" | "payrates" | "deadlines" | "recap" | "payouts" | "audit";
+  "overview" | "actions" | "tasks" | "staff" | "payrates" | "deadlines" | "recap" | "payouts" | "operations" | "audit";
+const OperationsPage = defineAsyncComponent(() => import("./pages/OperationsPage.vue"));
 const user = ref<User | null>(null),
   authChecked = ref(false),
   loading = ref(false),
@@ -42,6 +43,7 @@ const payrates = ref<
   invoices = ref<Invoice[]>([]),
   payouts = ref<Payout[]>([]),
   payoutDetail = ref<PayoutDetail | null>(null),
+  paymentConfirmation = ref<PayoutDetail | null>(null),
   payoutStatus = ref(""),
   audit = ref<Array<Record<string, string | number | null>>>([]);
 const actionItems = ref<ActionItem[]>([]);
@@ -78,6 +80,7 @@ const navItems = computed(() => [
         { id: "payrates", label: "Payrate", icon: "pi pi-wallet" },
         { id: "recap", label: "Gaji & Invoice", icon: "pi pi-receipt" },
         { id: "payouts", label: "Permintaan Gaji", icon: "pi pi-money-bill" },
+        { id: "operations", label: "Operasional", icon: "pi pi-heart-fill" },
         { id: "audit", label: "Audit Log", icon: "pi pi-shield" },
       ]
     : []),
@@ -162,7 +165,10 @@ async function run<T>(op: () => Promise<T>, target: { value: T }) {
 }
 async function loadPage() {
   if (!user.value) return;
-  if (page.value === "overview") await run(api.overview, overview);
+  if (page.value === "overview") {
+    await run(api.overview, overview);
+    if (user.value.role === "admin") actionItems.value = await api.actionCenter();
+  }
   if (page.value === "actions") await run(api.actionCenter, actionItems);
   if (page.value === "tasks") {
     if (user.value.role === "admin" && !staff.value.length)
@@ -195,6 +201,19 @@ async function openPayout(item: Payout) {
   } finally {
     loading.value = false;
   }
+}
+async function handleAction(item: ActionItem) {
+  if (item.item_type === "payout") {
+    page.value = "payouts";
+    await loadPage();
+    const payout = payouts.value.find((entry) => entry.id === item.id);
+    if (payout) await openPayout(payout);
+    return;
+  }
+  page.value = "tasks";
+  status.value = item.action_type === "review" ? "submitted" : "";
+  search.value = item.title.split(" • ")[0];
+  await loadPage();
 }
 async function openQris(item: PayoutDetail) {
   try {
@@ -229,14 +248,15 @@ async function confirmPayout(item: Payout) {
   const detail = payoutDetail.value?.id === item.id
     ? payoutDetail.value
     : await api.payout(item.id);
-  const destination = detail.method.account_number || "QRIS";
-  if (!confirm(
-    `KONFIRMASI TRANSFER\n\nStaff: ${item.staff_name}\nInvoice: ${item.invoice_number}\nNominal: ${money(item.total_amount)}\nMetode: ${detail.method.provider}\nNama: ${detail.method.account_name}\nTujuan: ${destination}\nJumlah: ${item.chapter_count} chapter\n\nPastikan uang sudah benar-benar ditransfer. Lanjutkan?`,
-  )) return;
+  paymentConfirmation.value = detail;
+}
+async function completePayout(item: PayoutDetail) {
+  const destination = item.method.account_number || "QRIS";
   const last4 = destination === "QRIS" ? "QRIS" : destination.slice(-4);
   try {
     loading.value = true;
     await api.payPayout(item.id, item.total_amount, last4);
+    paymentConfirmation.value = null;
     payoutDetail.value = null;
     success.value = "Transfer dikonfirmasi dan tugas terkait ditandai dibayar.";
     await loadPage();
@@ -484,13 +504,25 @@ async function logout() {
   await api.logout();
   user.value = null;
 }
-watch(page, loadPage);
-watch(status, () => page.value === "tasks" && loadPage());
+watch(page, async () => {
+  const params = new URLSearchParams(location.search);
+  params.set("page", page.value);
+  history.replaceState(null, "", `${location.pathname}?${params}`);
+  await loadPage();
+});
+watch(status, () => {
+  const params = new URLSearchParams(location.search);
+  status.value ? params.set("status", status.value) : params.delete("status");
+  history.replaceState(null, "", `${location.pathname}?${params}`);
+  if (page.value === "tasks") loadPage();
+});
 onMounted(async () => {
   try {
     user.value = await api.me();
-    if (new URLSearchParams(location.search).get("page") === "payouts")
-      page.value = "payouts";
+    const params = new URLSearchParams(location.search);
+    const requested = params.get("page") as Page | null;
+    if (requested && navItems.value.some((item) => item.id === requested)) page.value = requested;
+    status.value = params.get("status") || "";
     await loadPage();
   } catch {
     user.value = null;
@@ -535,6 +567,7 @@ onMounted(async () => {
           @click="page = item.id as Page"
         >
           <i :class="item.icon"></i><span>{{ item.label }}</span>
+          <b v-if="item.id === 'actions' && actionItems.length" class="nav-badge">{{ actionItems.length }}</b>
         </button>
       </nav>
       <div class="profile">
@@ -681,13 +714,15 @@ onMounted(async () => {
             <Button
               label="Tangani"
               icon="pi pi-arrow-right"
-              @click="item.item_type === 'payout'
-                ? (page = 'payouts', loadPage())
-                : (page = 'tasks', status = item.action_type === 'review' ? 'submitted' : '', loadPage())"
+              @click="handleAction(item)"
             />
           </article>
         </div>
       </template>
+      <Suspense v-if="page === 'operations'">
+        <OperationsPage />
+        <template #fallback><div class="operations-skeleton"><span v-for="n in 4" :key="n"></span></div></template>
+      </Suspense>
       <template v-if="page === 'tasks'"
         ><div class="toolbar">
           <span class="search"
@@ -1083,6 +1118,30 @@ onMounted(async () => {
         <div v-if="payoutDetail.status === 'issued'" class="modal-actions">
           <Button label="Tolak" severity="danger" @click="rejectPayout(payoutDetail!)" />
           <Button label="Konfirmasi Sudah Ditransfer" icon="pi pi-check" @click="confirmPayout(payoutDetail!)" />
+        </div>
+      </section>
+    </div>
+    <div v-if="paymentConfirmation" class="modal-backdrop" @click.self="paymentConfirmation = null">
+      <section class="modal-card payment-confirm-card">
+        <div class="modal-head"><div><p class="eyebrow">FINAL CONFIRMATION</p>
+          <h3>Konfirmasi Transfer</h3></div>
+          <button type="button" @click="paymentConfirmation = null">×</button></div>
+        <div class="confirm-warning"><i class="pi pi-shield"></i>
+          <p>Pastikan uang sudah benar-benar berhasil ditransfer. Tindakan ini menandai seluruh tugas sebagai dibayar.</p></div>
+        <div class="payment-destination">
+          <span><small>Staff</small><b>{{ paymentConfirmation.staff_name }}</b></span>
+          <span><small>Invoice</small><b>{{ paymentConfirmation.invoice_number }}</b></span>
+          <span><small>Total transfer</small><b>{{ money(paymentConfirmation.total_amount) }}</b></span>
+          <span><small>Jumlah pekerjaan</small><b>{{ paymentConfirmation.chapter_count }} chapter</b></span>
+          <span><small>Metode</small><b>{{ paymentConfirmation.method.provider }}</b></span>
+          <span><small>Nama pemilik</small><b>{{ paymentConfirmation.method.account_name }}</b></span>
+          <span class="wide"><small>Tujuan pembayaran</small>
+            <b>{{ paymentConfirmation.method.account_number || "QRIS" }}</b></span>
+        </div>
+        <div class="modal-actions">
+          <Button label="Kembali" severity="secondary" :disabled="loading" @click="paymentConfirmation = null" />
+          <Button label="Konfirmasi Transfer" icon="pi pi-check" :loading="loading"
+            @click="completePayout(paymentConfirmation!)" />
         </div>
       </section>
     </div>

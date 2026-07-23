@@ -7,7 +7,9 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
-          if (id.includes('primevue') || id.includes('@primeuix')) return 'primevue'
+          const component = id.match(/node_modules[/\\]primevue[/\\]([^/\\]+)/)
+          if (component) return `primevue-${component[1]}`
+          if (id.includes('@primeuix')) return 'primevue-theme'
           if (id.includes('node_modules/vue')) return 'vue'
         },
       },

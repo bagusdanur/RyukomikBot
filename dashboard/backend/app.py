@@ -25,6 +25,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from config import GUILD_ID, ROLE_ADMIN_ID, ROLE_STAFF_ID, STAFF_LOG_CHANNEL_ID, TOKEN
 import database as staff_db
 import payment_service as payout_service
+import operations
 from database import DB_PATH, setup_database
 from chapter_utils import chapter_display, parse_chapters
 from invoice_pdf import render_paid_invoice
@@ -44,6 +45,8 @@ R2_ACCESS_KEY_ID = os.getenv("R2_ACCESS_KEY_ID", "")
 R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY", "")
 R2_BUCKET_NAME = os.getenv("R2_BUCKET_NAME", "ryukomik-staff-submissions")
 R2_ENDPOINT = os.getenv("R2_ENDPOINT", f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com" if R2_ACCOUNT_ID else "")
+_staff_cache = {"items": [], "expires_at": 0.0, "updated_at": None}
+_staff_cache_lock = asyncio.Lock()
 
 
 async def dashboard_db():
@@ -189,10 +192,13 @@ async def setup_dashboard_tables():
             JOIN dashboard_invoices v ON v.id=i.invoice_id WHERE v.status!='void'
         """)
         await connection.execute("INSERT OR IGNORE INTO dashboard_schema_migrations(version) VALUES(2)")
+        await connection.execute("CREATE INDEX IF NOT EXISTS idx_invoices_period_status ON dashboard_invoices(period,status)")
+        await connection.execute("CREATE INDEX IF NOT EXISTS idx_audit_created ON dashboard_audit_logs(created_at)")
         await connection.commit()
         await connection.execute("PRAGMA foreign_keys=ON")
     finally:
         await connection.close()
+    await operations.setup_operations()
 
 
 @asynccontextmanager
@@ -363,6 +369,10 @@ class PayoutPayConfirmRequest(BaseModel):
     destination_last4: str = Field(pattern=r"^[0-9A-Za-z]{4}$")
 
 
+class OperationAction(BaseModel):
+    id: int = Field(gt=0)
+
+
 class UploadRequest(BaseModel):
     assignment_id: int
     filename: str = Field(min_length=1, max_length=180)
@@ -436,7 +446,7 @@ async def cache_staff_profile(profile: dict):
         await connection.close()
 
 
-async def staff_directory():
+async def staff_directory(force=False):
     if DEV_BYPASS:
         connection = await dashboard_db()
         try:
@@ -446,30 +456,41 @@ async def staff_directory():
             return [{"id": row[0], "username": f"Staff {row[0]}", "avatar": None} for row in rows]
         finally:
             await connection.close()
-    connection = await dashboard_db()
-    try:
-        cached = await (await connection.execute("SELECT staff_id id, username, avatar FROM dashboard_staff_cache")).fetchall()
-        known = await (await connection.execute("SELECT DISTINCT staff_id FROM assignments WHERE staff_id IS NOT NULL")).fetchall()
-    finally:
-        await connection.close()
-    profiles = {row["id"]: dict(row) for row in cached}
-    members = await discord_api("GET", f"/guilds/{GUILD_ID}/members?limit=1000") or []
-    for member in members:
-        roles = {int(role) for role in member.get("roles", [])}
-        if ROLE_STAFF_ID not in roles and ROLE_ADMIN_ID not in roles:
-            continue
-        profile = member_profile(member)
-        if profile:
-            profiles[profile["id"]] = profile
-    for row in known:
-        if row["staff_id"] in profiles:
-            continue
-        profile = member_profile(await fetch_member(row["staff_id"]) or {})
-        if profile:
-            profiles[profile["id"]] = profile
-    for profile in profiles.values():
-        await cache_staff_profile(profile)
-    return sorted(profiles.values(), key=lambda item: item["username"].casefold())
+    if not force and _staff_cache["items"] and time.monotonic() < _staff_cache["expires_at"]:
+        return _staff_cache["items"]
+    async with _staff_cache_lock:
+        if not force and _staff_cache["items"] and time.monotonic() < _staff_cache["expires_at"]:
+            return _staff_cache["items"]
+        connection = await dashboard_db()
+        try:
+            cached = await (await connection.execute("SELECT staff_id id, username, avatar FROM dashboard_staff_cache")).fetchall()
+            known = await (await connection.execute("SELECT DISTINCT staff_id FROM assignments WHERE staff_id IS NOT NULL")).fetchall()
+        finally:
+            await connection.close()
+        profiles = {row["id"]: dict(row) for row in cached}
+        members = await discord_api("GET", f"/guilds/{GUILD_ID}/members?limit=1000")
+        if members is None and profiles:
+            result = sorted(profiles.values(), key=lambda item: item["username"].casefold())
+            _staff_cache.update(items=result, expires_at=time.monotonic() + 120, updated_at=datetime.now().isoformat())
+            return result
+        for member in members or []:
+            roles = {int(role) for role in member.get("roles", [])}
+            if ROLE_STAFF_ID not in roles and ROLE_ADMIN_ID not in roles:
+                continue
+            profile = member_profile(member)
+            if profile:
+                profiles[profile["id"]] = profile
+        for row in known:
+            if row["staff_id"] in profiles:
+                continue
+            profile = member_profile(await fetch_member(row["staff_id"]) or {})
+            if profile:
+                profiles[profile["id"]] = profile
+        for profile in profiles.values():
+            await cache_staff_profile(profile)
+        result = sorted(profiles.values(), key=lambda item: item["username"].casefold())
+        _staff_cache.update(items=result, expires_at=time.monotonic() + 600, updated_at=datetime.now().isoformat())
+        return result
 
 
 async def enrich_staff(rows):
@@ -484,6 +505,13 @@ async def enrich_staff(rows):
             item["staff_id"] = str(item["staff_id"])
         enriched.append(item)
     return enriched
+
+
+def page_payload(items, page, page_size, total):
+    return {
+        "items": items, "page": page, "page_size": page_size, "total": total,
+        "total_pages": max(1, (total + page_size - 1) // page_size),
+    }
 
 
 async def send_assignment_notice(staff_id: int, assignment_id: int, payload: AssignmentCreate):
@@ -637,6 +665,10 @@ async def send_paid_invoice_pdf(payout_id: int, admin_name: str):
     except Exception as error:
         message = str(error)[:500]
         await payout_service.record_invoice_delivery(payout_id, error=message)
+        await operations.record_event(
+            "invoice", "error", "Dashboard gagal mengirim invoice PDF",
+            {"payout_id": payout_id, "error": message},
+        )
         return False, message
 
 
@@ -793,6 +825,40 @@ async def action_center(_user=Depends(admin_user)):
         await connection.close()
 
 
+@app.get("/api/operations")
+async def operations_status(_user=Depends(admin_user)):
+    snapshot = await operations.operations_snapshot()
+    snapshot["staff_cache"] = {
+        "count": len(_staff_cache["items"]),
+        "updated_at": _staff_cache["updated_at"],
+        "ttl_seconds": max(0, int(_staff_cache["expires_at"] - time.monotonic())),
+    }
+    return snapshot
+
+
+@app.post("/api/operations/events/{event_id}/resolve")
+async def resolve_operation_event(event_id: int, user=Depends(admin_user)):
+    if not await operations.resolve_event(event_id, user["id"]):
+        raise HTTPException(status_code=404, detail="Error aktif tidak ditemukan.")
+    await audit(user["id"], "operation.resolve", "system_event", event_id)
+    return {"ok": True}
+
+
+@app.post("/api/operations/outbox/{item_id}/retry")
+async def retry_outbox_item(item_id: int, user=Depends(admin_user)):
+    if not await operations.retry_notification(item_id):
+        raise HTTPException(status_code=409, detail="Notifikasi tidak berstatus gagal.")
+    await audit(user["id"], "notification.retry", "outbox", item_id)
+    return {"ok": True}
+
+
+@app.post("/api/staff/sync")
+async def sync_staff_cache(user=Depends(admin_user)):
+    rows = await staff_directory(force=True)
+    await audit(user["id"], "staff.sync", "discord_cache", after={"count": len(rows)})
+    return {"ok": True, "count": len(rows), "updated_at": _staff_cache["updated_at"]}
+
+
 @app.get("/api/assignments/{assignment_id}/timeline")
 async def assignment_timeline(assignment_id: int, _user=Depends(current_user)):
     if not await staff_db.get_assignment(assignment_id):
@@ -804,6 +870,9 @@ async def assignment_timeline(assignment_id: int, _user=Depends(current_user)):
 async def assignments(
     status: str | None = Query(default=None),
     search: str | None = Query(default=None, max_length=100),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    paginated: bool = Query(default=False),
     user=Depends(current_user),
 ):
     clauses, params = [], []
@@ -819,6 +888,15 @@ async def assignments(
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     connection = await dashboard_db()
     try:
+        if paginated:
+            total = (await (await connection.execute(
+                f"SELECT COUNT(*) count FROM assignments{where}", params
+            )).fetchone())["count"]
+            rows = await (await connection.execute(
+                f"SELECT * FROM assignments{where} ORDER BY assigned_at DESC LIMIT ? OFFSET ?",
+                [*params, page_size, (page - 1) * page_size],
+            )).fetchall()
+            return page_payload(await enrich_staff(rows), page, page_size, total)
         rows = await (await connection.execute(
             f"SELECT * FROM assignments{where} ORDER BY assigned_at DESC LIMIT 250", params
         )).fetchall()
@@ -900,7 +978,10 @@ async def dashboard_revision_assignment(assignment_id: int, payload: RevisionReq
 
 
 @app.get("/api/staff")
-async def staff(_user=Depends(admin_user)):
+async def staff(
+    page: int = Query(default=1, ge=1), page_size: int = Query(default=20, ge=1, le=100),
+    paginated: bool = Query(default=False), _user=Depends(admin_user),
+):
     connection = await dashboard_db()
     try:
         rows = await (await connection.execute("""
@@ -924,6 +1005,9 @@ async def staff(_user=Depends(admin_user)):
             "staff_id": str(staff_id),
             **stats.get(staff_id, {"task_count": 0, "active_count": 0, "approved_amount": 0, "paid_amount": 0}),
         })
+    if paginated:
+        start = (page - 1) * page_size
+        return page_payload(result[start:start + page_size], page, page_size, len(result))
     return result
 
 
@@ -1008,10 +1092,18 @@ async def invoices(period: str | None = Query(default=None, pattern=r"^\d{4}-\d{
 
 
 @app.get("/api/payouts")
-async def payout_requests(status: str | None = None, _user=Depends(admin_user)):
+async def payout_requests(
+    status: str | None = None, page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    paginated: bool = Query(default=False), _user=Depends(admin_user),
+):
     if status and status not in {"awaiting_method", "issued", "paid", "rejected", "cancelled"}:
         raise HTTPException(status_code=422, detail="Status pencairan tidak valid.")
-    return await enrich_staff(await payout_service.list_payouts(status))
+    rows = await enrich_staff(await payout_service.list_payouts(status))
+    if paginated:
+        start = (page - 1) * page_size
+        return page_payload(rows[start:start + page_size], page, page_size, len(rows))
+    return rows
 
 
 @app.get("/api/payouts/{payout_id}")
@@ -1429,9 +1521,21 @@ async def submission_download(submission_id: int, user=Depends(current_user)):
 
 
 @app.get("/api/audit")
-async def audit_logs(_user=Depends(admin_user)):
+async def audit_logs(
+    page: int = Query(default=1, ge=1), page_size: int = Query(default=20, ge=1, le=100),
+    paginated: bool = Query(default=False), _user=Depends(admin_user),
+):
     connection = await dashboard_db()
     try:
+        if paginated:
+            total = (await (await connection.execute(
+                "SELECT COUNT(*) count FROM dashboard_audit_logs"
+            )).fetchone())["count"]
+            rows = await (await connection.execute(
+                "SELECT * FROM dashboard_audit_logs ORDER BY id DESC LIMIT ? OFFSET ?",
+                (page_size, (page - 1) * page_size),
+            )).fetchall()
+            return page_payload([dict(row) for row in rows], page, page_size, total)
         rows = await (await connection.execute(
             "SELECT * FROM dashboard_audit_logs ORDER BY id DESC LIMIT 100"
         )).fetchall()

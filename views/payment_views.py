@@ -4,6 +4,7 @@ import logging
 import discord
 
 import payment_service as payments
+import operations
 from config import DASHBOARD_URL, STAFF_LOG_CHANNEL_ID
 from helpers.utils import format_currency, is_admin, is_staff
 from invoice_pdf import render_paid_invoice
@@ -317,6 +318,10 @@ async def send_paid_invoice_to_ticket(interaction, payout_id):
         logger.exception("Failed to send paid invoice %s", payout_id)
         message = str(error)[:500]
         await payments.record_invoice_delivery(payout_id, error=message)
+        await operations.record_event(
+            "invoice", "error", "Invoice PDF gagal dikirim ke Discord",
+            {"payout_id": payout_id, "error": message},
+        )
         return False, message
 
 
