@@ -122,11 +122,16 @@ class RyukomikBot(commands.Bot):
             try:
                 target_guild = self.get_guild(GUILD_ID)
                 if target_guild is not None:
-                    await apply_server_housekeeping(target_guild)
+                    await asyncio.wait_for(
+                        apply_server_housekeeping(target_guild),
+                        timeout=45,
+                    )
                     self.server_housekeeping_done = True
-                    print("[OK] Server housekeeping applied without changing layout")
+                    print("[OK] Server housekeeping applied without changing layout", flush=True)
+            except asyncio.TimeoutError:
+                print("[ERROR] Server housekeeping timed out after 45 seconds", flush=True)
             except Exception as exc:
-                print(f"[ERROR] Server housekeeping failed: {exc}")
+                print(f"[ERROR] Server housekeeping failed: {exc}", flush=True)
 
 
 # Create bot instance

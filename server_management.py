@@ -144,6 +144,7 @@ async def _upsert_bot_embed(
 async def apply_server_housekeeping(guild: discord.Guild) -> dict[str, bool]:
     """Apply only safe changes to the existing layout."""
     result = {"staff_permissions": False, "rules": False, "topics": False}
+    print(f"[SERVER] Starting safe housekeeping for {guild.name}", flush=True)
     me = guild.me
     if me is None:
         return result
@@ -157,6 +158,7 @@ async def apply_server_housekeeping(guild: discord.Guild) -> dict[str, bool]:
             permissions=permissions,
             reason="Staff tidak memerlukan mention massal",
         )
+        print("[SERVER] Staff mass-mention permission disabled", flush=True)
 
     tasks_channel = _find_text_channel(guild, channel_id=STAFF_TASKS_CHANNEL_ID)
     if tasks_channel and staff_role and admin_role:
@@ -193,6 +195,7 @@ async def apply_server_housekeeping(guild: discord.Guild) -> dict[str, bool]:
                 reason="Memperjelas fungsi channel tanpa mengubah layout",
             )
         result["staff_permissions"] = True
+        print("[SERVER] staff-tasks permissions and topic checked", flush=True)
 
     rules_channel = _find_text_channel(guild, names=RULES_NAMES)
     if rules_channel and admin_role:
@@ -229,6 +232,7 @@ async def apply_server_housekeeping(guild: discord.Guild) -> dict[str, bool]:
                 reason="Memperjelas fungsi channel tanpa mengubah layout",
             )
         result["rules"] = True
+        print("[SERVER] Rules permissions, content, and pin checked", flush=True)
 
     welcome_channel = _find_text_channel(guild, names=WELCOME_NAMES)
     if welcome_channel and not welcome_channel.topic:
@@ -239,6 +243,7 @@ async def apply_server_housekeeping(guild: discord.Guild) -> dict[str, bool]:
         result["topics"] = True
 
     log.info("Server housekeeping completed for guild=%s result=%s", guild.id, result)
+    print(f"[SERVER] Housekeeping result: {result}", flush=True)
     return result
 
 
