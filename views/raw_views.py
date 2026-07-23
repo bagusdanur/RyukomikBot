@@ -85,9 +85,11 @@ async def create_filebin_download(source, manga_id, chapter_ids):
     downloader = get_downloader(source)
     completed, temporary_directories = [], []
     bin_id = secrets.token_urlsafe(12).replace("_", "").replace("-", "").lower()
+    request_root = os.path.join(RAW_ROOT, f"request-{bin_id}")
+    os.makedirs(request_root, exist_ok=True)
     try:
         for chapter_id in chapter_ids:
-            result = await downloader.download_chapter(manga_id, chapter_id, RAW_ROOT)
+            result = await downloader.download_chapter(manga_id, chapter_id, request_root)
             if not result:
                 continue
             temporary_directories.append(result)
@@ -117,6 +119,7 @@ async def create_filebin_download(source, manga_id, chapter_ids):
     finally:
         for path in temporary_directories:
             shutil.rmtree(path, ignore_errors=True)
+        shutil.rmtree(request_root, ignore_errors=True)
 
 
 class RawSearchModal(discord.ui.Modal, title="Cari dan Download RAW"):
