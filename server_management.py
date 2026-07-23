@@ -12,7 +12,7 @@ from typing import Iterable
 
 import discord
 
-from config import ROLE_ADMIN_ID, ROLE_STAFF_ID, STAFF_TASKS_CHANNEL_ID
+from config import ROLE_ADMIN_ID, ROLE_STAFF_ID, STAFF_LOG_CHANNEL_ID, STAFF_TASKS_CHANNEL_ID
 
 
 log = logging.getLogger(__name__)
@@ -167,7 +167,7 @@ async def _upsert_bot_embed(
 
 async def apply_server_housekeeping(guild: discord.Guild) -> dict[str, bool]:
     """Apply only safe changes to the existing layout."""
-    result = {"staff_permissions": False, "rules": False, "topics": False}
+    result = {"staff_permissions": False, "rules": False, "topics": False, "review_cleanup": False}
     print(f"[SERVER] Starting safe housekeeping for {guild.name}", flush=True)
     me = guild.me
     if me is None:
@@ -265,6 +265,15 @@ async def apply_server_housekeeping(guild: discord.Guild) -> dict[str, bool]:
             reason="Memperjelas fungsi channel tanpa mengubah layout",
         )
         result["topics"] = True
+
+    admin_channel = _find_text_channel(guild, channel_id=STAFF_LOG_CHANNEL_ID)
+    if admin_channel:
+        async for message in admin_channel.history(limit=200):
+            if message.author.id != me.id or not message.embeds:
+                continue
+            if message.embeds[0].title in {"Perlu Revisi", "Tugas Disetujui"}:
+                await message.delete(reason="Status review dipindahkan ke tiket privat staff")
+        result["review_cleanup"] = True
 
     log.info("Server housekeeping completed for guild=%s result=%s", guild.id, result)
     print(f"[SERVER] Housekeeping result: {result}", flush=True)
