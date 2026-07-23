@@ -590,11 +590,21 @@ async def health():
             discord_status = "ok" if result and result.get("id") else "error"
         except Exception:
             discord_status = "error"
+    try:
+        payout_service._cipher()
+        payment_encryption_status = "ok"
+    except RuntimeError:
+        payment_encryption_status = "not_configured"
+    r2_status = "ok" if all((
+        payout_service.R2_ENDPOINT, payout_service.R2_ACCESS_KEY_ID,
+        payout_service.R2_SECRET_ACCESS_KEY, payout_service.R2_BUCKET_NAME,
+    )) else "not_configured"
     return {
-        "status": "ok" if database_status == "ok" else "degraded",
+        "status": "ok" if database_status == "ok" and payment_encryption_status == "ok" else "degraded",
         "time": datetime.now().isoformat(),
         "components": {"database": database_status, "discord": discord_status,
-                       "oauth": "ok" if DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET else "not_configured"},
+                       "oauth": "ok" if DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET else "not_configured",
+                       "payment_encryption": payment_encryption_status, "r2": r2_status},
     }
 
 
