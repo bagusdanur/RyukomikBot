@@ -694,10 +694,15 @@ async def on_app_command_error(interaction: discord.Interaction, error: discord.
     """Handle slash command errors."""
     print(f"Slash command error: {error}")
     message = "Terjadi error saat menjalankan slash command!"
-    if interaction.response.is_done():
-        await interaction.followup.send(message, ephemeral=False)
-    else:
-        await interaction.response.send_message(message, ephemeral=False)
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(message, ephemeral=False)
+        else:
+            await interaction.response.send_message(message, ephemeral=False)
+    except discord.NotFound:
+        # The interaction token already expired; log the original failure
+        # without raising a second Unknown Interaction traceback.
+        print(f"[WARN] Could not report expired interaction {interaction.id}")
 
 
 # ==================== RUN BOT ====================
