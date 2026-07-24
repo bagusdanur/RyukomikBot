@@ -44,6 +44,9 @@ def test_welcome_and_goodbye_cards_are_mobile_friendly():
 
     assert welcome.title == "Selamat Datang di Ryukomik!"
     assert "Rules" in welcome.description
+    assert "**Nama\\_Test**" in welcome.description
+    assert "<@" not in welcome.description
+    assert welcome.thumbnail.url == avatar.url
     assert len(welcome.fields) <= 3
     assert goodbye.title == "Sampai Jumpa"
 

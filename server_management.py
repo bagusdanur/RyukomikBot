@@ -21,6 +21,7 @@ WELCOME_NAMES = ("welcome", "selamat-datang", "welcome-goodbye")
 RULES_NAMES = ("rules", "peraturan")
 ROLE_NAMES = ("ambil-role", "roles", "pilih-role")
 RECRUITMENT_NAMES = ("staff-rekrutmen", "rekrutmen", "recruitment")
+MEMBER_MENTION_PATTERN = re.compile(r"<@!?(\d+)>")
 
 
 def _plain_name(value: str) -> str:
@@ -46,10 +47,11 @@ def _find_text_channel(
 
 
 def build_welcome_embed(member: discord.Member) -> discord.Embed:
+    display_name = discord.utils.escape_markdown(member.display_name)
     embed = discord.Embed(
         title="Selamat Datang di Ryukomik!",
         description=(
-            f"Halo {member.mention}, selamat bergabung.\n\n"
+            f"Halo **{display_name}**, selamat bergabung.\n\n"
             "Mulai dengan membaca **Rules**, pilih role yang sesuai, lalu lihat "
             "informasi series atau rekrutmen yang tersedia."
         ),
@@ -62,7 +64,7 @@ def build_welcome_embed(member: discord.Member) -> discord.Embed:
     )
     embed.add_field(name="Jumlah member", value=f"{member.guild.member_count} anggota", inline=True)
     embed.set_thumbnail(url=member.display_avatar.url)
-    embed.set_footer(text="Ryukomik Community • Selamat membaca dan berkarya")
+    embed.set_footer(text=f"Ryukomik Community • Member baru: {member.display_name}")
     return embed
 
 
@@ -165,9 +167,46 @@ async def _upsert_bot_embed(
     return current
 
 
+async def _repair_welcome_history(
+    channel: discord.TextChannel,
+    bot_member: discord.Member,
+) -> bool:
+    """Replace legacy raw mentions and refresh stored profile thumbnails."""
+    changed = False
+    async for message in channel.history(limit=100):
+        if message.author.id != bot_member.id or not message.embeds:
+            continue
+        embed = message.embeds[0]
+        if embed.title != "Selamat Datang di Ryukomik!" or not embed.description:
+            continue
+        match = MEMBER_MENTION_PATTERN.search(embed.description)
+        if not match:
+            continue
+        member = channel.guild.get_member(int(match.group(1)))
+        replacement = (
+            f"**{discord.utils.escape_markdown(member.display_name)}**"
+            if member
+            else "**Member baru**"
+        )
+        updated = embed.copy()
+        updated.description = MEMBER_MENTION_PATTERN.sub(replacement, embed.description, count=1)
+        if member:
+            updated.set_thumbnail(url=member.display_avatar.url)
+            updated.set_footer(text=f"Ryukomik Community • Member baru: {member.display_name}")
+        await message.edit(embed=updated)
+        changed = True
+    return changed
+
+
 async def apply_server_housekeeping(guild: discord.Guild) -> dict[str, bool]:
     """Apply only safe changes to the existing layout."""
-    result = {"staff_permissions": False, "rules": False, "topics": False, "review_cleanup": False}
+    result = {
+        "staff_permissions": False,
+        "rules": False,
+        "topics": False,
+        "review_cleanup": False,
+        "welcome_history": False,
+    }
     print(f"[SERVER] Starting safe housekeeping for {guild.name}", flush=True)
     me = guild.me
     if me is None:
@@ -259,12 +298,14 @@ async def apply_server_housekeeping(guild: discord.Guild) -> dict[str, bool]:
         print("[SERVER] Rules permissions, content, and pin checked", flush=True)
 
     welcome_channel = _find_text_channel(guild, names=WELCOME_NAMES)
-    if welcome_channel and not welcome_channel.topic:
-        await welcome_channel.edit(
-            topic="Sambutan anggota baru dan informasi langkah pertama di Ryukomik.",
-            reason="Memperjelas fungsi channel tanpa mengubah layout",
-        )
-        result["topics"] = True
+    if welcome_channel:
+        if not welcome_channel.topic:
+            await welcome_channel.edit(
+                topic="Sambutan anggota baru dan informasi langkah pertama di Ryukomik.",
+                reason="Memperjelas fungsi channel tanpa mengubah layout",
+            )
+            result["topics"] = True
+        result["welcome_history"] = await _repair_welcome_history(welcome_channel, me)
 
     admin_channel = _find_text_channel(guild, channel_id=STAFF_LOG_CHANNEL_ID)
     if admin_channel:
