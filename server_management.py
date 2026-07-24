@@ -327,8 +327,10 @@ async def send_welcome(member: discord.Member) -> bool:
         log.warning("Welcome channel not found in guild=%s", member.guild.id)
         return False
     await channel.send(
+        content=f"Selamat datang, {member.mention}! 👋",
         embed=build_welcome_embed(member),
         view=build_welcome_view(member.guild),
+        allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
     )
     return True
 
