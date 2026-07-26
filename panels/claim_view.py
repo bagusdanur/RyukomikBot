@@ -1,6 +1,5 @@
 import discord
 
-from config import STAFF_LOG_CHANNEL_ID
 from helpers.utils import find_or_create_staff_ticket, format_currency, is_staff
 from views.ticket_views import TicketSubmitView
 import database as db
@@ -84,17 +83,6 @@ class ClaimView(discord.ui.View):
                     value="Hubungi administrator untuk memeriksa izin channel bot.",
                     inline=False,
                 )
-
-        if interaction.guild:
-            log_channel = interaction.guild.get_channel(STAFF_LOG_CHANNEL_ID)
-            if log_channel:
-                try:
-                    await log_channel.send(
-                        f"**{interaction.user.display_name}** claim tugas "
-                        f"**{assignment['manga']}** chapter **{assignment['chapter']}** ({assignment['role']})."
-                    )
-                except (discord.Forbidden, discord.HTTPException):
-                    pass
 
         # A claimed task is no longer available, so keep #staff-tasks focused
         # on open work only. The database record and private ticket remain.

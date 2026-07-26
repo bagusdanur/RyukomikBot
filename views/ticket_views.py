@@ -141,7 +141,10 @@ async def _remove_review_card(interaction: discord.Interaction) -> None:
     if not interaction.message:
         return
     try:
+        assignment_id = task_id_from_message(interaction.message)
         await interaction.message.delete()
+        if assignment_id:
+            await db.set_assignment_review_message(assignment_id, None)
     except discord.HTTPException:
         logger.warning("Could not remove processed review message %s", interaction.message.id)
 
@@ -176,7 +179,11 @@ class TicketSubmitModal(discord.ui.Modal, title="Submit Hasil Kerja"):
             if self.catatan.value:
                 review.add_field(name="Catatan Staff", value=self.catatan.value, inline=False)
             review.set_footer(text=f"Task #{assignment['id']} · Periksa izin Google Drive sebelum review.")
-            await log_channel.send(embed=review, view=TicketReviewView(assignment["id"]))
+            review_message = await log_channel.send(
+                embed=review,
+                view=TicketReviewView(assignment["id"]),
+            )
+            await db.set_assignment_review_message(assignment["id"], review_message.id)
 
     async def on_error(self, interaction: discord.Interaction, error: Exception):
         logger.exception("Submit interaction failed for task %s", self.assignment_id, exc_info=error)

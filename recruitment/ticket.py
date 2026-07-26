@@ -5,7 +5,8 @@ from typing import Optional
 import discord
 from discord.ext import commands
 
-from config import REKRUT_CAT_ID, ROLE_STAFF_ID
+import database as db
+from config import REKRUT_CAT_ID, ROLE_STAFF_ID, STAFF_LOG_CHANNEL_ID
 from helpers.utils import (
     build_private_ticket_name,
     build_private_ticket_overwrites,
@@ -41,6 +42,53 @@ TEST_LINKS = {
         ("Referensi TS", f"{RECRUITMENT_FILES_URL}/terjemahan_ts.txt", "📝"),
     ),
 }
+
+
+def build_review_embed(submission: dict, applicant: discord.Member | None = None) -> discord.Embed:
+    embed = discord.Embed(
+        title=f"Hasil Tes Rekrutmen #{submission['id']}",
+        description="Hasil tes baru menunggu review Administrator.",
+        color=discord.Color.gold(),
+    )
+    embed.add_field(
+        name="Pelamar",
+        value=applicant.mention if applicant else f"<@{submission['applicant_id']}>",
+        inline=True,
+    )
+    embed.add_field(name="Posisi", value=submission["position"], inline=True)
+    embed.add_field(name="Tiket Pelamar", value=f"<#{submission['ticket_channel_id']}>", inline=True)
+    embed.add_field(name="Link Hasil", value=submission["gdrive_link"], inline=False)
+    if submission.get("notes"):
+        embed.add_field(name="Catatan", value=submission["notes"], inline=False)
+    embed.set_footer(text=f"Recruitment #{submission['id']} • Review hanya oleh Administrator")
+    return embed
+
+
+async def publish_recruitment_review(
+    guild: discord.Guild,
+    submission: dict,
+    applicant: discord.Member | None = None,
+) -> discord.Message:
+    """Upsert the one actionable review card in staff-mod."""
+    channel = guild.get_channel(STAFF_LOG_CHANNEL_ID)
+    if not isinstance(channel, discord.TextChannel):
+        raise RuntimeError("Channel staff-mod tidak ditemukan.")
+    embed = build_review_embed(submission, applicant)
+    message = None
+    if submission.get("review_message_id"):
+        try:
+            message = await channel.fetch_message(int(submission["review_message_id"]))
+            await message.edit(embed=embed, view=RecruitmentReviewView(int(submission["id"])))
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            message = None
+    if message is None:
+        message = await channel.send(
+            embed=embed,
+            view=RecruitmentReviewView(int(submission["id"])),
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+        await db.set_recruitment_review_message(int(submission["id"]), message.id)
+    return message
 
 
 def build_test_embed(position: str) -> discord.Embed:
@@ -158,6 +206,45 @@ async def upsert_recruitment_panel(channel: discord.TextChannel) -> tuple[discor
 
     message = await channel.send(embed=build_recruitment_panel_embed(), view=RecruitmentView())
     return message, 0
+
+
+async def reconcile_legacy_recruitment_reviews(guild: discord.Guild) -> int:
+    """Move active legacy review cards from applicant tickets to staff-mod once."""
+    category = guild.get_channel(REKRUT_CAT_ID)
+    if not isinstance(category, discord.CategoryChannel):
+        return 0
+    moved = 0
+    for channel in category.text_channels:
+        applicant = get_ticket_owner(channel)
+        if not applicant:
+            continue
+        async for message in channel.history(limit=100):
+            if not message.embeds or not message.components:
+                continue
+            embed = message.embeds[0]
+            if embed.title != "Hasil Tes Menunggu Review":
+                continue
+            position_match = re.search(
+                r"Posisi:\s*\*\*(TL\+TS|TL|TS)\*\*",
+                embed.description or "",
+                re.IGNORECASE,
+            )
+            position = position_match.group(1).upper() if position_match else get_topic_position(channel)
+            fields = {field.name: field.value for field in embed.fields}
+            link = fields.get("Link Hasil", "")
+            if position not in POSITIONS or not link.startswith(("https://drive.google.com/", "http://drive.google.com/")):
+                continue
+            submission = await db.upsert_recruitment_submission(
+                applicant.id,
+                position,
+                channel.id,
+                link,
+                fields.get("Catatan"),
+            )
+            await publish_recruitment_review(guild, submission, applicant)
+            await message.edit(view=None)
+            moved += 1
+    return moved
 
 
 class RecruitmentBaseView(discord.ui.View):
@@ -322,23 +409,130 @@ class RecruitmentSubmitModal(discord.ui.Modal, title="Submit Hasil Tes"):
         if not self.gdrive_link.value.startswith(("https://drive.google.com/", "http://drive.google.com/")):
             return await interaction.response.send_message("Gunakan link Google Drive yang valid.", ephemeral=False)
 
-        embed = discord.Embed(
-            title="Hasil Tes Menunggu Review",
-            description=f"Posisi: **{self.position}**",
-            color=discord.Color.gold(),
+        await interaction.response.defer(ephemeral=False)
+        submission = await db.upsert_recruitment_submission(
+            owner.id,
+            self.position,
+            interaction.channel.id,
+            self.gdrive_link.value.strip(),
+            self.notes.value.strip() or None,
         )
-        embed.add_field(name="Pelamar", value=owner.mention, inline=True)
-        embed.add_field(name="Link Hasil", value=self.gdrive_link.value, inline=False)
-        if self.notes.value:
-            embed.add_field(name="Catatan", value=self.notes.value, inline=False)
-        await interaction.response.send_message(
-            embed=embed,
-            view=RecruitmentReviewView(self.position),
+        try:
+            await publish_recruitment_review(interaction.guild, submission, owner)
+        except (RuntimeError, discord.HTTPException):
+            return await interaction.followup.send(
+                "Hasil belum dapat dikirim ke staff-mod. Hubungi administrator dan coba lagi.",
+                ephemeral=False,
+            )
+        await interaction.followup.send(
+            embed=discord.Embed(
+                title="Hasil Tes Berhasil Dikirim",
+                description=(
+                    "Hasil tes kamu sudah masuk ke antrean review Administrator.\n"
+                    "Tunggu informasi berikutnya di tiket privat ini."
+                ),
+                color=discord.Color.green(),
+            ).set_footer(text=f"Recruitment #{submission['id']} • {self.position}"),
             ephemeral=False,
         )
 
 
-class RecruitmentReviewView(RecruitmentBaseView):
+class RecruitmentApproveDynamic(
+    discord.ui.DynamicItem[discord.ui.Button],
+    template=r"recruitment:approve:(?P<submission_id>\d+):v2",
+):
+    """Persistent, stateless recruitment approval routed from staff-mod."""
+
+    def __init__(self, submission_id: int):
+        self.submission_id = submission_id
+        super().__init__(
+            discord.ui.Button(
+                label="Approve Staff",
+                emoji="✅",
+                style=discord.ButtonStyle.success,
+                custom_id=f"recruitment:approve:{submission_id}:v2",
+            )
+        )
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match):
+        return cls(int(match["submission_id"]))
+
+    async def callback(self, interaction: discord.Interaction):
+        if not is_admin(interaction.user):
+            return await interaction.response.send_message(
+                "Hanya administrator yang dapat approve.", ephemeral=True
+            )
+        if not interaction.guild:
+            return await interaction.response.send_message("Server tidak ditemukan.", ephemeral=True)
+        submission = await db.get_recruitment_submission(self.submission_id)
+        if not submission or submission["status"] != "submitted":
+            return await interaction.response.send_message(
+                "Submission ini sudah diproses atau tidak ditemukan.", ephemeral=True
+            )
+        applicant = interaction.guild.get_member(int(submission["applicant_id"]))
+        if applicant is None:
+            try:
+                applicant = await interaction.guild.fetch_member(int(submission["applicant_id"]))
+            except (discord.NotFound, discord.HTTPException):
+                applicant = None
+        staff_role = interaction.guild.get_role(ROLE_STAFF_ID)
+        if not applicant:
+            return await interaction.response.send_message("Pelamar tidak ditemukan di server.", ephemeral=True)
+        if not staff_role:
+            return await interaction.response.send_message(
+                "Role Staff belum dikonfigurasi.", ephemeral=True
+            )
+
+        await interaction.response.defer(ephemeral=True)
+        await applicant.add_roles(
+            staff_role,
+            reason=f"Lulus rekrutmen posisi {submission['position']}",
+        )
+        ticket = await find_or_create_staff_ticket(interaction.guild, applicant)
+        if not ticket:
+            return await interaction.followup.send(
+                "Tiket staff tidak dapat dibuat. Periksa kategori dan permission bot.",
+                ephemeral=True,
+            )
+        if not await db.approve_recruitment_submission(self.submission_id, interaction.user.id):
+            return await interaction.followup.send(
+                "Submission sudah diproses Administrator lain.", ephemeral=True
+            )
+
+        approved = build_review_embed(submission, applicant)
+        approved.title = f"✅ Rekrutmen Disetujui #{self.submission_id}"
+        approved.description = f"Pelamar diterima sebagai staff oleh {interaction.user.mention}."
+        approved.color = discord.Color.green()
+        if interaction.message:
+            await interaction.message.edit(
+                embed=approved,
+                view=None,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+        await ticket.send(
+            content=applicant.mention,
+            embed=discord.Embed(
+                title="Selamat, Kamu Diterima!",
+                description=f"Kamu diterima sebagai staff posisi **{submission['position']}**.",
+                color=discord.Color.green(),
+            ),
+            allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
+        )
+        await upsert_staff_panel(ticket, applicant)
+        await interaction.followup.send(
+            f"{applicant.display_name} berhasil disetujui dan tiket staff sudah diperbarui.",
+            ephemeral=True,
+        )
+
+
+class RecruitmentReviewView(discord.ui.View):
+    def __init__(self, submission_id: int):
+        super().__init__(timeout=None)
+        self.add_item(RecruitmentApproveDynamic(submission_id))
+
+
+class LegacyRecruitmentReviewView(RecruitmentBaseView):
     def __init__(self, position: str):
         self.position = position
         super().__init__()
@@ -382,7 +576,10 @@ class RecruitmentBot:
         self.bot.add_view(RecruitmentPositionView())
         for position in POSITIONS:
             self.bot.add_view(RecruitmentSubmitView(position))
-            self.bot.add_view(RecruitmentReviewView(position))
+            self.bot.add_view(LegacyRecruitmentReviewView(position))
+
+    async def reconcile_legacy_reviews(self, guild: discord.Guild) -> int:
+        return await reconcile_legacy_recruitment_reviews(guild)
 
     def setup(self):
         @self.bot.command(name="rekrut")

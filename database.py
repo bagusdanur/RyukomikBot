@@ -102,6 +102,26 @@ async def setup_database():
                 FOREIGN KEY(assignment_id) REFERENCES assignments(id)
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS recruitment_submissions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                applicant_id INTEGER NOT NULL,
+                position TEXT NOT NULL,
+                ticket_channel_id INTEGER NOT NULL,
+                gdrive_link TEXT NOT NULL,
+                notes TEXT,
+                status TEXT NOT NULL DEFAULT 'submitted',
+                review_message_id INTEGER,
+                submitted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                reviewed_at DATETIME,
+                reviewed_by INTEGER
+            )
+        """)
+        await db.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_recruitment_active_applicant
+            ON recruitment_submissions(applicant_id)
+            WHERE status = 'submitted'
+        """)
         await db.executemany(
             "INSERT OR IGNORE INTO payrates (role, base_rate) VALUES (?, ?)",
             (("TL", 3000), ("TS", 3000), ("TL+TS", 5000)),
@@ -115,6 +135,8 @@ async def setup_database():
             await db.execute("ALTER TABLE assignments ADD COLUMN chapter_count INTEGER NOT NULL DEFAULT 1")
         if "rate_per_chapter" not in columns:
             await db.execute("ALTER TABLE assignments ADD COLUMN rate_per_chapter INTEGER")
+        if "review_message_id" not in columns:
+            await db.execute("ALTER TABLE assignments ADD COLUMN review_message_id INTEGER")
         await db.execute("""
             UPDATE assignments
             SET chapters = COALESCE(chapters, json_array(chapter)),
@@ -363,6 +385,88 @@ async def get_rekap(period: str) -> List[Dict[str, Any]]:
         await db.close()
 
 
+async def upsert_recruitment_submission(
+    applicant_id: int,
+    position: str,
+    ticket_channel_id: int,
+    gdrive_link: str,
+    notes: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create or refresh the applicant's one active recruitment review."""
+    db = await get_db()
+    try:
+        row = await (await db.execute(
+            """SELECT * FROM recruitment_submissions
+               WHERE applicant_id=? AND status='submitted'""",
+            (applicant_id,),
+        )).fetchone()
+        if row:
+            submission_id = int(row["id"])
+            await db.execute(
+                """UPDATE recruitment_submissions
+                   SET position=?, ticket_channel_id=?, gdrive_link=?, notes=?,
+                       submitted_at=CURRENT_TIMESTAMP
+                   WHERE id=?""",
+                (position, ticket_channel_id, gdrive_link, notes, submission_id),
+            )
+        else:
+            cursor = await db.execute(
+                """INSERT INTO recruitment_submissions
+                   (applicant_id,position,ticket_channel_id,gdrive_link,notes)
+                   VALUES (?,?,?,?,?)""",
+                (applicant_id, position, ticket_channel_id, gdrive_link, notes),
+            )
+            submission_id = int(cursor.lastrowid)
+        await db.commit()
+        result = await (await db.execute(
+            "SELECT * FROM recruitment_submissions WHERE id=?",
+            (submission_id,),
+        )).fetchone()
+        return dict(result)
+    finally:
+        await db.close()
+
+
+async def get_recruitment_submission(submission_id: int) -> Optional[Dict[str, Any]]:
+    db = await get_db()
+    try:
+        row = await (await db.execute(
+            "SELECT * FROM recruitment_submissions WHERE id=?",
+            (submission_id,),
+        )).fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def set_recruitment_review_message(submission_id: int, message_id: int) -> None:
+    db = await get_db()
+    try:
+        await db.execute(
+            "UPDATE recruitment_submissions SET review_message_id=? WHERE id=?",
+            (message_id, submission_id),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def approve_recruitment_submission(submission_id: int, admin_id: int) -> bool:
+    """Atomically finish one active recruitment review."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            """UPDATE recruitment_submissions
+               SET status='approved', reviewed_at=CURRENT_TIMESTAMP, reviewed_by=?
+               WHERE id=? AND status='submitted'""",
+            (admin_id, submission_id),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+    finally:
+        await db.close()
+
+
 async def clear_assignment_message(assignment_id: int) -> None:
     """Forget a task announcement after it has been removed from the public channel."""
     db = await get_db()
@@ -490,6 +594,19 @@ async def set_assignment_ticket_channel(assignment_id: int, ticket_channel_id: i
         )
         await db.commit()
         return cursor.rowcount > 0
+    finally:
+        await db.close()
+
+
+async def set_assignment_review_message(assignment_id: int, message_id: Optional[int]) -> None:
+    """Keep the actionable staff-mod review card addressable by reminders."""
+    db = await get_db()
+    try:
+        await db.execute(
+            "UPDATE assignments SET review_message_id=? WHERE id=?",
+            (message_id, assignment_id),
+        )
+        await db.commit()
     finally:
         await db.close()
 

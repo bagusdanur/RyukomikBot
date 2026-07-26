@@ -310,9 +310,16 @@ async def apply_server_housekeeping(guild: discord.Guild) -> dict[str, bool]:
     admin_channel = _find_text_channel(guild, channel_id=STAFF_LOG_CHANNEL_ID)
     if admin_channel:
         async for message in admin_channel.history(limit=200):
-            if message.author.id != me.id or not message.embeds:
+            if message.author.id != me.id:
                 continue
-            if message.embeds[0].title in {"Perlu Revisi", "Tugas Disetujui"}:
+            is_claim_noise = " claim tugas " in (message.content or "").casefold()
+            title = message.embeds[0].title if message.embeds else None
+            is_stale_review_notice = title in {
+                "Perlu Revisi",
+                "Tugas Disetujui",
+                "⏳ Hasil Belum Direview",
+            }
+            if is_claim_noise or is_stale_review_notice:
                 await message.delete()
         result["review_cleanup"] = True
 

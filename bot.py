@@ -20,7 +20,7 @@ from views.raw_views import RawSearchView, create_filebin_download
 from modals.assign_modal import AssignModal
 from modals.revisi_modal import RevisiModal
 from modals.rekap_modal import RekapModal
-from recruitment.ticket import setup_recruitment, RecruitmentView
+from recruitment.ticket import RecruitmentApproveDynamic, setup_recruitment, RecruitmentView
 from raw_downloader import get_downloader
 from helpers.utils import ROLE_PAYRATES, find_or_create_staff_ticket, is_admin, is_staff
 from helpers.panel_content import build_admin_panel_embed, build_guide_embed, build_staff_panel_embed
@@ -57,6 +57,7 @@ class RyukomikBot(commands.Bot):
         
         self.commands_synced = False
         self.server_housekeeping_done = False
+        self.recruitment_reconciled = False
     
     async def setup_hook(self):
         """Called when the bot is starting up."""
@@ -74,6 +75,7 @@ class RyukomikBot(commands.Bot):
         self.add_view(ZodiacRoleView())
         self.add_view(LegacyTaskView())
         self.add_dynamic_items(SubmitDynamicItem, ApproveDynamicItem, ReviseDynamicItem)
+        self.add_dynamic_items(RecruitmentApproveDynamic)
         self.add_dynamic_items(
             PayPayoutDynamic, ConfirmPayPayoutDynamic,
             RejectPayoutDynamic, RetryInvoiceDynamic,
@@ -134,6 +136,16 @@ class RyukomikBot(commands.Bot):
                 print("[ERROR] Server housekeeping timed out after 45 seconds", flush=True)
             except Exception as exc:
                 print(f"[ERROR] Server housekeeping failed: {exc}", flush=True)
+
+        if not self.recruitment_reconciled:
+            try:
+                target_guild = self.get_guild(GUILD_ID)
+                if target_guild is not None:
+                    moved = await self.recruitment.reconcile_legacy_reviews(target_guild)
+                    self.recruitment_reconciled = True
+                    print(f"[OK] Reconciled {moved} legacy recruitment review(s)", flush=True)
+            except Exception as exc:
+                print(f"[ERROR] Recruitment review reconciliation failed: {exc}", flush=True)
 
 
 # Create bot instance
@@ -196,18 +208,28 @@ async def workflow_reminder_loop():
         if item["status"] == "submitted":
             key = f"review-24h:{assignment_id}:{item.get('submitted_at')}"
             if admin_channel and await db.claim_reminder(key, assignment_id, "admin"):
-                embed = discord.Embed(
-                    title="⏳ Hasil Belum Direview",
-                    description=(
-                        f"Tugas **#{assignment_id} — {item['manga']} Ch. {item['chapter']}** "
-                        "sudah menunggu review lebih dari 24 jam."
-                    ),
-                    color=discord.Color.orange(),
-                )
-                await operations.enqueue_notification(
-                    key, "review_reminder", admin_channel.id,
-                    {"embed": embed.to_dict()},
-                )
+                review_message_id = item.get("review_message_id")
+                if review_message_id:
+                    try:
+                        message = await admin_channel.fetch_message(int(review_message_id))
+                        embed = message.embeds[0] if message.embeds else discord.Embed()
+                        existing = next(
+                            (field for field in embed.fields if field.name == "Pengingat Review"),
+                            None,
+                        )
+                        if not existing:
+                            embed.add_field(
+                                name="Pengingat Review",
+                                value="⏳ Hasil ini sudah menunggu lebih dari 24 jam.",
+                                inline=False,
+                            )
+                            embed.color = discord.Color.orange()
+                            await message.edit(embed=embed)
+                    except (discord.NotFound, discord.Forbidden, discord.HTTPException) as error:
+                        await operations.record_event(
+                            "review", "warning", "Card review tidak dapat diperbarui",
+                            {"assignment_id": assignment_id, "error": str(error)[:300]},
+                        )
             continue
         deadline = str(item.get("deadline_at") or "")[:10]
         today = datetime.now(ZoneInfo("Asia/Jakarta")).date().isoformat()
