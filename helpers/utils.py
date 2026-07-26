@@ -49,9 +49,9 @@ def is_staff(member: Union[discord.Member, discord.User]) -> bool:
 
 
 ROLE_PAYRATES = {
-    "TL": {"base": 3000, "max": 8000},
-    "TS": {"base": 3000, "max": 12000},
-    "TL+TS": {"base": 5000, "max": 15000},
+    "TL": {"base": 4000, "min": 4000, "max": 8000},
+    "TS": {"base": 5000, "min": 5000, "max": 10000},
+    "TL+TS": {"base": 9000, "min": 9000, "max": 18000},
 }
 
 
@@ -71,11 +71,11 @@ def calculate_rate(role: str, manga: str) -> int:
     """Calculate the base rate for a role.
     
     Base rates:
-    - TL (Translator): 3000
-    - TS (Typesetter): 3000
-    - TL+TS: 5000
+    - TL (Translator): 4000
+    - TS (Typesetter): 5000
+    - TL+TS: 9000
     
-    Maximum rates: TL 8000, TS 12000, TL+TS 15000
+    Maximum rates: TL 8000, TS 10000, TL+TS 18000
     """
     role = normalize_role(role) or role
     rates = ROLE_PAYRATES.get(role, ROLE_PAYRATES["TL"])

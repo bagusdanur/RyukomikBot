@@ -70,6 +70,7 @@
 .payment-confirm-card .modal-head,
 .payment-confirm-card .confirm-warning,
 .payment-confirm-card .modal-actions{flex:0 0 auto}
+.rate-input{display:grid;gap:7px}.rate-input small{color:var(--muted)}.rate-range{color:#aeb8ff;font-size:14px}
 .payment-confirm-card .payment-destination{
   min-height:0;
   margin-bottom:0;

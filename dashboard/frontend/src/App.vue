@@ -37,7 +37,7 @@ const overview = ref({
   assignments = ref<Assignment[]>([]),
   staff = ref<Staff[]>([]);
 const payrates = ref<
-    Array<{ role: string; base_rate: number; updated_at: string }>
+    Array<{ role: string; base_rate: number; min_rate: number; max_rate: number; updated_at: string }>
   >([]),
   deadlines = ref<Assignment[]>([]),
   recap = ref<Recap[]>([]),
@@ -56,13 +56,14 @@ const search = ref(""),
   staffFilter = ref(""),
   groupBy = ref("none"),
   period = ref(new Date().toISOString().slice(0, 7)),
-  showTask = ref(false);
+  showTask = ref(false),
+  editingTask = ref<Assignment | null>(null);
 const task = ref({
   manga: "",
   chapter: "",
   staff_id: "",
   role: "TL",
-  final_rate: 3000,
+  final_rate: 4000,
   deadline_at: "",
 });
 const submissions = ref<Submission[]>([]);
@@ -316,11 +317,15 @@ async function rejectPayout(item: Payout) {
     loading.value = false;
   }
 }
-async function saveRate(item: { role: string; base_rate: number }) {
+async function saveRate(item: { role: string; min_rate: number; max_rate: number }) {
+  if (item.max_rate < item.min_rate) {
+    error.value = "Rate maksimum harus sama atau lebih besar dari minimum.";
+    return;
+  }
   try {
     loading.value = true;
-    await api.updatePayrate(item.role, item.base_rate);
-    success.value = `Rate ${item.role} tersimpan.`;
+    const result: any = await api.updatePayrate(item.role, item.min_rate, item.max_rate);
+    success.value = `Range ${item.role} tersimpan dan dikirim ke ${result.notified || 0} tiket staff.`;
   } catch (e) {
     error.value = e instanceof Error ? e.message : "Gagal menyimpan.";
   } finally {
@@ -328,23 +333,35 @@ async function saveRate(item: { role: string; base_rate: number }) {
   }
 }
 async function createTask() {
-  if (!task.value.staff_id) return (error.value = "Pilih staf tujuan.");
+  if (!editingTask.value && !task.value.staff_id) return (error.value = "Pilih staf tujuan.");
   try {
     loading.value = true;
-    const result = await api.createAssignment({
-      ...task.value,
-      rate_per_chapter: task.value.final_rate,
-      staff_id: task.value.staff_id,
-      deadline_at: task.value.deadline_at || null,
-    });
-    success.value = `Tugas #${result.id} dibuat${result.notified ? " dan staf sudah diberi notifikasi." : ", tetapi notifikasi Discord gagal."}`;
+    if (editingTask.value) {
+      const result = await api.updateAssignment(editingTask.value.id, {
+        manga: task.value.manga,
+        chapter: task.value.chapter,
+        role: task.value.role,
+        rate_per_chapter: task.value.final_rate,
+        deadline_at: task.value.deadline_at || null,
+      });
+      success.value = `Tugas #${editingTask.value.id} diperbarui${result.notified ? " dan staff sudah diberi notifikasi." : "."}`;
+    } else {
+      const result = await api.createAssignment({
+        ...task.value,
+        rate_per_chapter: task.value.final_rate,
+        staff_id: task.value.staff_id,
+        deadline_at: task.value.deadline_at || null,
+      });
+      success.value = `Tugas #${result.id} dibuat${result.notified ? " dan staf sudah diberi notifikasi." : ", tetapi notifikasi Discord gagal."}`;
+    }
     showTask.value = false;
+    editingTask.value = null;
     task.value = {
       manga: "",
       chapter: "",
       staff_id: "",
       role: "TL",
-      final_rate: 3000,
+      final_rate: 4000,
       deadline_at: "",
     };
     await loadPage();
@@ -355,6 +372,7 @@ async function createTask() {
   }
 }
 async function openTask(staffId?: string) {
+  editingTask.value = null;
   error.value = "";
   if (!staff.value.length) {
     loading.value = true;
@@ -373,6 +391,18 @@ async function openTask(staffId?: string) {
       "Daftar staf kosong. Pastikan anggota memiliki role Staff atau Admin di Discord.";
     return;
   }
+  showTask.value = true;
+}
+function editTask(item: Assignment) {
+  editingTask.value = item;
+  task.value = {
+    manga: item.manga,
+    chapter: item.chapter,
+    staff_id: item.staff_id || "",
+    role: item.role,
+    final_rate: item.rate_per_chapter || Math.floor(item.final_rate / (item.chapter_count || 1)),
+    deadline_at: item.deadline_at || "",
+  };
   showTask.value = true;
 }
 async function downloadResult(item: Submission) {
@@ -570,6 +600,15 @@ watch(status, () => {
   history.replaceState(null, "", `${location.pathname}?${params}`);
   if (page.value === "tasks") loadPage();
 });
+watch(
+  () => task.value.role,
+  (role) => {
+    if (editingTask.value) return;
+    const selected = payrates.value.find((item) => item.role === role);
+    const fallback = role === "TS" ? 5000 : role === "TL+TS" ? 9000 : 4000;
+    task.value.final_rate = selected?.min_rate ?? fallback;
+  },
+);
 onMounted(async () => {
   try {
     user.value = await api.me();
@@ -852,6 +891,17 @@ onMounted(async () => {
                       severity="danger"
                       @click="reviseTask(data)"
                     />
+                    <Button
+                      v-if="
+                        user.role === 'admin' &&
+                        ['open', 'claimed', 'submitted', 'revision'].includes(data.status)
+                      "
+                      label="Edit"
+                      icon="pi pi-pencil"
+                      size="small"
+                      severity="secondary"
+                      @click="editTask(data)"
+                    />
                     <span
                       v-if="
                         !data.gdrive_link &&
@@ -925,18 +975,33 @@ onMounted(async () => {
                     : "TL + TS"
               }}
             </h3>
-            <InputNumber
-              v-model="item.base_rate"
-              mode="currency"
-              currency="IDR"
-              locale="id-ID"
-              :min="0"
-            /><Button
+            <label class="rate-input">
+              <small>Minimum per chapter</small>
+              <InputNumber
+                v-model="item.min_rate"
+                mode="currency"
+                currency="IDR"
+                locale="id-ID"
+                :min="0"
+              />
+            </label>
+            <label class="rate-input">
+              <small>Maksimum per chapter</small>
+              <InputNumber
+                v-model="item.max_rate"
+                mode="currency"
+                currency="IDR"
+                locale="id-ID"
+                :min="item.min_rate"
+              />
+            </label>
+            <strong class="rate-range">{{ money(item.min_rate) }} – {{ money(item.max_rate) }}</strong>
+            <Button
               label="Simpan rate"
               icon="pi pi-check"
               :loading="loading"
               @click="saveRate(item)"
-            /><small>Berlaku untuk tugas baru.</small>
+            /><small>Staff aktif akan diberi tahu melalui tiket privat.</small>
           </article>
         </div></template
       >
@@ -1181,14 +1246,18 @@ onMounted(async () => {
         </div>
       </section>
     </div>
-    <div v-if="showTask" class="modal-backdrop" @click.self="showTask = false">
+    <div
+      v-if="showTask"
+      class="modal-backdrop"
+      @click.self="showTask = false; editingTask = null"
+    >
       <form class="modal-card" @submit.prevent="createTask">
         <div class="modal-head">
           <div>
             <p class="eyebrow">ASSIGNMENT</p>
-            <h3>Buat tugas baru</h3>
+            <h3>{{ editingTask ? `Edit tugas #${editingTask.id}` : "Buat tugas baru" }}</h3>
           </div>
-          <button type="button" @click="showTask = false">×</button>
+          <button type="button" @click="showTask = false; editingTask = null">×</button>
         </div>
         <div class="form-grid">
           <label class="wide"
@@ -1208,7 +1277,7 @@ onMounted(async () => {
               <option>TL+TS</option>
             </select></label
           ><label class="wide"
-            >Staff tujuan<select v-model="task.staff_id" required>
+            >Staff tujuan<select v-model="task.staff_id" :disabled="!!editingTask" required>
               <option value="" disabled>Pilih staf Discord</option>
               <option v-for="s in staff" :value="String(s.id)">
                 {{ s.username }}
@@ -1234,11 +1303,11 @@ onMounted(async () => {
             type="button"
             label="Batal"
             severity="secondary"
-            @click="showTask = false"
+            @click="showTask = false; editingTask = null"
           /><Button
             type="submit"
-            label="Kirim tugas"
-            icon="pi pi-send"
+            :label="editingTask ? 'Simpan perubahan' : 'Kirim tugas'"
+            :icon="editingTask ? 'pi pi-check' : 'pi pi-send'"
             :loading="loading"
           />
         </div>

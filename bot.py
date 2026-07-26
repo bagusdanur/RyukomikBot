@@ -22,8 +22,9 @@ from modals.revisi_modal import RevisiModal
 from modals.rekap_modal import RekapModal
 from recruitment.ticket import RecruitmentApproveDynamic, setup_recruitment, RecruitmentView
 from raw_downloader import get_downloader
-from helpers.utils import ROLE_PAYRATES, find_or_create_staff_ticket, is_admin, is_staff
+from helpers.utils import find_or_create_staff_ticket, is_admin, is_staff
 from helpers.panel_content import build_admin_panel_embed, build_guide_embed, build_staff_panel_embed
+from helpers.payrate_content import broadcast_payrate_update, upsert_payrate_panel
 import payment_service as payments
 import operations
 from views.payment_views import (
@@ -58,6 +59,7 @@ class RyukomikBot(commands.Bot):
         self.commands_synced = False
         self.server_housekeeping_done = False
         self.recruitment_reconciled = False
+        self.payrate_panel_synced = False
     
     async def setup_hook(self):
         """Called when the bot is starting up."""
@@ -146,6 +148,16 @@ class RyukomikBot(commands.Bot):
                     print(f"[OK] Reconciled {moved} legacy recruitment review(s)", flush=True)
             except Exception as exc:
                 print(f"[ERROR] Recruitment review reconciliation failed: {exc}", flush=True)
+
+        if not self.payrate_panel_synced:
+            try:
+                target_guild = self.get_guild(GUILD_ID)
+                if target_guild is not None:
+                    await upsert_payrate_panel(target_guild)
+                    self.payrate_panel_synced = True
+                    print("[OK] Staff payrate panel synchronized", flush=True)
+            except Exception as exc:
+                print(f"[ERROR] Payrate panel synchronization failed: {exc}", flush=True)
 
 
 # Create bot instance
@@ -437,14 +449,19 @@ async def menu_command(interaction: discord.Interaction):
     await interaction.followup.send("Panel kerjamu dipindahkan ke bawah.", ephemeral=False)
     await upsert_staff_panel(ticket, interaction.user)
 
-@bot.tree.command(name="update-payrate", description="Ubah base rate untuk tugas baru")
-@discord.app_commands.describe(role="Role TL, TS, atau TL+TS", new_rate="Base rate baru dalam Rupiah")
+@bot.tree.command(name="update-payrate", description="Ubah range payrate resmi staff")
+@discord.app_commands.describe(
+    role="Role TL, TS, atau TL+TS",
+    min_rate="Rate minimum per chapter",
+    max_rate="Rate maksimum per chapter",
+)
 async def update_payrate_command(
     interaction: discord.Interaction,
     role: Literal["TL", "TS", "TL+TS"],
-    new_rate: int,
+    min_rate: int,
+    max_rate: int,
 ):
-    """Persist the base payrate used by future assignments."""
+    """Persist the official range and notify current staff tickets."""
     if not is_admin(interaction.user):
         return await interaction.response.send_message(
             "Hanya administrator yang dapat mengubah payrate.", ephemeral=False
@@ -455,24 +472,29 @@ async def update_payrate_command(
         return await interaction.response.send_message(
             "Role harus TL, TS, atau TL+TS.", ephemeral=False
         )
-    maximum_rate = ROLE_PAYRATES[normalized_role]["max"]
-    if new_rate < 0 or new_rate > maximum_rate:
+    if min_rate < 0 or max_rate < min_rate or max_rate > 1_000_000:
         return await interaction.response.send_message(
-            f"Base rate {normalized_role} harus antara Rp 0 dan Rp {maximum_rate:,.0f}.".replace(",", "."),
+            "Range tidak valid. Minimum harus ≤ maksimum dan maksimum paling besar Rp1.000.000.",
             ephemeral=False,
         )
 
-    await db.set_role_payrate(normalized_role, new_rate)
+    await interaction.response.defer(ephemeral=True)
+    await db.set_role_payrate(normalized_role, min_rate, max_rate)
+    await upsert_payrate_panel(interaction.guild)
+    notified = await broadcast_payrate_update(
+        interaction.guild, normalized_role, min_rate, max_rate
+    )
     embed = discord.Embed(
         title="Payrate Berhasil Diperbarui",
         description=(
-            f"Base rate **{normalized_role}** sekarang **Rp {new_rate:,.0f}**. "
-            "Nilai ini berlaku untuk tugas baru yang tidak memakai Rate Override."
+            f"Range **{normalized_role}** sekarang "
+            f"**Rp {min_rate:,.0f} – Rp {max_rate:,.0f} / chapter**.\n"
+            f"Notifikasi terkirim ke **{notified} tiket staff aktif**."
         ).replace(",", "."),
         color=discord.Color.green(),
     )
     embed.set_footer(text="Tugas lama dan manual override tidak berubah.")
-    await interaction.response.send_message(embed=embed, ephemeral=False)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 async def search_manga_command(interaction: discord.Interaction, query: str, source: str = "asura"):
     """Search for manga on Asura Scans or Doujiva."""

@@ -5,7 +5,7 @@ import discord
 import database as db
 from config import ROLE_STAFF_ID, STAFF_TASKS_CHANNEL_ID
 from helpers.utils import (
-    calculate_final_rate, find_or_create_staff_ticket, format_currency, get_or_fetch_member,
+    find_or_create_staff_ticket, format_currency, get_or_fetch_member,
     is_admin, is_popular_series, normalize_role,
 )
 from chapter_utils import chapter_display, parse_chapters
@@ -86,16 +86,22 @@ class AssignModal(discord.ui.Modal, title="Detail Tugas Baru"):
             chapters = parse_chapters(self.chapter.value)
         except ValueError as error:
             return await interaction.response.send_message(str(error))
-        base_rate = await db.get_role_payrate(role)
+        minimum_rate, maximum_rate = await db.get_role_payrate_range(role)
+        base_rate = minimum_rate
         override = False
         if self.rate_override.value:
             try:
                 base_rate = int(self.rate_override.value.replace(".", "").replace(",", "").strip())
-                if not 0 <= base_rate <= 1_000_000:
+                if not minimum_rate <= base_rate <= maximum_rate:
                     raise ValueError
                 override = True
             except ValueError:
-                return await interaction.response.send_message("Bayaran harus angka antara 0 dan Rp1.000.000.")
+                return await interaction.response.send_message(
+                    (
+                        f"Bayaran {role} harus antara Rp{minimum_rate:,.0f} "
+                        f"dan Rp{maximum_rate:,.0f} per chapter."
+                    ).replace(",", ".")
+                )
         try:
             pages = int(self.page_count.value or 0)
             if not 0 <= pages <= 1000:
@@ -121,7 +127,7 @@ class AssignModal(discord.ui.Modal, title="Detail Tugas Baru"):
         if override:
             rate_per_chapter, multiplier, bonuses = base_rate, 1.0, ["Bayaran manual per chapter"]
         else:
-            rate_per_chapter = calculate_final_rate(base_rate, role, multiplier)
+            rate_per_chapter = min(int(base_rate * multiplier), maximum_rate)
         final_rate = rate_per_chapter * len(chapters)
         payload = dict(manga=self.manga.value.strip(), chapter=chapter_display(chapters), chapters=chapters, role=role,
                        base_rate=base_rate, rate_per_chapter=rate_per_chapter,

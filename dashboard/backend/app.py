@@ -23,7 +23,14 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 
-from config import GUILD_ID, ROLE_ADMIN_ID, ROLE_STAFF_ID, STAFF_LOG_CHANNEL_ID, TOKEN
+from config import (
+    GUILD_ID,
+    ROLE_ADMIN_ID,
+    ROLE_STAFF_ID,
+    STAFF_LOG_CHANNEL_ID,
+    STAFF_PAYRATE_CHANNEL_ID,
+    TOKEN,
+)
 import database as staff_db
 import payment_service as payout_service
 import operations
@@ -31,7 +38,11 @@ from database import DB_PATH, setup_database
 from chapter_utils import chapter_display, parse_chapters
 from invoice_pdf import render_paid_invoice
 
-ROLE_RATE_LIMITS = {"TL": 8000, "TS": 12000, "TL+TS": 15000}
+DEFAULT_RATE_RANGES = {
+    "TL": (4000, 8000),
+    "TS": (5000, 10000),
+    "TL+TS": (9000, 18000),
+}
 
 load_dotenv()
 
@@ -62,6 +73,29 @@ async def setup_dashboard_tables():
     connection = await dashboard_db()
     try:
         await connection.execute("PRAGMA foreign_keys=OFF")
+        payrate_columns = {
+            row["name"]
+            for row in await (await connection.execute("PRAGMA table_info(payrates)")).fetchall()
+        }
+        if payrate_columns:
+            migrate_ranges = "min_rate" not in payrate_columns
+            if "min_rate" not in payrate_columns:
+                await connection.execute("ALTER TABLE payrates ADD COLUMN min_rate INTEGER")
+            if "max_rate" not in payrate_columns:
+                await connection.execute("ALTER TABLE payrates ADD COLUMN max_rate INTEGER")
+            if migrate_ranges:
+                await connection.executemany(
+                    "UPDATE payrates SET base_rate=?,min_rate=?,max_rate=? WHERE role=?",
+                    (
+                        (4000, 4000, 8000, "TL"),
+                        (5000, 5000, 10000, "TS"),
+                        (9000, 9000, 18000, "TL+TS"),
+                    ),
+                )
+            else:
+                await connection.execute(
+                    "UPDATE payrates SET min_rate=COALESCE(min_rate,base_rate), max_rate=COALESCE(max_rate,base_rate)"
+                )
         await connection.execute("""
             CREATE TABLE IF NOT EXISTS dashboard_audit_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -339,7 +373,9 @@ async def audit(actor_id, action, target_type, target_id=None, before=None, afte
 
 
 class PayrateUpdate(BaseModel):
-    base_rate: int = Field(ge=0, le=1_000_000)
+    min_rate: int | None = Field(default=None, ge=0, le=1_000_000)
+    max_rate: int | None = Field(default=None, ge=0, le=1_000_000)
+    base_rate: int | None = Field(default=None, ge=0, le=1_000_000)
 
 
 class AssignmentCreate(BaseModel):
@@ -349,6 +385,14 @@ class AssignmentCreate(BaseModel):
     role: Literal["TL", "TS", "TL+TS"]
     rate_per_chapter: int | None = Field(default=None, ge=0, le=1_000_000)
     final_rate: int | None = Field(default=None, ge=0, le=1_000_000)
+    deadline_at: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+class AssignmentUpdate(BaseModel):
+    manga: str = Field(min_length=2, max_length=150)
+    chapter: str = Field(min_length=1, max_length=30)
+    role: Literal["TL", "TS", "TL+TS"]
+    rate_per_chapter: int = Field(ge=0, le=1_000_000)
     deadline_at: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
 
 
@@ -474,9 +518,11 @@ async def staff_directory(force=False):
             result = sorted(profiles.values(), key=lambda item: item["username"].casefold())
             _staff_cache.update(items=result, expires_at=time.monotonic() + 120, updated_at=datetime.now().isoformat())
             return result
+        if members is not None:
+            profiles = {}
         for member in members or []:
             roles = {int(role) for role in member.get("roles", [])}
-            if ROLE_STAFF_ID not in roles and ROLE_ADMIN_ID not in roles:
+            if ROLE_STAFF_ID not in roles:
                 continue
             profile = member_profile(member)
             if profile:
@@ -506,6 +552,126 @@ async def enrich_staff(rows):
             item["staff_id"] = str(item["staff_id"])
         enriched.append(item)
     return enriched
+
+
+async def role_rate_range(role: str) -> tuple[int, int]:
+    connection = await dashboard_db()
+    try:
+        row = await (await connection.execute(
+            "SELECT base_rate,min_rate,max_rate FROM payrates WHERE role=?",
+            (role,),
+        )).fetchone()
+    finally:
+        await connection.close()
+    default_min, default_max = DEFAULT_RATE_RANGES[role]
+    if not row:
+        return default_min, default_max
+    return (
+        int(row["min_rate"] or row["base_rate"] or default_min),
+        int(row["max_rate"] or default_max),
+    )
+
+
+def payrate_embed_payload(ranges: dict[str, tuple[int, int]]) -> dict:
+    labels = {
+        "TL": "Translator (TL)",
+        "TS": "Editor / Typesetter (TS)",
+        "TL+TS": "TL + TS (Keduanya)",
+    }
+    return {
+        "title": "💰 Ryukomik | Staff Pay Rates",
+        "description": (
+            "Rate berikut berlaku sebagai panduan bayaran per chapter. "
+            "Nominal tugas tetap ditampilkan sebelum staff mulai mengerjakan."
+        ),
+        "color": 8162559,
+        "fields": [
+            {
+                "name": labels[role],
+                "value": (
+                    f"**Rp{ranges[role][0]:,.0f} – Rp{ranges[role][1]:,.0f} / chapter**"
+                    .replace(",", ".")
+                ),
+                "inline": False,
+            }
+            for role in ("TL", "TS", "TL+TS")
+        ] + [{
+            "name": "Ketentuan",
+            "value": (
+                "• Rate final ditentukan Administrator saat tugas dibuat.\n"
+                "• Tugas multi-chapter dihitung: rate per chapter × jumlah chapter.\n"
+                "• Perubahan rate resmi tidak mengubah tugas lama secara otomatis."
+            ),
+            "inline": False,
+        }],
+        "footer": {"text": "Ryukomik Official • Informasi rate staff terbaru"},
+    }
+
+
+async def update_discord_payrate_panel() -> bool:
+    if DEV_BYPASS:
+        return True
+    ranges = {role: await role_rate_range(role) for role in DEFAULT_RATE_RANGES}
+    messages = await discord_api(
+        "GET", f"/channels/{STAFF_PAYRATE_CHANNEL_ID}/messages?limit=100"
+    )
+    embed = payrate_embed_payload(ranges)
+    for message in messages or []:
+        title = ((message.get("embeds") or [{}])[0].get("title") or "")
+        if message.get("author", {}).get("bot") and "Staff Pay Rates" in title:
+            return bool(await discord_api(
+                "PATCH",
+                f"/channels/{STAFF_PAYRATE_CHANNEL_ID}/messages/{message['id']}",
+                {"embeds": [embed]},
+            ))
+    return bool(await discord_api(
+        "POST",
+        f"/channels/{STAFF_PAYRATE_CHANNEL_ID}/messages",
+        {"embeds": [embed]},
+    ))
+
+
+async def broadcast_payrate_to_staff(role: str, min_rate: int, max_rate: int) -> int:
+    """Broadcast only to members who currently hold the Staff role."""
+    if DEV_BYPASS:
+        return 0
+    members = await discord_api("GET", f"/guilds/{GUILD_ID}/members?limit=1000") or []
+    staff_ids = {
+        int(member["user"]["id"])
+        for member in members
+        if ROLE_STAFF_ID in {int(value) for value in member.get("roles", [])}
+    }
+    channels = await discord_api("GET", f"/guilds/{GUILD_ID}/channels") or []
+    ticket_map = {}
+    for channel in channels:
+        if channel.get("type") != 0 or "tiket-" not in channel.get("name", "").casefold():
+            continue
+        topic = channel.get("topic") or ""
+        for staff_id in staff_ids:
+            owns_overwrite = any(
+                str(overwrite.get("id")) == str(staff_id)
+                and overwrite.get("type") == 1
+                for overwrite in channel.get("permission_overwrites", [])
+            )
+            if str(staff_id) in topic or owns_overwrite:
+                ticket_map.setdefault(staff_id, channel["id"])
+    labels = {"TL": "Translator (TL)", "TS": "Editor / Typesetter (TS)", "TL+TS": "TL + TS (Keduanya)"}
+    sent = 0
+    for staff_id, channel_id in ticket_map.items():
+        message = {
+            "embeds": [{
+                "title": "📢 Payrate Staff Diperbarui",
+                "description": (
+                    f"Range **{labels[role]}** sekarang "
+                    f"**Rp{min_rate:,.0f} – Rp{max_rate:,.0f} / chapter**."
+                ).replace(",", "."),
+                "color": 6253567,
+                "footer": {"text": "Tugas lama tidak berubah • Berlaku untuk tugas berikutnya"},
+            }],
+        }
+        if await discord_api("POST", f"/channels/{channel_id}/messages", message):
+            sent += 1
+    return sent
 
 
 def page_payload(items, page, page_size, total):
@@ -557,6 +723,56 @@ async def send_assignment_notice(staff_id: int, assignment_id: int, payload: Ass
     if not sent:
         await operations.enqueue_notification(
             f"assignment:{assignment_id}:created", "assignment", channel_id,
+            {"content": message["content"], "embed": message["embeds"][0]},
+        )
+    return sent
+
+
+async def send_assignment_update_notice(before: dict, after: dict) -> bool:
+    """Tell the assigned staff what changed, only in their private ticket."""
+    if DEV_BYPASS or not after.get("staff_id") or not after.get("ticket_channel_id"):
+        return bool(DEV_BYPASS)
+    fields = []
+    comparisons = (
+        ("Manga", "manga"),
+        ("Chapter", "chapter"),
+        ("Role", "role"),
+        ("Rate / Chapter", "rate_per_chapter"),
+        ("Total Bayaran", "final_rate"),
+        ("Deadline", "deadline_at"),
+    )
+    for label, key in comparisons:
+        old_value, new_value = before.get(key), after.get(key)
+        if old_value == new_value:
+            continue
+        if key in {"rate_per_chapter", "final_rate"}:
+            old_value = f"Rp {int(old_value or 0):,.0f}".replace(",", ".")
+            new_value = f"Rp {int(new_value or 0):,.0f}".replace(",", ".")
+        fields.append({
+            "name": label,
+            "value": f"~~{old_value or 'Tidak ditentukan'}~~ → **{new_value or 'Tidak ditentukan'}**",
+            "inline": False,
+        })
+    message = {
+        "content": f"<@{after['staff_id']}>",
+        "embeds": [{
+            "title": f"📝 Tugas #{after['id']} Diperbarui",
+            "description": "Administrator memperbarui detail tugas kamu.",
+            "color": 16753920,
+            "fields": fields,
+            "footer": {"text": "Periksa detail terbaru sebelum melanjutkan pekerjaan."},
+        }],
+    }
+    sent = bool(await discord_api(
+        "POST",
+        f"/channels/{after['ticket_channel_id']}/messages",
+        message,
+    ))
+    if not sent:
+        await operations.enqueue_notification(
+            f"assignment:{after['id']}:updated:{hashlib.sha256(json.dumps(fields, sort_keys=True).encode()).hexdigest()[:12]}",
+            "assignment_updated",
+            after["ticket_channel_id"],
             {"content": message["content"], "embed": message["embeds"][0]},
         )
     return sent
@@ -984,8 +1200,15 @@ async def create_dashboard_assignment(payload: AssignmentCreate, user=Depends(ad
     rate_per_chapter = payload.rate_per_chapter if payload.rate_per_chapter is not None else payload.final_rate
     if rate_per_chapter is None:
         raise HTTPException(status_code=422, detail="Bayaran per chapter wajib diisi.")
-    if rate_per_chapter > ROLE_RATE_LIMITS[payload.role]:
-        raise HTTPException(status_code=422, detail=f"Maksimum rate {payload.role} adalah {ROLE_RATE_LIMITS[payload.role]}.")
+    minimum, maximum = await role_rate_range(payload.role)
+    if not minimum <= rate_per_chapter <= maximum:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Rate {payload.role} harus Rp{minimum:,.0f}–Rp{maximum:,.0f} per chapter."
+                .replace(",", ".")
+            ),
+        )
     profiles = {item["id"]: item for item in await staff_directory()}
     if payload.staff_id not in profiles:
         raise HTTPException(status_code=422, detail="Staff tidak ditemukan atau tidak memiliki role Staff.")
@@ -1007,6 +1230,80 @@ async def create_dashboard_assignment(payload: AssignmentCreate, user=Depends(ad
         "notified": notified,
     })
     return {"id": assignment_id, "notified": notified}
+
+
+@app.put("/api/assignments/{assignment_id}")
+async def update_dashboard_assignment(
+    assignment_id: int,
+    payload: AssignmentUpdate,
+    user=Depends(admin_user),
+):
+    before = await staff_db.get_assignment(assignment_id)
+    if not before:
+        raise HTTPException(status_code=404, detail="Tugas tidak ditemukan.")
+    if before["status"] not in {"open", "claimed", "submitted", "revision"}:
+        raise HTTPException(
+            status_code=409,
+            detail="Tugas yang sudah approved atau paid tidak dapat diubah.",
+        )
+    try:
+        chapters = parse_chapters(payload.chapter)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error))
+    minimum, maximum = await role_rate_range(payload.role)
+    if not minimum <= payload.rate_per_chapter <= maximum:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Rate {payload.role} harus Rp{minimum:,.0f}–Rp{maximum:,.0f} per chapter."
+                .replace(",", ".")
+            ),
+        )
+    final_rate = payload.rate_per_chapter * len(chapters)
+    connection = await dashboard_db()
+    try:
+        await connection.execute("BEGIN IMMEDIATE")
+        cursor = await connection.execute(
+            """UPDATE assignments
+               SET manga=?,chapter=?,chapters=?,chapter_count=?,role=?,
+                   base_rate=?,rate_per_chapter=?,final_rate=?,deadline_at=?
+               WHERE id=? AND status IN ('open','claimed','submitted','revision')""",
+            (
+                payload.manga.strip(),
+                chapter_display(chapters),
+                json.dumps(chapters, ensure_ascii=False),
+                len(chapters),
+                payload.role,
+                payload.rate_per_chapter,
+                payload.rate_per_chapter,
+                final_rate,
+                payload.deadline_at,
+                assignment_id,
+            ),
+        )
+        if not cursor.rowcount:
+            await connection.rollback()
+            raise HTTPException(status_code=409, detail="Status tugas berubah. Muat ulang dashboard.")
+        await connection.commit()
+    finally:
+        await connection.close()
+    await staff_db.add_assignment_event(
+        assignment_id,
+        "updated",
+        user["id"],
+        "Detail tugas diperbarui melalui dashboard.",
+    )
+    after = await staff_db.get_assignment(assignment_id)
+    notified = await send_assignment_update_notice(before, after)
+    await audit(
+        user["id"],
+        "assignment.update",
+        "assignment",
+        assignment_id,
+        before,
+        {**after, "notified": notified},
+    )
+    return {"ok": True, "assignment": after, "notified": notified}
 
 
 @app.post("/api/assignments/{assignment_id}/approve")
@@ -1087,7 +1384,14 @@ async def payrates(_user=Depends(current_user)):
     connection = await dashboard_db()
     try:
         rows = await (await connection.execute("SELECT * FROM payrates ORDER BY role")).fetchall()
-        return [dict(row) for row in rows]
+        return [
+            {
+                **dict(row),
+                "min_rate": int(row["min_rate"] or row["base_rate"]),
+                "max_rate": int(row["max_rate"] or row["base_rate"]),
+            }
+            for row in rows
+        ]
     finally:
         await connection.close()
 
@@ -1096,21 +1400,54 @@ async def payrates(_user=Depends(current_user)):
 async def update_payrate(
     role: Literal["TL", "TS", "TL+TS"], payload: PayrateUpdate, user=Depends(admin_user)
 ):
-    maximum = ROLE_RATE_LIMITS[role]
-    if payload.base_rate > maximum:
-        raise HTTPException(status_code=422, detail=f"Maksimum rate {role} adalah {maximum}.")
     connection = await dashboard_db()
     try:
         old = await (await connection.execute("SELECT * FROM payrates WHERE role=?", (role,))).fetchone()
+        min_rate = payload.min_rate if payload.min_rate is not None else payload.base_rate
+        if min_rate is None:
+            raise HTTPException(status_code=422, detail="Rate minimum wajib diisi.")
+        max_rate = payload.max_rate
+        if max_rate is None:
+            old_data = dict(old) if old else {}
+            max_rate = max(
+                min_rate,
+                int(old_data.get("max_rate") or DEFAULT_RATE_RANGES[role][1]),
+            )
+        if max_rate < min_rate:
+            raise HTTPException(status_code=422, detail="Rate maksimum harus sama atau lebih besar dari minimum.")
         await connection.execute("""
-            INSERT INTO payrates(role,base_rate,updated_at) VALUES(?,?,CURRENT_TIMESTAMP)
-            ON CONFLICT(role) DO UPDATE SET base_rate=excluded.base_rate, updated_at=CURRENT_TIMESTAMP
-        """, (role, payload.base_rate))
+            INSERT INTO payrates(role,base_rate,min_rate,max_rate,updated_at)
+            VALUES(?,?,?,?,CURRENT_TIMESTAMP)
+            ON CONFLICT(role) DO UPDATE SET
+                base_rate=excluded.base_rate,
+                min_rate=excluded.min_rate,
+                max_rate=excluded.max_rate,
+                updated_at=CURRENT_TIMESTAMP
+        """, (role, min_rate, min_rate, max_rate))
         await connection.commit()
     finally:
         await connection.close()
-    await audit(user["id"], "payrate.update", "payrate", role, dict(old) if old else None, payload.model_dump())
-    return {"role": role, "base_rate": payload.base_rate}
+    panel_updated, notified = await asyncio.gather(
+        update_discord_payrate_panel(),
+        broadcast_payrate_to_staff(role, min_rate, max_rate),
+    )
+    result = {
+        "role": role,
+        "base_rate": min_rate,
+        "min_rate": min_rate,
+        "max_rate": max_rate,
+        "panel_updated": panel_updated,
+        "notified": notified,
+    }
+    await audit(
+        user["id"],
+        "payrate.update",
+        "payrate",
+        role,
+        dict(old) if old else None,
+        result,
+    )
+    return result
 
 
 @app.get("/api/deadlines")

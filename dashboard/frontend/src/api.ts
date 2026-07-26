@@ -193,6 +193,11 @@ const liveApi = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  updateAssignment: (id: number, payload: Record<string, unknown>) =>
+    request<{ ok: boolean; notified: boolean }>(`/api/assignments/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
   approveAssignment: (id: number) =>
     request(`/api/assignments/${id}/approve`, { method: "POST" }),
   reviseAssignment: (id: number, notes: string) =>
@@ -201,13 +206,13 @@ const liveApi = {
       body: JSON.stringify({ notes }),
     }),
   payrates: () =>
-    request<Array<{ role: string; base_rate: number; updated_at: string }>>(
+    request<Array<{ role: string; base_rate: number; min_rate: number; max_rate: number; updated_at: string }>>(
       "/api/payrates",
     ),
-  updatePayrate: (role: string, base_rate: number) =>
+  updatePayrate: (role: string, min_rate: number, max_rate: number) =>
     request(`/api/payrates/${encodeURIComponent(role)}`, {
       method: "PUT",
-      body: JSON.stringify({ base_rate }),
+      body: JSON.stringify({ min_rate, max_rate }),
     }),
   deadlines: () => request<Assignment[]>("/api/deadlines"),
   recap: (period: string) => request<Recap[]>(`/api/recap?period=${period}`),
@@ -382,16 +387,20 @@ const demoApi = {
     },
   ],
   createAssignment: async () => ({ id: 25, notified: true }),
+  updateAssignment: async () => ({ ok: true, notified: true }),
   approveAssignment: async () => ({ ok: true }),
   reviseAssignment: async () => ({ ok: true }),
   payrates: async () => [
-    { role: "TL", base_rate: 5000, updated_at: "2026-07-22" },
-    { role: "TS", base_rate: 8000, updated_at: "2026-07-22" },
-    { role: "TL+TS", base_rate: 12000, updated_at: "2026-07-22" },
+    { role: "TL", base_rate: 4000, min_rate: 4000, max_rate: 8000, updated_at: "2026-07-22" },
+    { role: "TS", base_rate: 5000, min_rate: 5000, max_rate: 10000, updated_at: "2026-07-22" },
+    { role: "TL+TS", base_rate: 9000, min_rate: 9000, max_rate: 18000, updated_at: "2026-07-22" },
   ],
-  updatePayrate: async (role: string, base_rate: number) => ({
+  updatePayrate: async (role: string, min_rate: number, max_rate: number) => ({
     role,
-    base_rate,
+    base_rate: min_rate,
+    min_rate,
+    max_rate,
+    notified: 2,
   }),
   deadlines: async () =>
     sampleAssignments.filter(

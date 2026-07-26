@@ -124,8 +124,30 @@ async def setup_database():
         """)
         await db.executemany(
             "INSERT OR IGNORE INTO payrates (role, base_rate) VALUES (?, ?)",
-            (("TL", 3000), ("TS", 3000), ("TL+TS", 5000)),
+            (("TL", 4000), ("TS", 5000), ("TL+TS", 9000)),
         )
+        payrate_columns = {
+            row[1] for row in await (await db.execute("PRAGMA table_info(payrates)")).fetchall()
+        }
+        migrate_payrate_ranges = "min_rate" not in payrate_columns
+        if "min_rate" not in payrate_columns:
+            await db.execute("ALTER TABLE payrates ADD COLUMN min_rate INTEGER")
+        if "max_rate" not in payrate_columns:
+            await db.execute("ALTER TABLE payrates ADD COLUMN max_rate INTEGER")
+        if migrate_payrate_ranges:
+            await db.executemany(
+                """UPDATE payrates SET base_rate=?, min_rate=?, max_rate=?
+                   WHERE role=?""",
+                (
+                    (4000, 4000, 8000, "TL"),
+                    (5000, 5000, 10000, "TS"),
+                    (9000, 9000, 18000, "TL+TS"),
+                ),
+            )
+        else:
+            await db.execute(
+                "UPDATE payrates SET min_rate=COALESCE(min_rate,base_rate), max_rate=COALESCE(max_rate,base_rate)"
+            )
         columns = {row[1] for row in await (await db.execute("PRAGMA table_info(assignments)")).fetchall()}
         if "deadline_at" not in columns:
             await db.execute("ALTER TABLE assignments ADD COLUMN deadline_at DATETIME")
@@ -482,29 +504,50 @@ async def clear_assignment_message(assignment_id: int) -> None:
 
 async def get_role_payrate(role: str) -> int:
     """Return the persisted base rate for an assignment role."""
-    defaults = {"TL": 3000, "TS": 3000, "TL+TS": 5000}
+    defaults = {"TL": 4000, "TS": 5000, "TL+TS": 9000}
     db = await get_db()
     try:
         cursor = await db.execute("SELECT base_rate FROM payrates WHERE role = ?", (role,))
         row = await cursor.fetchone()
-        return int(row[0]) if row else defaults.get(role, 3000)
+        return int(row[0]) if row else defaults.get(role, 4000)
     finally:
         await db.close()
 
 
-async def set_role_payrate(role: str, base_rate: int) -> bool:
-    """Persist a base rate used by future non-override assignments."""
+async def get_role_payrate_range(role: str) -> tuple[int, int]:
+    defaults = {"TL": (4000, 8000), "TS": (5000, 10000), "TL+TS": (9000, 18000)}
+    db = await get_db()
+    try:
+        row = await (await db.execute(
+            "SELECT base_rate,min_rate,max_rate FROM payrates WHERE role=?",
+            (role,),
+        )).fetchone()
+        if not row:
+            return defaults.get(role, defaults["TL"])
+        return (
+            int(row["min_rate"] or row["base_rate"]),
+            int(row["max_rate"] or defaults.get(role, defaults["TL"])[1]),
+        )
+    finally:
+        await db.close()
+
+
+async def set_role_payrate(role: str, min_rate: int, max_rate: Optional[int] = None) -> bool:
+    """Persist the allowed range used by future assignments."""
+    max_rate = min_rate if max_rate is None else max_rate
     db = await get_db()
     try:
         await db.execute(
             """
-            INSERT INTO payrates (role, base_rate, updated_at)
-            VALUES (?, ?, CURRENT_TIMESTAMP)
+            INSERT INTO payrates (role, base_rate, min_rate, max_rate, updated_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(role) DO UPDATE SET
                 base_rate = excluded.base_rate,
+                min_rate = excluded.min_rate,
+                max_rate = excluded.max_rate,
                 updated_at = CURRENT_TIMESTAMP
             """,
-            (role, base_rate),
+            (role, min_rate, min_rate, max_rate),
         )
         await db.commit()
         return True

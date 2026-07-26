@@ -84,6 +84,16 @@ class DashboardApiTests(unittest.TestCase):
         self.assertEqual(result["base_rate"], 4500)
         self.assertEqual(logs[0]["action"], "payrate.update")
 
+    def test_payrate_range_update_persists_minimum_and_maximum(self):
+        user = {"id": 1, "username": "Admin", "role": "admin"}
+        payload = self.module.PayrateUpdate(min_rate=4000, max_rate=8000)
+        result = asyncio.run(self.module.update_payrate("TL", payload, user))
+        rows = asyncio.run(self.module.payrates(user))
+        tl = next(item for item in rows if item["role"] == "TL")
+        self.assertEqual(result["notified"], 0)
+        self.assertEqual(tl["min_rate"], 4000)
+        self.assertEqual(tl["max_rate"], 8000)
+
     def test_admin_can_create_direct_assignment(self):
         user = {"id": 1, "username": "Admin", "role": "admin"}
         payload = self.module.AssignmentCreate(
@@ -94,6 +104,36 @@ class DashboardApiTests(unittest.TestCase):
         assignment = asyncio.run(self.module.assignments(status="claimed", search="Project Baru", user=user))[0]
         self.assertEqual(result["id"], assignment["id"])
         self.assertEqual(assignment["staff_id"], "100")
+
+    def test_admin_can_raise_active_assignment_rate(self):
+        user = {"id": 1, "username": "Admin", "role": "admin"}
+        payload = self.module.AssignmentUpdate(
+            manga="Project A",
+            chapter="1-2",
+            role="TL",
+            rate_per_chapter=7000,
+            deadline_at="2026-07-30",
+        )
+        result = asyncio.run(self.module.update_dashboard_assignment(1, payload, user))
+        updated = asyncio.run(
+            self.module.assignments(status=None, search="Project A", user=user)
+        )[0]
+        self.assertTrue(result["ok"])
+        self.assertEqual(updated["chapter_count"], 2)
+        self.assertEqual(updated["rate_per_chapter"], 7000)
+        self.assertEqual(updated["final_rate"], 14000)
+
+    def test_paid_assignment_cannot_be_edited(self):
+        user = {"id": 1, "username": "Admin", "role": "admin"}
+        payload = self.module.AssignmentUpdate(
+            manga="Project C",
+            chapter="3",
+            role="TL",
+            rate_per_chapter=7000,
+        )
+        with self.assertRaises(self.module.HTTPException) as raised:
+            asyncio.run(self.module.update_dashboard_assignment(3, payload, user))
+        self.assertEqual(raised.exception.status_code, 409)
 
     def test_invoice_creation_and_payment(self):
         user = {"id": 1, "username": "Admin", "role": "admin"}
