@@ -715,9 +715,18 @@ def recruitment_panel_payload(settings: dict[str, bool]) -> tuple[dict, list]:
         "TS": ("🎨 TS — Typesetter / Editor", "Menangani cleaning, redrawing, dan typesetting chapter."),
         "TL+TS": ("✨ TL + TS — Keduanya", "Mengerjakan paket tes Translator dan Typesetter."),
     }
-    for position in enabled:
+    for position in ("TL", "TS", "TL+TS"):
         name, value = descriptions[position]
-        fields.append({"name": name, "value": value, "inline": False})
+        is_open = position in enabled
+        fields.append({
+            "name": name if is_open else f"{name} • CLOSED",
+            "value": (
+                value
+                if is_open
+                else f"{value}\n🔒 **Pendaftaran posisi ini sedang ditutup.**"
+            ),
+            "inline": False,
+        })
     fields.append({
         "name": "📌 Persyaratan",
         "value": (

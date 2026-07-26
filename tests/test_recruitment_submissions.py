@@ -99,7 +99,7 @@ class RecruitmentSubmissionTests(unittest.IsolatedAsyncioTestCase):
         panel = build_recruitment_panel_embed(["TL"])
         field_names = [field.name for field in panel.fields]
         self.assertTrue(any("TL" in name for name in field_names))
-        self.assertFalse(any("TS —" in name for name in field_names))
+        self.assertTrue(any("TS —" in name and "CLOSED" in name for name in field_names))
 
         selector_view = RecruitmentPositionView(["TS", "TL+TS"])
         values = [option.value for option in selector_view.children[0].options]

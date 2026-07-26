@@ -122,22 +122,26 @@ def build_recruitment_panel_embed(enabled_positions=None) -> discord.Embed:
         ),
         color=discord.Color.from_rgb(88, 101, 242),
     )
-    if "TL" in enabled:
+    position_fields = {
+        "TL": (
+            "💬 TL — Translator",
+            "Menerjemahkan dialog dari Bahasa Inggris ke Bahasa Indonesia secara natural dan mudah dibaca.",
+        ),
+        "TS": (
+            "🎨 TS — Typesetter / Editor",
+            "Menangani cleaning, redrawing, dan typesetting agar chapter siap dirilis.",
+        ),
+        "TL+TS": (
+            "✨ TL + TS — Keduanya",
+            "Mengerjakan paket tes Translator dan Typesetter untuk posisi gabungan.",
+        ),
+    }
+    for position in POSITIONS:
+        name, description = position_fields[position]
+        is_open = position in enabled
         embed.add_field(
-            name="💬 TL — Translator",
-            value="Menerjemahkan dialog dari Bahasa Inggris ke Bahasa Indonesia secara natural dan mudah dibaca.",
-            inline=False,
-        )
-    if "TS" in enabled:
-        embed.add_field(
-            name="🎨 TS — Typesetter / Editor",
-            value="Menangani cleaning, redrawing, dan typesetting agar chapter siap dirilis.",
-            inline=False,
-        )
-    if "TL+TS" in enabled:
-        embed.add_field(
-            name="✨ TL + TS — Keduanya",
-            value="Mengerjakan paket tes Translator dan Typesetter untuk posisi gabungan.",
+            name=name if is_open else f"{name} • CLOSED",
+            value=description if is_open else f"{description}\n🔒 **Pendaftaran posisi ini sedang ditutup.**",
             inline=False,
         )
     embed.add_field(
