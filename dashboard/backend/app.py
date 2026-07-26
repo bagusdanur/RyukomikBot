@@ -73,6 +73,33 @@ async def setup_dashboard_tables():
     connection = await dashboard_db()
     try:
         await connection.execute("PRAGMA foreign_keys=OFF")
+        await connection.execute("""
+            CREATE TABLE IF NOT EXISTS recruitment_position_settings (
+                position TEXT PRIMARY KEY,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_by TEXT
+            )
+        """)
+        await connection.executemany(
+            "INSERT OR IGNORE INTO recruitment_position_settings(position,enabled) VALUES(?,1)",
+            (("TL",), ("TS",), ("TL+TS",)),
+        )
+        await connection.execute("""
+            CREATE TABLE IF NOT EXISTS recruitment_submissions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                applicant_id INTEGER NOT NULL,
+                position TEXT NOT NULL,
+                ticket_channel_id INTEGER NOT NULL,
+                gdrive_link TEXT NOT NULL,
+                notes TEXT,
+                status TEXT NOT NULL DEFAULT 'submitted',
+                review_message_id INTEGER,
+                submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                reviewed_at DATETIME,
+                reviewed_by INTEGER
+            )
+        """)
         payrate_columns = {
             row["name"]
             for row in await (await connection.execute("PRAGMA table_info(payrates)")).fetchall()
@@ -378,6 +405,12 @@ class PayrateUpdate(BaseModel):
     base_rate: int | None = Field(default=None, ge=0, le=1_000_000)
 
 
+class RecruitmentSettingsUpdate(BaseModel):
+    tl: bool
+    ts: bool
+    tl_ts: bool
+
+
 class AssignmentCreate(BaseModel):
     manga: str = Field(min_length=2, max_length=150)
     chapter: str = Field(min_length=1, max_length=30)
@@ -672,6 +705,87 @@ async def broadcast_payrate_to_staff(role: str, min_rate: int, max_rate: int) ->
         if await discord_api("POST", f"/channels/{channel_id}/messages", message):
             sent += 1
     return sent
+
+
+def recruitment_panel_payload(settings: dict[str, bool]) -> tuple[dict, list]:
+    enabled = [position for position in ("TL", "TS", "TL+TS") if settings[position]]
+    fields = []
+    descriptions = {
+        "TL": ("💬 TL — Translator", "Menerjemahkan dialog Bahasa Inggris ke Bahasa Indonesia secara natural."),
+        "TS": ("🎨 TS — Typesetter / Editor", "Menangani cleaning, redrawing, dan typesetting chapter."),
+        "TL+TS": ("✨ TL + TS — Keduanya", "Mengerjakan paket tes Translator dan Typesetter."),
+    }
+    for position in enabled:
+        name, value = descriptions[position]
+        fields.append({"name": name, "value": value, "inline": False})
+    fields.append({
+        "name": "📌 Persyaratan",
+        "value": (
+            "• Memiliki waktu luang dan bertanggung jawab.\n"
+            "• Bisa berkomunikasi serta menerima revisi.\n"
+            "• PC/laptop sangat disarankan untuk TS."
+        ),
+        "inline": False,
+    })
+    if enabled:
+        fields.append({
+            "name": "🔒 Tiket Privat",
+            "value": "Tiket hanya dapat dilihat pelamar, administrator, dan bot.",
+            "inline": False,
+        })
+    embed = {
+        "title": "Ryukomik | Staff Recruitment",
+        "description": (
+            "Halo! Ryukomik sedang membuka kesempatan untuk bergabung sebagai staff scanlation."
+            if enabled
+            else "Rekrutmen staff sedang ditutup sementara. Silakan pantau panel ini untuk pembukaan berikutnya."
+        ),
+        "color": 5793266,
+        "fields": fields,
+        "footer": {"text": "Ryukomik Official • Recruitment System"},
+    }
+    components = [{
+        "type": 1,
+        "components": [{
+            "type": 2,
+            "style": 1,
+            "label": "Buat Tiket Pendaftaran",
+            "emoji": {"name": "📩"},
+            "custom_id": "recruitment:create_ticket:v1",
+            "disabled": not enabled,
+        }],
+    }]
+    return embed, components
+
+
+async def update_discord_recruitment_panel(settings: dict[str, bool]) -> bool:
+    """Edit the existing recruitment panel without creating duplicates."""
+    if DEV_BYPASS:
+        return True
+    channels = await discord_api("GET", f"/guilds/{GUILD_ID}/channels") or []
+    candidates = [
+        channel for channel in channels
+        if channel.get("type") == 0
+        and (
+            "staff-rekrutmen" in channel.get("name", "").casefold()
+            or "staff-recruitment" in channel.get("name", "").casefold()
+        )
+    ]
+    embed, components = recruitment_panel_payload(settings)
+    for channel in candidates:
+        messages = await discord_api(
+            "GET", f"/channels/{channel['id']}/messages?limit=100"
+        ) or []
+        for message in messages:
+            title = ((message.get("embeds") or [{}])[0].get("title") or "")
+            if message.get("author", {}).get("bot") and "Staff Recruitment" in title:
+                updated = await discord_api(
+                    "PATCH",
+                    f"/channels/{channel['id']}/messages/{message['id']}",
+                    {"embeds": [embed], "components": components},
+                )
+                return bool(updated)
+    return False
 
 
 def page_payload(items, page, page_size, total):
@@ -1394,6 +1508,79 @@ async def payrates(_user=Depends(current_user)):
         ]
     finally:
         await connection.close()
+
+
+@app.get("/api/recruitment/settings")
+async def recruitment_settings(_user=Depends(admin_user)):
+    connection = await dashboard_db()
+    try:
+        rows = await (await connection.execute(
+            """SELECT position,enabled,updated_at,updated_by
+               FROM recruitment_position_settings ORDER BY position"""
+        )).fetchall()
+        counts = await (await connection.execute(
+            """SELECT position,COUNT(*) active_count
+               FROM recruitment_submissions
+               WHERE status='submitted' GROUP BY position"""
+        )).fetchall()
+    finally:
+        await connection.close()
+    count_map = {row["position"]: int(row["active_count"]) for row in counts}
+    row_map = {row["position"]: row for row in rows}
+    return {
+        "positions": [
+            {
+                "position": position,
+                "enabled": bool(row_map[position]["enabled"]) if position in row_map else True,
+                "active_count": count_map.get(position, 0),
+                "updated_at": row_map[position]["updated_at"] if position in row_map else None,
+                "updated_by": row_map[position]["updated_by"] if position in row_map else None,
+            }
+            for position in ("TL", "TS", "TL+TS")
+        ],
+        "open": any(
+            bool(row_map[position]["enabled"]) if position in row_map else True
+            for position in ("TL", "TS", "TL+TS")
+        ),
+    }
+
+
+@app.put("/api/recruitment/settings")
+async def update_recruitment_settings(
+    payload: RecruitmentSettingsUpdate,
+    user=Depends(admin_user),
+):
+    before = await staff_db.get_recruitment_position_settings()
+    requested = {
+        "TL": payload.tl,
+        "TS": payload.ts,
+        "TL+TS": payload.tl_ts,
+    }
+    after = await staff_db.set_recruitment_position_settings(requested, user["id"])
+    synced = False
+    sync_error = None
+    try:
+        synced = await update_discord_recruitment_panel(after)
+        if not synced:
+            sync_error = "Panel rekrutmen aktif tidak ditemukan."
+    except Exception as exc:
+        sync_error = str(exc)[:500]
+    if sync_error:
+        await operations.record_event(
+            "recruitment",
+            "warning",
+            "Pengaturan tersimpan tetapi panel Discord belum tersinkron.",
+            {"error": sync_error, "settings": after},
+        )
+    await audit(
+        user["id"],
+        "recruitment.settings.update",
+        "recruitment_settings",
+        "positions",
+        before,
+        {**after, "discord_synced": synced},
+    )
+    return {"ok": True, "settings": after, "discord_synced": synced}
 
 
 @app.put("/api/payrates/{role}")

@@ -3,7 +3,13 @@ import tempfile
 import unittest
 
 import database
-from recruitment.ticket import RecruitmentApproveDynamic, build_review_embed
+from recruitment.ticket import (
+    RecruitmentApproveDynamic,
+    RecruitmentPositionView,
+    RecruitmentView,
+    build_recruitment_panel_embed,
+    build_review_embed,
+)
 
 
 class RecruitmentSubmissionTests(unittest.IsolatedAsyncioTestCase):
@@ -59,6 +65,16 @@ class RecruitmentSubmissionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(approved["status"], "approved")
         self.assertEqual(approved["reviewed_by"], 999)
 
+    async def test_position_settings_are_independent_and_persistent(self):
+        defaults = await database.get_recruitment_position_settings()
+        self.assertEqual(defaults, {"TL": True, "TS": True, "TL+TS": True})
+        updated = await database.set_recruitment_position_settings(
+            {"TL": True, "TS": False, "TL+TS": True},
+            999,
+        )
+        self.assertEqual(updated, {"TL": True, "TS": False, "TL+TS": True})
+        self.assertEqual(await database.get_recruitment_position_settings(), updated)
+
     async def test_review_card_and_custom_id_contain_submission_identity(self):
         submission = {
             "id": 7,
@@ -78,6 +94,19 @@ class RecruitmentSubmissionTests(unittest.IsolatedAsyncioTestCase):
             dynamic_item.item.custom_id,
             "recruitment:approve:7:v2",
         )
+
+    async def test_panel_and_position_menu_follow_enabled_settings(self):
+        panel = build_recruitment_panel_embed(["TL"])
+        field_names = [field.name for field in panel.fields]
+        self.assertTrue(any("TL" in name for name in field_names))
+        self.assertFalse(any("TS —" in name for name in field_names))
+
+        selector_view = RecruitmentPositionView(["TS", "TL+TS"])
+        values = [option.value for option in selector_view.children[0].options]
+        self.assertEqual(values, ["TS", "TL+TS"])
+
+        closed_view = RecruitmentView([])
+        self.assertTrue(closed_view.children[0].disabled)
 
 
 if __name__ == "__main__":

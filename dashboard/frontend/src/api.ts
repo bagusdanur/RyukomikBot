@@ -132,6 +132,16 @@ export type OperationSnapshot = {
   backups: Array<Record<string, any>>;
   staff_cache: { count: number; updated_at: string | null; ttl_seconds: number };
 };
+export type RecruitmentSettings = {
+  open: boolean;
+  positions: Array<{
+    position: "TL" | "TS" | "TL+TS";
+    enabled: boolean;
+    active_count: number;
+    updated_at: string | null;
+    updated_by: string | null;
+  }>;
+};
 export type Paged<T> = {
   items: T[];
   page: number;
@@ -213,6 +223,13 @@ const liveApi = {
     request(`/api/payrates/${encodeURIComponent(role)}`, {
       method: "PUT",
       body: JSON.stringify({ min_rate, max_rate }),
+    }),
+  recruitmentSettings: () =>
+    request<RecruitmentSettings>("/api/recruitment/settings"),
+  updateRecruitmentSettings: (settings: { tl: boolean; ts: boolean; tl_ts: boolean }) =>
+    request<{ ok: boolean; discord_synced: boolean }>("/api/recruitment/settings", {
+      method: "PUT",
+      body: JSON.stringify(settings),
     }),
   deadlines: () => request<Assignment[]>("/api/deadlines"),
   recap: (period: string) => request<Recap[]>(`/api/recap?period=${period}`),
@@ -402,6 +419,15 @@ const demoApi = {
     max_rate,
     notified: 2,
   }),
+  recruitmentSettings: async (): Promise<RecruitmentSettings> => ({
+    open: true,
+    positions: [
+      { position: "TL", enabled: true, active_count: 1, updated_at: "2026-07-26", updated_by: "1" },
+      { position: "TS", enabled: true, active_count: 0, updated_at: "2026-07-26", updated_by: "1" },
+      { position: "TL+TS", enabled: true, active_count: 0, updated_at: "2026-07-26", updated_by: "1" },
+    ],
+  }),
+  updateRecruitmentSettings: async () => ({ ok: true, discord_synced: true }),
   deadlines: async () =>
     sampleAssignments.filter(
       (item) =>

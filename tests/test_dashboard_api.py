@@ -94,6 +94,23 @@ class DashboardApiTests(unittest.TestCase):
         self.assertEqual(tl["min_rate"], 4000)
         self.assertEqual(tl["max_rate"], 8000)
 
+    def test_recruitment_positions_can_be_toggled_independently(self):
+        user = {"id": 1, "username": "Admin", "role": "admin"}
+        payload = self.module.RecruitmentSettingsUpdate(
+            tl=True, ts=False, tl_ts=True
+        )
+        result = asyncio.run(
+            self.module.update_recruitment_settings(payload, user)
+        )
+        settings = asyncio.run(self.module.recruitment_settings(user))
+        enabled = {
+            item["position"]: item["enabled"] for item in settings["positions"]
+        }
+        self.assertTrue(result["discord_synced"])
+        self.assertEqual(enabled, {"TL": True, "TS": False, "TL+TS": True})
+        logs = asyncio.run(self.module.audit_logs(user))
+        self.assertEqual(logs[0]["action"], "recruitment.settings.update")
+
     def test_admin_can_create_direct_assignment(self):
         user = {"id": 1, "username": "Admin", "role": "admin"}
         payload = self.module.AssignmentCreate(

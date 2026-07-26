@@ -111,22 +111,35 @@ def build_test_embed(position: str) -> discord.Embed:
     return embed
 
 
-def build_recruitment_panel_embed() -> discord.Embed:
+def build_recruitment_panel_embed(enabled_positions=None) -> discord.Embed:
+    enabled = set(POSITIONS if enabled_positions is None else enabled_positions)
     embed = discord.Embed(
         title="Ryukomik | Staff Recruitment",
-        description="Halo! Ryukomik sedang membuka kesempatan untuk bergabung sebagai staff scanlation.",
+        description=(
+            "Halo! Ryukomik sedang membuka kesempatan untuk bergabung sebagai staff scanlation."
+            if enabled
+            else "Rekrutmen staff sedang ditutup sementara. Silakan pantau panel ini untuk pembukaan berikutnya."
+        ),
         color=discord.Color.from_rgb(88, 101, 242),
     )
-    embed.add_field(
-        name="💬 TL — Translator",
-        value="Menerjemahkan dialog dari Bahasa Inggris ke Bahasa Indonesia secara natural dan mudah dibaca.",
-        inline=False,
-    )
-    embed.add_field(
-        name="🎨 TS — Typesetter / Editor",
-        value="Menangani cleaning, redrawing, dan typesetting agar chapter siap dirilis.",
-        inline=False,
-    )
+    if "TL" in enabled:
+        embed.add_field(
+            name="💬 TL — Translator",
+            value="Menerjemahkan dialog dari Bahasa Inggris ke Bahasa Indonesia secara natural dan mudah dibaca.",
+            inline=False,
+        )
+    if "TS" in enabled:
+        embed.add_field(
+            name="🎨 TS — Typesetter / Editor",
+            value="Menangani cleaning, redrawing, dan typesetting agar chapter siap dirilis.",
+            inline=False,
+        )
+    if "TL+TS" in enabled:
+        embed.add_field(
+            name="✨ TL + TS — Keduanya",
+            value="Mengerjakan paket tes Translator dan Typesetter untuk posisi gabungan.",
+            inline=False,
+        )
     embed.add_field(
         name="📌 Persyaratan",
         value=(
@@ -136,14 +149,15 @@ def build_recruitment_panel_embed() -> discord.Embed:
         ),
         inline=False,
     )
-    embed.add_field(
-        name="🔒 Tiket Privat",
-        value=(
-            "Tekan tombol di bawah untuk membuat tiket pendaftaran. Tiket hanya dapat dilihat "
-            "oleh kamu, administrator, dan bot."
-        ),
-        inline=False,
-    )
+    if enabled:
+        embed.add_field(
+            name="🔒 Tiket Privat",
+            value=(
+                "Tekan tombol di bawah untuk membuat tiket pendaftaran. Tiket hanya dapat dilihat "
+                "oleh kamu, administrator, dan bot."
+            ),
+            inline=False,
+        )
     embed.set_footer(text="Ryukomik Official • Recruitment System")
     return embed
 
@@ -193,10 +207,15 @@ def is_recruitment_panel(message: discord.Message) -> bool:
 
 
 async def upsert_recruitment_panel(channel: discord.TextChannel) -> tuple[discord.Message, int]:
+    settings = await db.get_recruitment_position_settings()
+    enabled = [position for position in POSITIONS if settings[position]]
     panels = [message async for message in channel.history(limit=100) if is_recruitment_panel(message)]
     if panels:
         primary = panels[0]
-        await primary.edit(embed=build_recruitment_panel_embed(), view=RecruitmentView())
+        await primary.edit(
+            embed=build_recruitment_panel_embed(enabled),
+            view=RecruitmentView(enabled),
+        )
         disabled = 0
         for duplicate in panels[1:]:
             if duplicate.components:
@@ -204,7 +223,10 @@ async def upsert_recruitment_panel(channel: discord.TextChannel) -> tuple[discor
                 disabled += 1
         return primary, disabled
 
-    message = await channel.send(embed=build_recruitment_panel_embed(), view=RecruitmentView())
+    message = await channel.send(
+        embed=build_recruitment_panel_embed(enabled),
+        view=RecruitmentView(enabled),
+    )
     return message, 0
 
 
@@ -269,6 +291,13 @@ class RecruitmentBaseView(discord.ui.View):
 
 
 class RecruitmentView(RecruitmentBaseView):
+    def __init__(self, enabled_positions=None):
+        super().__init__()
+        enabled = set(POSITIONS if enabled_positions is None else enabled_positions)
+        for item in self.children:
+            if getattr(item, "custom_id", None) == "recruitment:create_ticket:v1":
+                item.disabled = not enabled
+
     @discord.ui.button(
         label="Buat Tiket Pendaftaran",
         emoji="📩",
@@ -280,6 +309,14 @@ class RecruitmentView(RecruitmentBaseView):
         member = interaction.user
         if not guild or not isinstance(member, discord.Member):
             return await interaction.response.send_message("Tombol ini hanya bisa digunakan di server.", ephemeral=True)
+
+        settings = await db.get_recruitment_position_settings()
+        enabled = [position for position in POSITIONS if settings[position]]
+        if not enabled:
+            return await interaction.response.send_message(
+                "Rekrutmen sedang ditutup. Silakan tunggu pengumuman berikutnya.",
+                ephemeral=True,
+            )
 
         category = guild.get_channel(REKRUT_CAT_ID)
         if not isinstance(category, discord.CategoryChannel):
@@ -316,23 +353,27 @@ class RecruitmentView(RecruitmentBaseView):
             ),
             color=discord.Color.green(),
         )
-        await ticket_channel.send(embed=embed, view=RecruitmentPositionView())
+        await ticket_channel.send(embed=embed, view=RecruitmentPositionView(enabled))
         await interaction.followup.send(f"Tiket privat berhasil dibuat: {ticket_channel.mention}", ephemeral=True)
 
 
 class RecruitmentPositionView(RecruitmentBaseView):
-    def __init__(self):
+    def __init__(self, enabled_positions=None):
         super().__init__()
-        self.add_item(RecruitmentPositionSelect())
+        enabled = POSITIONS if enabled_positions is None else tuple(enabled_positions)
+        if enabled:
+            self.add_item(RecruitmentPositionSelect(enabled))
 
 
 class RecruitmentPositionSelect(discord.ui.Select):
-    def __init__(self):
-        options = [
+    def __init__(self, enabled_positions=POSITIONS):
+        all_options = [
             discord.SelectOption(label="TL", description="Translator", value="TL", emoji="💬"),
             discord.SelectOption(label="TS", description="Typesetter / Editor", value="TS", emoji="🎨"),
             discord.SelectOption(label="TL+TS", description="Translator sekaligus Typesetter", value="TL+TS", emoji="✨"),
         ]
+        enabled = set(enabled_positions)
+        options = [option for option in all_options if option.value in enabled]
         super().__init__(
             placeholder="Pilih posisi yang ingin dilamar...",
             options=options,
@@ -347,6 +388,22 @@ class RecruitmentPositionSelect(discord.ui.Select):
             return await interaction.response.send_message("Hanya pemilik tiket yang dapat memilih posisi.", ephemeral=False)
 
         position = self.values[0]
+        settings = await db.get_recruitment_position_settings()
+        if not settings.get(position, False):
+            enabled = [item for item in POSITIONS if settings[item]]
+            embed = discord.Embed(
+                title="Posisi Tidak Lagi Dibuka",
+                description=(
+                    "Posisi yang dipilih baru saja ditutup. Pilih posisi lain yang masih tersedia."
+                    if enabled
+                    else "Seluruh posisi rekrutmen sedang ditutup. Tiket ini dapat digunakan kembali saat rekrutmen dibuka."
+                ),
+                color=discord.Color.orange(),
+            )
+            return await interaction.response.edit_message(
+                embed=embed,
+                view=RecruitmentPositionView(enabled),
+            )
         await interaction.channel.edit(
             topic=build_ticket_topic(owner.id, position),
             reason=f"Posisi rekrutmen dipilih: {position}",

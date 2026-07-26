@@ -20,7 +20,12 @@ from views.raw_views import RawSearchView, create_filebin_download
 from modals.assign_modal import AssignModal
 from modals.revisi_modal import RevisiModal
 from modals.rekap_modal import RekapModal
-from recruitment.ticket import RecruitmentApproveDynamic, setup_recruitment, RecruitmentView
+from recruitment.ticket import (
+    RecruitmentApproveDynamic,
+    RecruitmentView,
+    setup_recruitment,
+    upsert_recruitment_panel,
+)
 from raw_downloader import get_downloader
 from helpers.utils import find_or_create_staff_ticket, is_admin, is_staff
 from helpers.panel_content import build_admin_panel_embed, build_guide_embed, build_staff_panel_embed
@@ -59,6 +64,7 @@ class RyukomikBot(commands.Bot):
         self.commands_synced = False
         self.server_housekeeping_done = False
         self.recruitment_reconciled = False
+        self.recruitment_panel_synced = False
         self.payrate_panel_synced = False
     
     async def setup_hook(self):
@@ -148,6 +154,25 @@ class RyukomikBot(commands.Bot):
                     print(f"[OK] Reconciled {moved} legacy recruitment review(s)", flush=True)
             except Exception as exc:
                 print(f"[ERROR] Recruitment review reconciliation failed: {exc}", flush=True)
+
+        if not self.recruitment_panel_synced:
+            try:
+                target_guild = self.get_guild(GUILD_ID)
+                recruitment_channel = next(
+                    (
+                        channel
+                        for channel in (target_guild.text_channels if target_guild else [])
+                        if "staff-rekrutmen" in channel.name.casefold()
+                        or "staff-recruitment" in channel.name.casefold()
+                    ),
+                    None,
+                )
+                if recruitment_channel is not None:
+                    await upsert_recruitment_panel(recruitment_channel)
+                    self.recruitment_panel_synced = True
+                    print("[OK] Recruitment panel synchronized", flush=True)
+            except Exception as exc:
+                print(f"[ERROR] Recruitment panel synchronization failed: {exc}", flush=True)
 
         if not self.payrate_panel_synced:
             try:

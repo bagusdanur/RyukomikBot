@@ -118,6 +118,19 @@ async def setup_database():
             )
         """)
         await db.execute("""
+            CREATE TABLE IF NOT EXISTS recruitment_position_settings (
+                position TEXT PRIMARY KEY CHECK(position IN ('TL','TS','TL+TS')),
+                enabled INTEGER NOT NULL DEFAULT 1,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_by TEXT
+            )
+        """)
+        await db.executemany(
+            """INSERT OR IGNORE INTO recruitment_position_settings(position,enabled)
+               VALUES(?,1)""",
+            (("TL",), ("TS",), ("TL+TS",)),
+        )
+        await db.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_recruitment_active_applicant
             ON recruitment_submissions(applicant_id)
             WHERE status = 'submitted'
@@ -485,6 +498,50 @@ async def approve_recruitment_submission(submission_id: int, admin_id: int) -> b
         )
         await db.commit()
         return cursor.rowcount > 0
+    finally:
+        await db.close()
+
+
+async def get_recruitment_position_settings() -> Dict[str, bool]:
+    """Return every recruitment position, defaulting safely to enabled."""
+    db = await get_db()
+    try:
+        rows = await (await db.execute(
+            "SELECT position,enabled FROM recruitment_position_settings"
+        )).fetchall()
+        values = {str(row["position"]): bool(row["enabled"]) for row in rows}
+        return {position: values.get(position, True) for position in ("TL", "TS", "TL+TS")}
+    finally:
+        await db.close()
+
+
+async def set_recruitment_position_settings(
+    settings: Dict[str, bool], updated_by: str | int
+) -> Dict[str, bool]:
+    """Atomically replace the enabled state for all supported positions."""
+    normalized = {
+        position: bool(settings.get(position, False))
+        for position in ("TL", "TS", "TL+TS")
+    }
+    db = await get_db()
+    try:
+        await db.execute("BEGIN IMMEDIATE")
+        for position, enabled in normalized.items():
+            await db.execute(
+                """INSERT INTO recruitment_position_settings
+                   (position,enabled,updated_at,updated_by)
+                   VALUES(?,?,CURRENT_TIMESTAMP,?)
+                   ON CONFLICT(position) DO UPDATE SET
+                     enabled=excluded.enabled,
+                     updated_at=CURRENT_TIMESTAMP,
+                     updated_by=excluded.updated_by""",
+                (position, int(enabled), str(updated_by)),
+            )
+        await db.commit()
+        return normalized
+    except Exception:
+        await db.rollback()
+        raise
     finally:
         await db.close()
 

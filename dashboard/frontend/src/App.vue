@@ -13,6 +13,7 @@ import {
   type Invoice,
   type Payout,
   type PayoutDetail,
+  type RecruitmentSettings,
   type Recap,
   type Staff,
   type Submission,
@@ -20,7 +21,7 @@ import {
 } from "./api";
 
 type Page =
-  "overview" | "actions" | "tasks" | "staff" | "payrates" | "deadlines" | "recap" | "payouts" | "operations" | "audit";
+  "overview" | "actions" | "tasks" | "staff" | "payrates" | "recruitment" | "deadlines" | "recap" | "payouts" | "operations" | "audit";
 const OperationsPage = defineAsyncComponent(() => import("./pages/OperationsPage.vue"));
 const ActionCenterPage = defineAsyncComponent(() => import("./pages/ActionCenterPage.vue"));
 const user = ref<User | null>(null),
@@ -48,6 +49,7 @@ const payrates = ref<
   payoutStatus = ref(""),
   audit = ref<Array<Record<string, string | number | null>>>([]);
 const actionItems = ref<ActionItem[]>([]);
+const recruitment = ref<RecruitmentSettings>({ open: true, positions: [] });
 const taskPage = ref(1), taskPages = ref(1), taskTotal = ref(0),
   payoutPage = ref(1), payoutPages = ref(1), payoutTotal = ref(0),
   auditPage = ref(1), auditPages = ref(1), auditTotal = ref(0);
@@ -83,6 +85,7 @@ const navItems = computed(() => [
     ? [
         { id: "staff", label: "Tim Staff", icon: "pi pi-users" },
         { id: "payrates", label: "Payrate", icon: "pi pi-wallet" },
+        { id: "recruitment", label: "Rekrutmen", icon: "pi pi-user-plus" },
         { id: "recap", label: "Gaji & Invoice", icon: "pi pi-receipt" },
         { id: "payouts", label: "Permintaan Gaji", icon: "pi pi-money-bill" },
         { id: "operations", label: "Operasional", icon: "pi pi-heart-fill" },
@@ -197,6 +200,7 @@ async function loadPage() {
   }
   if (page.value === "staff") await run(api.staff, staff);
   if (page.value === "payrates") await run(api.payrates, payrates);
+  if (page.value === "recruitment") await run(api.recruitmentSettings, recruitment);
   if (page.value === "deadlines") await run(api.deadlines, deadlines);
   if (page.value === "recap") {
     if (!staff.value.length) staff.value = await api.staff();
@@ -328,6 +332,34 @@ async function saveRate(item: { role: string; min_rate: number; max_rate: number
     success.value = `Range ${item.role} tersimpan dan dikirim ke ${result.notified || 0} tiket staff.`;
   } catch (e) {
     error.value = e instanceof Error ? e.message : "Gagal menyimpan.";
+  } finally {
+    loading.value = false;
+  }
+}
+async function saveRecruitmentSettings() {
+  const byPosition = new Map(
+    recruitment.value.positions.map((item) => [item.position, item.enabled]),
+  );
+  const closingWithApplicants = recruitment.value.positions.some(
+    (item) => !item.enabled && item.active_count > 0,
+  );
+  if (
+    closingWithApplicants &&
+    !confirm("Ada pelamar aktif pada posisi yang ditutup. Pelamar lama tetap dapat melanjutkan. Simpan perubahan?")
+  ) return;
+  try {
+    loading.value = true;
+    const result = await api.updateRecruitmentSettings({
+      tl: byPosition.get("TL") ?? false,
+      ts: byPosition.get("TS") ?? false,
+      tl_ts: byPosition.get("TL+TS") ?? false,
+    });
+    success.value = result.discord_synced
+      ? "Pengaturan rekrutmen tersimpan dan panel Discord diperbarui."
+      : "Pengaturan tersimpan, tetapi panel Discord belum ditemukan. Peringatan masuk ke Operasional.";
+    recruitment.value = await api.recruitmentSettings();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "Pengaturan rekrutmen gagal disimpan.";
   } finally {
     loading.value = false;
   }
@@ -1005,6 +1037,74 @@ onMounted(async () => {
           </article>
         </div></template
       >
+      <template v-if="page === 'recruitment'">
+        <section class="panel recruitment-summary">
+          <div>
+            <p class="eyebrow">RECRUITMENT CONTROL</p>
+            <h3>{{ recruitment.positions.some((item) => item.enabled) ? "Rekrutmen dibuka" : "Rekrutmen ditutup" }}</h3>
+            <p>
+              Pilih posisi yang boleh dilamar. Pelamar yang sudah memilih posisi tetap dapat
+              menyelesaikan prosesnya.
+            </p>
+          </div>
+          <Tag
+            :value="recruitment.positions.some((item) => item.enabled) ? 'Aktif' : 'Ditutup'"
+            :severity="recruitment.positions.some((item) => item.enabled) ? 'success' : 'danger'"
+          />
+        </section>
+        <div class="recruitment-grid">
+          <article
+            v-for="item in recruitment.positions"
+            :key="item.position"
+            class="panel recruitment-card"
+            :class="{ disabled: !item.enabled }"
+          >
+            <div class="recruitment-card-head">
+              <div>
+                <span>{{ item.position }}</span>
+                <h3>{{
+                  item.position === "TL"
+                    ? "Translator"
+                    : item.position === "TS"
+                      ? "Typesetter / Editor"
+                      : "Translator + Typesetter"
+                }}</h3>
+              </div>
+              <label class="switch">
+                <input v-model="item.enabled" type="checkbox" />
+                <span></span>
+              </label>
+            </div>
+            <p>{{
+              item.position === "TL"
+                ? "Tes terjemahan Bahasa Inggris ke Indonesia."
+                : item.position === "TS"
+                  ? "Tes cleaning, redraw, dan typesetting."
+                  : "Pelamar mengerjakan paket tes TL dan TS."
+            }}</p>
+            <div class="recruitment-meta">
+              <span><small>Pelamar menunggu review</small><b>{{ item.active_count }}</b></span>
+              <span><small>Status</small><b>{{ item.enabled ? "Dibuka" : "Ditutup" }}</b></span>
+            </div>
+          </article>
+        </div>
+        <section class="panel recruitment-preview">
+          <div>
+            <p class="eyebrow">PREVIEW DISCORD</p>
+            <h3>Posisi yang terlihat oleh pelamar</h3>
+            <p v-if="recruitment.positions.some((item) => item.enabled)">
+              {{ recruitment.positions.filter((item) => item.enabled).map((item) => item.position).join(" • ") }}
+            </p>
+            <p v-else>Rekrutmen sedang ditutup dan tombol pendaftaran akan dinonaktifkan.</p>
+          </div>
+          <Button
+            label="Simpan & perbarui Discord"
+            icon="pi pi-check"
+            :loading="loading"
+            @click="saveRecruitmentSettings"
+          />
+        </section>
+      </template>
       <template v-if="page === 'deadlines'"
         ><div class="table-card">
           <DataTable :value="deadlines" :loading="loading"
