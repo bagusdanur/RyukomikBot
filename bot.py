@@ -497,7 +497,7 @@ async def update_payrate_command(
     await interaction.followup.send(embed=embed, ephemeral=True)
 
 async def search_manga_command(interaction: discord.Interaction, query: str, source: str = "asura"):
-    """Search for manga on Asura Scans or Doujiva."""
+    """Search for manga on one validated RAW source."""
     if not is_admin(interaction.user):
         return await interaction.response.send_message(
             "Pencarian RAW bebas hanya untuk administrator. Staff gunakan **Download RAW** pada Staff Panel agar chapter sesuai tugas.",
@@ -541,10 +541,10 @@ async def download_raw_command(interaction: discord.Interaction, manga_id: str, 
             ephemeral=True,
         )
     await interaction.response.defer(ephemeral=False)
-    filebin_url, completed = await create_filebin_download(source, manga_id, [chapter_id])
+    filebin_url, completed, final_source = await create_filebin_download(source, manga_id, [chapter_id])
     if not filebin_url:
         return await interaction.followup.send(f"Gagal download atau upload ke Filebin dari **{source.title()}**. Coba lagi nanti.", ephemeral=False)
-    embed = discord.Embed(title=f"RAW Siap Diunduh ({source.title()})", color=discord.Color.green())
+    embed = discord.Embed(title=f"RAW Siap Diunduh ({final_source.title()})", color=discord.Color.green())
     embed.add_field(name="Manga ID", value=manga_id, inline=True)
     embed.add_field(name="Chapter", value=", ".join(completed), inline=True)
     embed.add_field(name="Link Download", value=f"[Buka Filebin]({filebin_url})", inline=False)
@@ -552,9 +552,9 @@ async def download_raw_command(interaction: discord.Interaction, manga_id: str, 
     await interaction.followup.send(embed=embed, ephemeral=False)
 
 
-@bot.tree.command(name="raw-search", description="Cari komik RAW dari Asura Scans atau Doujiva")
-@discord.app_commands.describe(query="Judul atau kata kunci komik", source="Sumber RAW (asura atau doujiva)")
-async def raw_search_command(interaction: discord.Interaction, query: str, source: Literal["asura", "doujiva"] = "asura"):
+@bot.tree.command(name="raw-search", description="Cari komik RAW dari Asura, Omega, atau Doujiva")
+@discord.app_commands.describe(query="Judul atau kata kunci komik", source="Sumber RAW")
+async def raw_search_command(interaction: discord.Interaction, query: str, source: Literal["asura", "omega", "doujiva"] = "asura"):
     await search_manga_command(interaction, query, source)
 
 
@@ -576,22 +576,23 @@ async def status_bot_command(interaction: discord.Interaction):
     async def check_raw(source):
         started = time.perf_counter()
         try:
-            result = await get_downloader(source).search_manga("solo")
+            health_query = "love" if source == "omega" else "solo"
+            result = await get_downloader(source).search_manga(health_query)
             return bool(result), round((time.perf_counter() - started) * 1000)
         except Exception:
             return False, round((time.perf_counter() - started) * 1000)
 
-    database_status, asura_status, doujiva_status = await asyncio.gather(check_db(), check_raw("asura"), check_raw("doujiva"))
-    embed = discord.Embed(title="Status Ryukomik Bot", description="Pemeriksaan langsung komponen utama.", color=discord.Color.green() if all(x[0] for x in (database_status, asura_status, doujiva_status)) else discord.Color.orange())
+    database_status, asura_status, omega_status, doujiva_status = await asyncio.gather(check_db(), check_raw("asura"), check_raw("omega"), check_raw("doujiva"))
+    embed = discord.Embed(title="Status Ryukomik Bot", description="Pemeriksaan langsung komponen utama.", color=discord.Color.green() if all(x[0] for x in (database_status, asura_status, omega_status, doujiva_status)) else discord.Color.orange())
     embed.add_field(name="Discord Gateway", value=f"Online • {round(bot.latency * 1000)} ms", inline=False)
-    for name, result in (("Database", database_status), ("Asura API", asura_status), ("Doujiva API", doujiva_status)):
+    for name, result in (("Database", database_status), ("Asura API", asura_status), ("Omega API", omega_status), ("Doujiva API", doujiva_status)):
         embed.add_field(name=name, value=f"{'Sehat' if result[0] else 'Bermasalah'} • {result[1]} ms")
     await interaction.followup.send(embed=embed)
 
 
 @bot.tree.command(name="raw-chapters", description="Lihat daftar chapter RAW")
-@discord.app_commands.describe(manga_id="Slug komik, contoh: lets-do-it-after-work", source="Sumber RAW (asura atau doujiva)")
-async def raw_chapters_command(interaction: discord.Interaction, manga_id: str, source: Literal["asura", "doujiva"] = "asura"):
+@discord.app_commands.describe(manga_id="Slug komik, contoh: love-cheer", source="Sumber RAW")
+async def raw_chapters_command(interaction: discord.Interaction, manga_id: str, source: Literal["asura", "omega", "doujiva"] = "asura"):
     if not is_admin(interaction.user):
         return await interaction.response.send_message(
             "Daftar chapter bebas hanya untuk administrator. Staff gunakan **Download RAW** pada Staff Panel.",
@@ -610,15 +611,15 @@ async def raw_chapters_command(interaction: discord.Interaction, manga_id: str, 
     await interaction.followup.send(embed=embed, ephemeral=False)
 
 
-@bot.tree.command(name="raw-download", description="Download chapter RAW dari Asura Scans atau Doujiva")
+@bot.tree.command(name="raw-download", description="Download chapter RAW dari Asura, Omega, atau Doujiva")
 @discord.app_commands.describe(manga_id="Slug komik, contoh: lets-do-it-after-work", chapter_id="Nomor/slug chapter, contoh: 1", source="Sumber RAW")
-async def raw_download_command(interaction: discord.Interaction, manga_id: str, chapter_id: str, source: Literal["asura", "doujiva"] = "asura"):
+async def raw_download_command(interaction: discord.Interaction, manga_id: str, chapter_id: str, source: Literal["asura", "omega", "doujiva"] = "asura"):
     await download_raw_command(interaction, manga_id, chapter_id, source)
 
 
 @bot.tree.command(name="raw-download-batch", description="Batch download chapter RAW")
 @discord.app_commands.describe(manga_id="Slug komik, contoh: lets-do-it-after-work", chapter_ids="Chapter dipisah koma, contoh: 1,2,3", source="Sumber RAW")
-async def raw_download_batch_command(interaction: discord.Interaction, manga_id: str, chapter_ids: str, source: Literal["asura", "doujiva"] = "asura"):
+async def raw_download_batch_command(interaction: discord.Interaction, manga_id: str, chapter_ids: str, source: Literal["asura", "omega", "doujiva"] = "asura"):
     if not is_admin(interaction.user):
         return await interaction.response.send_message(
             "Batch RAW bebas hanya untuk administrator. Staff gunakan **Download RAW** pada Staff Panel.",
@@ -628,10 +629,10 @@ async def raw_download_batch_command(interaction: discord.Interaction, manga_id:
     ids = [item.strip() for item in chapter_ids.split(",") if item.strip()][:10]
     if not ids:
         return await interaction.followup.send("Isi minimal satu chapter ID.", ephemeral=False)
-    filebin_url, completed = await create_filebin_download(source, manga_id, ids)
+    filebin_url, completed, final_source = await create_filebin_download(source, manga_id, ids)
     if not filebin_url:
         return await interaction.followup.send("Download atau upload Filebin gagal. Coba kembali nanti.")
-    embed = discord.Embed(title=f"Batch RAW Siap Diunduh ({source.title()})", color=discord.Color.green())
+    embed = discord.Embed(title=f"Batch RAW Siap Diunduh ({final_source.title()})", color=discord.Color.green())
     embed.add_field(name="Chapter Berhasil", value=", ".join(completed), inline=False)
     failed = [chapter for chapter in ids if chapter not in completed]
     if failed:
@@ -642,8 +643,8 @@ async def raw_download_batch_command(interaction: discord.Interaction, manga_id:
 
 
 @bot.tree.command(name="raw-update", description="Cek update RAW terbaru")
-@discord.app_commands.describe(query="Kata kunci komik (opsional)", source="Sumber RAW (asura atau doujiva)")
-async def raw_update_command(interaction: discord.Interaction, query: str = "", source: Literal["asura", "doujiva"] = "asura"):
+@discord.app_commands.describe(query="Kata kunci komik (opsional)", source="Sumber RAW")
+async def raw_update_command(interaction: discord.Interaction, query: str = "", source: Literal["asura", "omega", "doujiva"] = "asura"):
     if not is_admin(interaction.user):
         return await interaction.response.send_message(
             "Update RAW bebas hanya untuk administrator. Staff gunakan **Download RAW** pada Staff Panel.",

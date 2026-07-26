@@ -6,7 +6,7 @@ from difflib import SequenceMatcher
 from chapter_utils import normalize_chapter
 
 
-SOURCE_ORDER = ("asura", "doujiva")
+SOURCE_ORDER = ("asura", "omega", "doujiva")
 
 
 def normalize_title(value):
@@ -61,6 +61,26 @@ def _confident_candidate(query, results):
     return best, confident
 
 
+def deduplicate_results(results_by_source):
+    """Return one visible result per normalized title while retaining every source."""
+    grouped = {}
+    for source in SOURCE_ORDER:
+        for item in results_by_source.get(source, []):
+            key = normalize_title(item.get("title"))
+            if not key:
+                continue
+            if key not in grouped:
+                grouped[key] = {
+                    **item,
+                    "_source": source,
+                    "_sources": [],
+                    "_candidates": {},
+                }
+            grouped[key]["_sources"].append(source)
+            grouped[key]["_candidates"][source] = {**item, "_source": source}
+    return list(grouped.values())
+
+
 async def resolve_assignment_raw(title, allowed_chapters, downloaders, progress=None, timeout=12):
     """Resolve a task title and its chapters without requiring a second user click."""
 
@@ -69,44 +89,49 @@ async def resolve_assignment_raw(title, allowed_chapters, downloaders, progress=
             await progress(message)
 
     async def run():
-        await report("Mencari judul di Asura dan Doujiva secara bersamaan...")
+        active_sources = [source for source in SOURCE_ORDER if source in downloaders]
+        if not active_sources:
+            return {"status": "not_found", "combined": []}
+        await report("Mencari judul di Asura, Omega, dan Doujiva secara bersamaan...")
         searches = await asyncio.gather(
-            *(downloaders[source].search_manga(title) for source in SOURCE_ORDER),
+            *(downloaders[source].search_manga(title) for source in active_sources),
             return_exceptions=True,
         )
         results = {}
-        combined = []
         candidates = {}
         confident = {}
-        for source, response in zip(SOURCE_ORDER, searches):
+        for source, response in zip(active_sources, searches):
             result = response if isinstance(response, list) else []
             results[source] = result
-            combined.extend({**item, "_source": source} for item in result[:12])
             candidates[source], confident[source] = _confident_candidate(title, result)
+        combined = deduplicate_results(results)
 
-        available_sources = [source for source in SOURCE_ORDER if candidates[source] and confident[source]]
+        available_sources = [
+            source
+            for source in active_sources
+            if candidates[source] and confident[source]
+        ]
         if not available_sources:
             return {"status": "ambiguous" if combined else "not_found", "combined": combined}
 
-        coverage = {}
-        for source in available_sources:
+        await report("Memeriksa kelengkapan chapter tugas pada semua sumber...")
+
+        async def inspect(source):
             candidate = candidates[source]
-            await report(f"Memeriksa chapter tugas di {source.title()}...")
             try:
                 chapters = await downloaders[source].get_chapter_list(str(candidate["id"]))
             except Exception:
                 chapters = []
             filtered, missing = filter_allowed_chapters(chapters, allowed_chapters)
-            coverage[source] = {
+            return source, {
                 "source": source,
                 "manga": candidate,
                 "chapters": filtered,
                 "missing": missing,
             }
-            if source == "asura" and not missing:
-                break
-            if source == "asura" and "doujiva" in available_sources:
-                await report("Chapter Asura belum lengkap, mencoba Doujiva otomatis...")
+
+        inspected = await asyncio.gather(*(inspect(source) for source in available_sources))
+        coverage = dict(inspected)
 
         viable = [item for item in coverage.values() if item["chapters"]]
         if not viable:
@@ -115,7 +140,20 @@ async def resolve_assignment_raw(title, allowed_chapters, downloaders, progress=
             viable,
             key=lambda item: (-len(item["chapters"]), SOURCE_ORDER.index(item["source"])),
         )[0]
-        chosen.update(status="resolved", combined=combined)
+        full_fallbacks = [
+            item
+            for item in sorted(
+                viable,
+                key=lambda entry: (-len(entry["chapters"]), SOURCE_ORDER.index(entry["source"])),
+            )
+            if item["source"] != chosen["source"] and not item["missing"]
+        ]
+        chosen.update(
+            status="resolved",
+            combined=combined,
+            coverage=coverage,
+            fallbacks=full_fallbacks,
+        )
         return chosen
 
     try:

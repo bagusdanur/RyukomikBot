@@ -105,7 +105,8 @@ class RawResolverTests(unittest.TestCase):
         doujiva = FakeDownloader([{"id": "d", "title": "Project"}], [{"id": "chapter-1"}, {"id": "chapter-2"}])
         result = asyncio.run(resolve_assignment_raw("Project", ["1", "2"], {"asura": asura, "doujiva": doujiva}))
         self.assertEqual(result["source"], "asura")
-        self.assertEqual(doujiva.chapter_calls, 0)
+        # Coverage is checked in parallel so a complete package fallback is ready.
+        self.assertEqual(doujiva.chapter_calls, 1)
 
     def test_falls_back_to_more_complete_doujiva(self):
         asura = FakeDownloader([{"id": "a", "title": "Project"}], [{"id": "chapter-1"}])
