@@ -1,8 +1,4 @@
-"""Safe, idempotent Discord guild housekeeping.
-
-This module deliberately never creates, moves, renames, or deletes channels.
-It only improves content and permissions on channels that already exist.
-"""
+"""Safe, idempotent Discord guild housekeeping."""
 
 from __future__ import annotations
 
@@ -12,7 +8,16 @@ from typing import Iterable
 
 import discord
 
-from config import ROLE_ADMIN_ID, ROLE_STAFF_ID, STAFF_LOG_CHANNEL_ID, STAFF_TASKS_CHANNEL_ID
+from config import (
+    NEW_PROJECT_CHANNEL_ID,
+    PROJECT_CATEGORY_ID,
+    PROJECT_DROP_CHANNEL_ID,
+    ROLE_ADMIN_ID,
+    ROLE_STAFF_ID,
+    STAFF_LOG_CHANNEL_ID,
+    STAFF_TASKS_CHANNEL_ID,
+    UPDATE_PROJECT_CHANNEL_ID,
+)
 
 
 log = logging.getLogger(__name__)
@@ -22,6 +27,13 @@ RULES_NAMES = ("rules", "peraturan")
 ROLE_NAMES = ("ambil-role", "roles", "pilih-role")
 RECRUITMENT_NAMES = ("staff-rekrutmen", "rekrutmen", "recruitment")
 MEMBER_MENTION_PATTERN = re.compile(r"<@!?(\d+)>")
+
+PROJECT_CHANNELS = (
+    (NEW_PROJECT_CHANNEL_ID, "・new-project", "Informasi project baru yang akan dikerjakan atau segera hadir di Ryukomik."),
+    (UPDATE_PROJECT_CHANNEL_ID, "・update-project", "Pembaruan progres dan status project Ryukomik."),
+    (None, "・request-project", "Ajukan judul project yang ingin kamu lihat di Ryukomik. Satu judul per pesan."),
+    (PROJECT_DROP_CHANNEL_ID, "・project-drop", "Informasi project yang dihentikan atau tidak dilanjutkan."),
+)
 
 
 def _plain_name(value: str) -> str:
@@ -53,7 +65,7 @@ def build_welcome_embed(member: discord.Member) -> discord.Embed:
         description=(
             f"Halo **{display_name}**, selamat bergabung.\n\n"
             "Mulai dengan membaca **Rules**, pilih role yang sesuai, lalu lihat "
-            "informasi series atau rekrutmen yang tersedia."
+            "informasi project atau rekrutmen yang tersedia."
         ),
         color=discord.Color.blurple(),
     )
@@ -198,9 +210,66 @@ async def _repair_welcome_history(
     return changed
 
 
+async def apply_project_layout(guild: discord.Guild) -> bool:
+    """Keep the public project category compact and consistently ordered."""
+    category = guild.get_channel(PROJECT_CATEGORY_ID)
+    if not isinstance(category, discord.CategoryChannel):
+        log.warning("Project category not found: guild=%s id=%s", guild.id, PROJECT_CATEGORY_ID)
+        return False
+
+    if category.name != "Info Project":
+        await category.edit(name="Info Project", reason="Merombak Info Series menjadi Info Project")
+
+    channels: list[discord.TextChannel] = []
+    for channel_id, name, topic in PROJECT_CHANNELS:
+        channel = guild.get_channel(channel_id) if channel_id else None
+        if not isinstance(channel, discord.TextChannel):
+            normalized = _plain_name(name)
+            channel = next(
+                (
+                    item
+                    for item in category.text_channels
+                    if _plain_name(item.name) == normalized
+                ),
+                None,
+            )
+        if channel is None and channel_id is None:
+            channel = await guild.create_text_channel(
+                name,
+                category=category,
+                topic=topic,
+                reason="Melengkapi pusat informasi project",
+            )
+        if not isinstance(channel, discord.TextChannel):
+            log.warning("Project channel missing: guild=%s id=%s name=%s", guild.id, channel_id, name)
+            return False
+
+        changes = {}
+        if channel.name != name:
+            changes["name"] = name
+        if channel.topic != topic:
+            changes["topic"] = topic
+        if channel.category_id != category.id:
+            changes["category"] = category
+            changes["sync_permissions"] = False
+        if changes:
+            await channel.edit(reason="Merapikan layout Info Project", **changes)
+        channels.append(channel)
+
+    current_ids = [channel.id for channel in category.text_channels]
+    desired_ids = [channel.id for channel in channels]
+    if [channel_id for channel_id in current_ids if channel_id in desired_ids] != desired_ids:
+        await channels[0].move(beginning=True, reason="Mengurutkan channel Info Project")
+        for previous, channel in zip(channels, channels[1:]):
+            await channel.move(after=previous, reason="Mengurutkan channel Info Project")
+
+    return True
+
+
 async def apply_server_housekeeping(guild: discord.Guild) -> dict[str, bool]:
     """Apply only safe changes to the existing layout."""
     result = {
+        "project_layout": False,
         "staff_permissions": False,
         "rules": False,
         "topics": False,
@@ -211,6 +280,8 @@ async def apply_server_housekeeping(guild: discord.Guild) -> dict[str, bool]:
     me = guild.me
     if me is None:
         return result
+
+    result["project_layout"] = await apply_project_layout(guild)
 
     staff_role = guild.get_role(ROLE_STAFF_ID)
     admin_role = guild.get_role(ROLE_ADMIN_ID)
