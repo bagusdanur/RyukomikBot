@@ -32,6 +32,7 @@ from helpers.panel_content import build_admin_panel_embed, build_guide_embed, bu
 from helpers.payrate_content import broadcast_payrate_update, upsert_payrate_panel
 import payment_service as payments
 import operations
+from project_sync import setup_project_sync, sync_project_events
 from views.payment_views import (
     ConfirmPayPayoutDynamic, IncomeMenuView, PayPayoutDynamic, PayoutAdminView, RejectPayoutDynamic,
     RetryInvoiceDynamic,
@@ -73,6 +74,7 @@ class RyukomikBot(commands.Bot):
         await setup_database()
         await payments.setup_payment_tables()
         await operations.setup_operations()
+        await setup_project_sync()
         await operations.recover_outbox()
         
         # Add persistent views
@@ -99,6 +101,8 @@ class RyukomikBot(commands.Bot):
             workflow_reminder_loop.start()
         if not notification_outbox_loop.is_running():
             notification_outbox_loop.start()
+        if not project_event_sync_loop.is_running():
+            project_event_sync_loop.start()
         if not daily_backup_loop.is_running():
             daily_backup_loop.start()
         print("[OK] Bot setup complete!")
@@ -341,6 +345,30 @@ async def notification_outbox_loop():
 
 @notification_outbox_loop.before_loop
 async def before_notification_outbox_loop():
+    await bot.wait_until_ready()
+
+
+@tasks.loop(minutes=5)
+async def project_event_sync_loop():
+    """Deliver small project events; never poll the project catalogue or images."""
+    started = datetime.now(ZoneInfo("Asia/Jakarta"))
+    failure = None
+    try:
+        guild = bot.get_guild(GUILD_ID)
+        if guild is None:
+            return
+        delivered = await sync_project_events(guild)
+        if delivered:
+            print(f"[PROJECT] Delivered {delivered} project event(s)", flush=True)
+    except Exception as error:
+        failure = str(error)[:500]
+        print(f"[PROJECT] Event sync failed: {failure}", flush=True)
+    finally:
+        await operations.mark_scheduler("project_event_sync", started, failure)
+
+
+@project_event_sync_loop.before_loop
+async def before_project_event_sync_loop():
     await bot.wait_until_ready()
 
 
