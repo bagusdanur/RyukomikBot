@@ -1187,7 +1187,29 @@ async def overview(user=Depends(current_user)):
             f"SELECT COUNT(*) count FROM assignments WHERE {due_where} AND date(deadline_at) <= date('now','+2 day')",
             due_params,
         )).fetchone()
-        return {"counts": counts, "total_value": total["total"], "urgent_deadlines": due["count"]}
+        project_where, project_params = "", []
+        if user["role"] == "staff":
+            project_where, project_params = " WHERE staff_id = ?", [user["id"]]
+        projects = await (await connection.execute(
+            f"""SELECT manga,
+                       COALESCE(SUM(chapter_count), COUNT(*)) AS chapter_count,
+                       SUM(CASE WHEN status IN ('claimed','revision') THEN chapter_count ELSE 0 END) AS active_chapters,
+                       SUM(CASE WHEN status='submitted' THEN chapter_count ELSE 0 END) AS review_chapters,
+                       SUM(CASE WHEN status='revision' THEN chapter_count ELSE 0 END) AS revision_chapters,
+                       SUM(CASE WHEN status IN ('approved','paid') THEN chapter_count ELSE 0 END) AS completed_chapters,
+                       MAX(assigned_at) AS last_activity
+                FROM assignments{project_where}
+                GROUP BY manga
+                ORDER BY active_chapters DESC, review_chapters DESC, last_activity DESC
+                LIMIT 8""",
+            project_params,
+        )).fetchall()
+        return {
+            "counts": counts,
+            "total_value": total["total"],
+            "urgent_deadlines": due["count"],
+            "project_progress": [dict(row) for row in projects],
+        }
     finally:
         await connection.close()
 

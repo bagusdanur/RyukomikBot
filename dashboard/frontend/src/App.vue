@@ -13,6 +13,7 @@ import {
   type Invoice,
   type Payout,
   type PayoutDetail,
+  type ProjectProgress,
   type RecruitmentSettings,
   type Recap,
   type Staff,
@@ -34,6 +35,7 @@ const overview = ref({
     counts: {} as Record<string, number>,
     total_value: 0,
     urgent_deadlines: 0,
+    project_progress: [] as ProjectProgress[],
   }),
   assignments = ref<Assignment[]>([]),
   staff = ref<Staff[]>([]);
@@ -805,7 +807,34 @@ onMounted(async () => {
                 @click="openTask()"
               />
             </div>
-          </article></div
+          </article></div>
+        <section class="project-progress panel">
+          <div class="section-title">
+            <div>
+              <span>Progres Proyek</span>
+              <small>Ringkasan chapter berdasarkan status tugas terbaru.</small>
+            </div>
+            <Button label="Lihat semua tugas" text icon="pi pi-arrow-right" @click="page = 'tasks'" />
+          </div>
+          <div v-if="overview.project_progress.length" class="project-progress-list">
+            <article v-for="project in overview.project_progress" :key="project.manga">
+              <div class="project-progress-head">
+                <strong>{{ project.manga }}</strong>
+                <span>{{ project.completed_chapters }}/{{ project.chapter_count }} chapter selesai</span>
+              </div>
+              <div class="project-progress-track" aria-label="Progres chapter">
+                <span :style="{ width: `${Math.min(100, Math.round((project.completed_chapters / Math.max(project.chapter_count, 1)) * 100))}%` }"></span>
+              </div>
+              <div class="project-progress-meta">
+                <span v-if="project.active_chapters">{{ project.active_chapters }} dikerjakan</span>
+                <span v-if="project.review_chapters">{{ project.review_chapters }} menunggu review</span>
+                <span v-if="project.revision_chapters">{{ project.revision_chapters }} revisi</span>
+                <span v-if="!project.active_chapters && !project.review_chapters && !project.revision_chapters">Tidak ada tindakan aktif</span>
+              </div>
+            </article>
+          </div>
+          <div v-else class="empty">Belum ada tugas proyek untuk ditampilkan.</div>
+        </section>
       ></template>
       <Suspense v-if="page === 'actions'">
         <ActionCenterPage :items="actionItems" :loading="loading" @reload="loadPage" @handle="handleAction" />

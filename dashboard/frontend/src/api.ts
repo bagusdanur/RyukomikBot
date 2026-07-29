@@ -125,6 +125,15 @@ export type ActionItem = {
   created_at: string | null;
   priority: number;
 };
+export type ProjectProgress = {
+  manga: string;
+  chapter_count: number;
+  active_chapters: number;
+  review_chapters: number;
+  revision_chapters: number;
+  completed_chapters: number;
+  last_activity: string | null;
+};
 export type OperationSnapshot = {
   events: Array<Record<string, any>>;
   outbox: Array<Record<string, any>>;
@@ -181,6 +190,7 @@ const liveApi = {
       counts: Record<string, number>;
       total_value: number;
       urgent_deadlines: number;
+      project_progress: ProjectProgress[];
     }>("/api/overview"),
   actionCenter: () => request<ActionItem[]>("/api/action-center"),
   operations: () => request<OperationSnapshot>("/api/operations"),
@@ -359,6 +369,9 @@ const demoApi = {
     },
     total_value: 584500,
     urgent_deadlines: 3,
+    project_progress: [
+      { manga: "Contoh Project", chapter_count: 8, active_chapters: 3, review_chapters: 1, revision_chapters: 0, completed_chapters: 4, last_activity: null },
+    ] as ProjectProgress[],
   }),
   actionCenter: async () => [] as ActionItem[],
   operations: async () => ({
