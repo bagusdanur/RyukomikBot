@@ -1715,8 +1715,9 @@ async def close_recruitment_submission(submission_id: int, payload: RecruitmentC
         await connection.execute("UPDATE recruitment_submissions SET status='closed',reviewed_at=CURRENT_TIMESTAMP,reviewed_by=?,notes=COALESCE(notes,'') || ? WHERE ticket_channel_id=? AND status='submitted'", (user["id"], "\n[Ditutup admin] " + payload.reason.strip(), submission_id))
         await connection.commit()
     finally: await connection.close()
-    await discord_api("POST", f"/channels/{submission_id}/messages", {"embeds":[{"title":"Pendaftaran Ditutup","description":payload.reason.strip(),"color":0xED4245}],"allowed_mentions":{"parse":[]}})
-    await discord_api("PUT", f"/channels/{submission_id}/permissions/{applicant_id}", {"type":1,"allow":str(1024+65536),"deny":"2048"})
+    deleted = await discord_api("DELETE", f"/channels/{submission_id}")
+    if deleted is None:
+        raise HTTPException(503, "Status pendaftaran tersimpan, tetapi channel tiket gagal dihapus. Coba lagi dari dashboard.")
     await audit(user["id"], "recruitment.close", "ticket", submission_id, None, {"reason":payload.reason.strip()})
     return {"ok":True}
 

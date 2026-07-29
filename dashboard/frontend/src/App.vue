@@ -372,7 +372,7 @@ async function saveRecruitmentSettings() {
 async function closeRegistration(item: RecruitmentSubmission) {
   const reason = window.prompt("Alasan penutupan pendaftaran:");
   if (!reason || reason.trim().length < 3) return;
-  try { loading.value = true; await api.closeRecruitmentSubmission(item.id, reason.trim()); success.value = "Pendaftaran ditutup dan tiket dikunci."; await loadPage(); }
+  try { loading.value = true; await api.closeRecruitmentSubmission(item.id, reason.trim()); success.value = "Pendaftaran ditutup dan channel tiket dihapus."; await loadPage(); }
   catch (e) { error.value = e instanceof Error ? e.message : "Gagal menutup pendaftaran."; }
   finally { loading.value = false; }
 }
