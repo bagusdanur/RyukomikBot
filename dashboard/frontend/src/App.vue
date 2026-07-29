@@ -15,6 +15,7 @@ import {
   type PayoutDetail,
   type ProjectProgress,
   type RecruitmentSettings,
+  type RecruitmentSubmission,
   type Recap,
   type Staff,
   type Submission,
@@ -52,6 +53,7 @@ const payrates = ref<
   audit = ref<Array<Record<string, string | number | null>>>([]);
 const actionItems = ref<ActionItem[]>([]);
 const recruitment = ref<RecruitmentSettings>({ open: true, positions: [] });
+const recruitmentSubmissions = ref<RecruitmentSubmission[]>([]);
 const taskPage = ref(1), taskPages = ref(1), taskTotal = ref(0),
   payoutPage = ref(1), payoutPages = ref(1), payoutTotal = ref(0),
   auditPage = ref(1), auditPages = ref(1), auditTotal = ref(0);
@@ -202,7 +204,7 @@ async function loadPage() {
   }
   if (page.value === "staff") await run(api.staff, staff);
   if (page.value === "payrates") await run(api.payrates, payrates);
-  if (page.value === "recruitment") await run(api.recruitmentSettings, recruitment);
+  if (page.value === "recruitment") { await run(api.recruitmentSettings, recruitment); recruitmentSubmissions.value = await api.recruitmentSubmissions(); }
   if (page.value === "deadlines") await run(api.deadlines, deadlines);
   if (page.value === "recap") {
     if (!staff.value.length) staff.value = await api.staff();
@@ -365,6 +367,14 @@ async function saveRecruitmentSettings() {
   } finally {
     loading.value = false;
   }
+}
+
+async function closeRegistration(item: RecruitmentSubmission) {
+  const reason = window.prompt("Alasan penutupan pendaftaran:");
+  if (!reason || reason.trim().length < 3) return;
+  try { loading.value = true; await api.closeRecruitmentSubmission(item.id, reason.trim()); success.value = "Pendaftaran ditutup dan tiket dikunci."; await loadPage(); }
+  catch (e) { error.value = e instanceof Error ? e.message : "Gagal menutup pendaftaran."; }
+  finally { loading.value = false; }
 }
 async function createTask() {
   if (!editingTask.value && !task.value.staff_id) return (error.value = "Pilih staf tujuan.");
@@ -1132,6 +1142,17 @@ onMounted(async () => {
             :loading="loading"
             @click="saveRecruitmentSettings"
           />
+        </section>
+        <section class="panel recruitment-applicants">
+          <div class="section-title"><div><span>Pelamar Aktif</span><small>Tutup hanya pendaftaran yang belum menjadi Staff.</small></div></div>
+          <div v-if="recruitmentSubmissions.length" class="recap-list">
+            <article v-for="item in recruitmentSubmissions" :key="item.id">
+              <div><b>Pelamar #{{ item.id }}</b><small>Posisi {{ item.position }} • <a :href="`https://discord.com/channels/1524448659951849666/${item.ticket_channel_id}`" target="_blank">Buka tiket</a></small></div>
+              <div><small>Discord ID</small><b>{{ item.applicant_id }}</b></div>
+              <Button label="Tutup pendaftaran" severity="danger" icon="pi pi-lock" @click="closeRegistration(item)" />
+            </article>
+          </div>
+          <div v-else class="empty">Tidak ada pendaftaran aktif.</div>
         </section>
       </template>
       <template v-if="page === 'deadlines'"

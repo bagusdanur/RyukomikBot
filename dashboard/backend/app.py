@@ -425,6 +425,9 @@ class RecruitmentSettingsUpdate(BaseModel):
     ts: bool
     tl_ts: bool
 
+class RecruitmentCloseRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+
 
 class AssignmentCreate(BaseModel):
     manga: str = Field(min_length=2, max_length=150)
@@ -1678,6 +1681,33 @@ async def recruitment_settings(_user=Depends(admin_user)):
             for position in ("TL", "TS", "TL+TS")
         ),
     }
+
+@app.get("/api/recruitment/submissions")
+async def recruitment_submissions(_user=Depends(admin_user)):
+    connection = await dashboard_db()
+    try:
+        rows = await (await connection.execute("""SELECT id,applicant_id,position,ticket_channel_id,status,submitted_at
+            FROM recruitment_submissions WHERE status='submitted' ORDER BY submitted_at DESC""")).fetchall()
+        return [dict(row) for row in rows]
+    finally: await connection.close()
+
+@app.post("/api/recruitment/submissions/{submission_id}/close")
+async def close_recruitment_submission(submission_id: int, payload: RecruitmentCloseRequest, user=Depends(admin_user)):
+    connection = await dashboard_db()
+    try:
+        row = await (await connection.execute("SELECT * FROM recruitment_submissions WHERE id=?", (submission_id,))).fetchone()
+        if not row: raise HTTPException(404, "Pelamar tidak ditemukan.")
+        if row["status"] != "submitted": raise HTTPException(409, "Pendaftaran ini tidak lagi aktif.")
+        member = await discord_api("GET", f"/guilds/{GUILD_ID}/members/{row['applicant_id']}")
+        if isinstance(member, dict) and str(ROLE_STAFF_ID) in {str(role) for role in member.get("roles", [])}:
+            raise HTTPException(409, "Pelamar sudah menjadi Staff; tiket ini adalah workspace staff dan tidak dapat ditutup dari Rekrutmen.")
+        await connection.execute("UPDATE recruitment_submissions SET status='closed',reviewed_at=CURRENT_TIMESTAMP,reviewed_by=?,notes=COALESCE(notes,'') || ? WHERE id=?", (user["id"], "\n[Ditutup admin] " + payload.reason.strip(), submission_id))
+        await connection.commit()
+    finally: await connection.close()
+    await discord_api("POST", f"/channels/{row['ticket_channel_id']}/messages", {"embeds":[{"title":"Pendaftaran Ditutup","description":payload.reason.strip(),"color":0xED4245}],"allowed_mentions":{"parse":[]}})
+    await discord_api("PUT", f"/channels/{row['ticket_channel_id']}/permissions/{row['applicant_id']}", {"type":1,"allow":str(1024+65536),"deny":"2048"})
+    await audit(user["id"], "recruitment.close", "recruitment_submission", submission_id, dict(row), {"reason":payload.reason.strip()})
+    return {"ok":True}
 
 
 @app.put("/api/recruitment/settings")

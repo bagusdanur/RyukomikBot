@@ -151,6 +151,7 @@ export type RecruitmentSettings = {
     updated_by: string | null;
   }>;
 };
+export type RecruitmentSubmission = { id:number; applicant_id:string; position:string; ticket_channel_id:string; status:string; submitted_at:string };
 export type Paged<T> = {
   items: T[];
   page: number;
@@ -241,6 +242,8 @@ const liveApi = {
       method: "PUT",
       body: JSON.stringify(settings),
     }),
+  recruitmentSubmissions: () => request<RecruitmentSubmission[]>("/api/recruitment/submissions"),
+  closeRecruitmentSubmission: (id:number, reason:string) => request(`/api/recruitment/submissions/${id}/close`, {method:"POST",body:JSON.stringify({reason})}),
   deadlines: () => request<Assignment[]>("/api/deadlines"),
   recap: (period: string) => request<Recap[]>(`/api/recap?period=${period}`),
   invoices: (period: string) =>
@@ -441,6 +444,8 @@ const demoApi = {
     ],
   }),
   updateRecruitmentSettings: async () => ({ ok: true, discord_synced: true }),
+  recruitmentSubmissions: async () => [] as RecruitmentSubmission[],
+  closeRecruitmentSubmission: async () => ({ ok: true }),
   deadlines: async () =>
     sampleAssignments.filter(
       (item) =>
