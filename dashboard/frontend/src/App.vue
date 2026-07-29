@@ -64,6 +64,8 @@ const search = ref(""),
   period = ref(new Date().toISOString().slice(0, 7)),
   showTask = ref(false),
   editingTask = ref<Assignment | null>(null);
+const closeRegistrationTarget = ref<RecruitmentSubmission | null>(null);
+const closeRegistrationReason = ref("Batal mendaftar");
 const task = ref({
   manga: "",
   chapter: "",
@@ -370,9 +372,12 @@ async function saveRecruitmentSettings() {
 }
 
 async function closeRegistration(item: RecruitmentSubmission) {
-  const reason = window.prompt("Alasan penutupan pendaftaran:");
-  if (!reason || reason.trim().length < 3) return;
-  try { loading.value = true; await api.closeRecruitmentSubmission(item.id, reason.trim()); success.value = "Pendaftaran ditutup dan channel tiket dihapus."; await loadPage(); }
+  closeRegistrationTarget.value = item; closeRegistrationReason.value = "Batal mendaftar";
+}
+async function confirmCloseRegistration() {
+  const item = closeRegistrationTarget.value;
+  if (!item) return;
+  try { loading.value = true; await api.closeRecruitmentSubmission(item.id, closeRegistrationReason.value); success.value = "Pendaftaran ditutup dan channel tiket dihapus."; closeRegistrationTarget.value = null; await loadPage(); }
   catch (e) { error.value = e instanceof Error ? e.message : "Gagal menutup pendaftaran."; }
   finally { loading.value = false; }
 }
@@ -1155,6 +1160,14 @@ onMounted(async () => {
           <div v-else class="empty">Tidak ada pendaftaran aktif.</div>
         </section>
       </template>
+    <div v-if="closeRegistrationTarget" class="modal-backdrop" @click.self="closeRegistrationTarget = null">
+      <form class="modal-card" @submit.prevent="confirmCloseRegistration">
+        <div class="modal-head"><div><p class="eyebrow">TUTUP PENDAFTARAN</p><h3>{{ closeRegistrationTarget.applicant_name }}</h3></div><button type="button" @click="closeRegistrationTarget = null">×</button></div>
+        <p class="confirm-warning">Channel <b>#{{ closeRegistrationTarget.ticket_name }}</b> akan dihapus permanen. Pilih alasan penutupan.</p>
+        <div class="form-grid"><label class="wide">Alasan<select v-model="closeRegistrationReason"><option>Batal mendaftar</option><option>Tidak aktif / tidak melanjutkan</option><option>Tidak memenuhi persyaratan</option><option>Posisi rekrutmen ditutup</option></select></label></div>
+        <div class="modal-actions"><Button label="Batal" severity="secondary" type="button" @click="closeRegistrationTarget = null"/><Button label="Hapus channel tiket" severity="danger" icon="pi pi-trash" type="submit" :loading="loading"/></div>
+      </form>
+    </div>
       <template v-if="page === 'deadlines'"
         ><div class="table-card">
           <DataTable :value="deadlines" :loading="loading"
