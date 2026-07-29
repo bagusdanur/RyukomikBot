@@ -116,13 +116,13 @@ async def create_filebin_download(source, manga_id, chapter_ids, fallbacks=None)
                 for filename in files:
                     image_files.append(os.path.join(root, filename))
             for image_path in sorted(image_files, key=lambda path: os.path.relpath(path, result)):
-                filename = os.path.basename(image_path)
-                image_number += 1
-                extension = os.path.splitext(filename)[1] or ".jpg"
-                remote_name = f"ch-{safe_chapter}_{image_number:03d}{extension}"
                 resize_result = await asyncio.to_thread(resize_for_editor, image_path)
                 resized_images += int(resize_result.resized)
-                if not await upload_to_filebin(bin_id, image_path, remote_name):
+                upload_path = resize_result.output_path or image_path
+                image_number += 1
+                extension = os.path.splitext(upload_path)[1] or ".png"
+                remote_name = f"ch-{safe_chapter}_{image_number:03d}{extension}"
+                if not await upload_to_filebin(bin_id, upload_path, remote_name):
                     uploaded = False
                     break
             if uploaded and image_number:

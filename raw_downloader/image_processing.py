@@ -17,6 +17,7 @@ class ResizeResult:
     resized: bool
     original_height: int | None = None
     final_height: int | None = None
+    output_path: str | None = None
 
 
 def resize_for_editor(image_path: str, max_height: int = MAX_RAW_IMAGE_HEIGHT) -> ResizeResult:
@@ -41,32 +42,29 @@ def resize_for_editor(image_path: str, max_height: int = MAX_RAW_IMAGE_HEIGHT) -
             source = ImageOps.exif_transpose(source)
             width, height = source.size
             if height <= max_height:
-                return ResizeResult(False, height, height)
+                return ResizeResult(False, height, height, image_path)
 
             final_width = max(1, round(width * max_height / height))
             resized = source.resize((final_width, max_height), Image.Resampling.LANCZOS)
-            if image_format == "JPEG" and resized.mode not in {"RGB", "L"}:
-                resized = resized.convert("RGB")
+            # PNG preserves the complete post-resize pixel data without a second
+            # JPEG/WebP compression pass.  This intentionally favors quality over
+            # Filebin size for editor-facing RAW files.
+            output_path = os.path.splitext(image_path)[0] + ".png"
+            if resized.mode == "P":
+                resized = resized.convert("RGBA")
 
             directory = os.path.dirname(image_path) or "."
-            suffix = os.path.splitext(image_path)[1] or ".jpg"
-            descriptor, temporary_path = tempfile.mkstemp(prefix=".editor-safe-", suffix=suffix, dir=directory)
+            descriptor, temporary_path = tempfile.mkstemp(prefix=".editor-safe-", suffix=".png", dir=directory)
             os.close(descriptor)
             try:
-                save_options: dict[str, object] = {}
-                if image_format == "JPEG":
-                    # Keep scanlation text and screentones as clean as possible.  The
-                    # user explicitly prefers larger Filebin downloads over a second
-                    # lossy compression pass.
-                    save_options = {"quality": 100, "subsampling": 0, "optimize": True}
-                elif image_format == "WEBP":
-                    save_options = {"quality": 100, "method": 6}
-                resized.save(temporary_path, format=image_format, **save_options)
-                os.replace(temporary_path, image_path)
+                resized.save(temporary_path, format="PNG", optimize=True)
+                os.replace(temporary_path, output_path)
+                if os.path.abspath(output_path) != os.path.abspath(image_path):
+                    os.remove(image_path)
             finally:
                 if os.path.exists(temporary_path):
                     os.remove(temporary_path)
-            return ResizeResult(True, height, max_height)
+            return ResizeResult(True, height, max_height, output_path)
     except (OSError, UnidentifiedImageError, ValueError) as error:
         print(f"RAW editor-safe resize skipped for {os.path.basename(image_path)}: {error}")
-        return ResizeResult(False)
+        return ResizeResult(False, output_path=image_path)
