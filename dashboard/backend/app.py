@@ -2,6 +2,7 @@ import json
 import os
 import asyncio
 import hashlib
+import hmac
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Literal
@@ -57,6 +58,9 @@ R2_ACCESS_KEY_ID = os.getenv("R2_ACCESS_KEY_ID", "")
 R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY", "")
 R2_BUCKET_NAME = os.getenv("R2_BUCKET_NAME", "ryukomik-staff-submissions")
 R2_ENDPOINT = os.getenv("R2_ENDPOINT", f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com" if R2_ACCOUNT_ID else "")
+TRAKTEER_WEBHOOK_TOKEN = os.getenv("TRAKTEER_WEBHOOK_TOKEN", "")
+TRAKTEER_TIP_URL = os.getenv("TRAKTEER_TIP_URL", "https://trakteer.id/kanimenia17/tip")
+TRAKTEER_CHANNEL_NAME = "apresiasi-staff"
 _staff_cache = {"items": [], "expires_at": 0.0, "updated_at": None}
 _staff_cache_lock = asyncio.Lock()
 
@@ -73,6 +77,17 @@ async def setup_dashboard_tables():
     connection = await dashboard_db()
     try:
         await connection.execute("PRAGMA foreign_keys=OFF")
+        await connection.execute("""
+            CREATE TABLE IF NOT EXISTS trakteer_events (
+                transaction_id TEXT PRIMARY KEY,
+                supporter_name TEXT NOT NULL,
+                amount INTEGER NOT NULL,
+                supporter_message TEXT,
+                created_at TEXT NOT NULL,
+                delivered_at DATETIME,
+                discord_message_id TEXT
+            )
+        """)
         await connection.execute("""
             CREATE TABLE IF NOT EXISTS recruitment_position_settings (
                 position TEXT PRIMARY KEY,
@@ -491,6 +506,94 @@ async def discord_api(method: str, path: str, payload=None):
                 except (aiohttp.ContentTypeError, json.JSONDecodeError):
                     return {}
             return None
+
+
+async def trakteer_channel_id() -> str | None:
+    """Resolve the existing appreciation channel without storing a webhook URL."""
+    channels = await discord_api("GET", f"/guilds/{GUILD_ID}/channels")
+    if not isinstance(channels, list):
+        return None
+    for channel in channels:
+        if channel.get("type") == 0 and str(channel.get("name", "")).casefold() == TRAKTEER_CHANNEL_NAME:
+            return str(channel["id"])
+    return None
+
+
+def donation_text(value: object, limit: int) -> str:
+    """Keep donor text readable but prevent mass mentions or oversized embeds."""
+    return str(value or "").strip().replace("@", "@\u200b")[:limit]
+
+
+@app.post("/webhooks/trakteer")
+async def trakteer_webhook(request: Request):
+    """Receive verified Trakteer tips and publish one idempotent Discord card."""
+    supplied_token = request.headers.get("X-Webhook-Token", "")
+    if not TRAKTEER_WEBHOOK_TOKEN or not hmac.compare_digest(supplied_token, TRAKTEER_WEBHOOK_TOKEN):
+        raise HTTPException(status_code=401, detail="Webhook token tidak valid.")
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(status_code=400, detail="Payload webhook tidak valid.")
+    if not isinstance(payload, dict) or payload.get("type") != "tip":
+        return {"ok": True, "ignored": True}
+    transaction_id = donation_text(payload.get("transaction_id"), 160)
+    if not transaction_id:
+        raise HTTPException(status_code=400, detail="ID transaksi tidak ditemukan.")
+    try:
+        amount = max(0, int(float(payload.get("price") or 0)))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Nominal transaksi tidak valid.")
+    supporter = donation_text(payload.get("supporter_name") or "Supporter Ryukomik", 100)
+    message = donation_text(payload.get("supporter_message"), 900)
+    created_at = donation_text(payload.get("created_at"), 64)
+    connection = await dashboard_db()
+    try:
+        await connection.execute(
+            """INSERT OR IGNORE INTO trakteer_events
+               (transaction_id,supporter_name,amount,supporter_message,created_at)
+               VALUES(?,?,?,?,?)""",
+            (transaction_id, supporter, amount, message or None, created_at),
+        )
+        row = await (await connection.execute(
+            "SELECT delivered_at FROM trakteer_events WHERE transaction_id=?", (transaction_id,)
+        )).fetchone()
+        await connection.commit()
+    finally:
+        await connection.close()
+    if row and row["delivered_at"]:
+        return {"ok": True, "duplicate": True}
+    channel_id = await trakteer_channel_id()
+    if not channel_id:
+        raise HTTPException(status_code=503, detail="Channel apresiasi-staff tidak ditemukan.")
+    embed = {
+        "title": "💜 Terima Kasih atas Dukunganmu!",
+        "description": f"**{supporter}** baru saja memberi dukungan untuk Ryukomik.",
+        "color": 0x8B5CF6,
+        "fields": [
+            {"name": "Dukungan", "value": f"Rp {amount:,.0f}".replace(",", "."), "inline": True},
+            {"name": "Donasi", "value": f"[Dukung Ryukomik di Trakteer]({TRAKTEER_TIP_URL})", "inline": True},
+        ],
+        "footer": {"text": "Ryukomik Official • Terima kasih sudah mendukung karya kami"},
+    }
+    if message:
+        embed["fields"].append({"name": "Pesan Supporter", "value": message, "inline": False})
+    sent = await discord_api("POST", f"/channels/{channel_id}/messages", {
+        "embeds": [embed],
+        "components": [{"type": 1, "components": [{"type": 2, "style": 5, "label": "Dukung di Trakteer", "url": TRAKTEER_TIP_URL}]}],
+        "allowed_mentions": {"parse": []},
+    })
+    if not sent:
+        raise HTTPException(status_code=503, detail="Notifikasi Discord gagal dikirim.")
+    connection = await dashboard_db()
+    try:
+        await connection.execute(
+            "UPDATE trakteer_events SET delivered_at=CURRENT_TIMESTAMP,discord_message_id=? WHERE transaction_id=?",
+            (str(sent.get("id") or ""), transaction_id),
+        )
+        await connection.commit()
+    finally:
+        await connection.close()
+    return {"ok": True}
 
 
 def discord_avatar(member: dict) -> str | None:

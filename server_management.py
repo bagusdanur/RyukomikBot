@@ -23,6 +23,7 @@ from config import (
 log = logging.getLogger(__name__)
 
 WELCOME_NAMES = ("welcome", "selamat-datang", "welcome-goodbye")
+APPRECIATION_NAMES = ("apresiasi-staff",)
 RULES_NAMES = ("rules", "peraturan")
 ROLE_NAMES = ("ambil-role", "roles", "pilih-role")
 RECRUITMENT_NAMES = ("staff-rekrutmen", "rekrutmen", "recruitment")
@@ -89,6 +90,37 @@ def build_goodbye_embed(member: discord.Member) -> discord.Embed:
     embed.set_thumbnail(url=member.display_avatar.url)
     embed.set_footer(text="Terima kasih pernah menjadi bagian dari Ryukomik")
     return embed
+
+
+def build_trakteer_embed() -> discord.Embed:
+    embed = discord.Embed(
+        title="💜 Dukung Ryukomik di Trakteer",
+        description=(
+            "Dukunganmu membantu Ryukomik terus menerjemahkan, mengedit, dan merilis project baru. "
+            "Setiap dukungan akan tampil otomatis di channel ini. Terima kasih!"
+        ),
+        color=discord.Color.purple(),
+    )
+    embed.add_field(name="Cara mendukung", value="Klik tombol **Dukung di Trakteer** di bawah.", inline=False)
+    embed.set_footer(text="Ryukomik Official • Dukungan bersifat sukarela")
+    return embed
+
+
+async def upsert_trakteer_card(guild: discord.Guild) -> bool:
+    channel = _find_text_channel(guild, names=APPRECIATION_NAMES)
+    if not channel:
+        log.warning("Appreciation channel not found in guild=%s", guild.id)
+        return False
+    view = discord.ui.View(timeout=None)
+    view.add_item(discord.ui.Button(
+        label="Dukung di Trakteer", emoji="💜", style=discord.ButtonStyle.link,
+        url="https://trakteer.id/kanimenia17/tip",
+    ))
+    message = await _upsert_bot_embed(
+        channel, title="💜 Dukung Ryukomik di Trakteer", embed=build_trakteer_embed(), pin=True
+    )
+    await message.edit(embed=build_trakteer_embed(), view=view)
+    return True
 
 
 def build_welcome_view(guild: discord.Guild) -> discord.ui.View | None:
@@ -393,6 +425,8 @@ async def apply_server_housekeeping(guild: discord.Guild) -> dict[str, bool]:
             if is_claim_noise or is_stale_review_notice:
                 await message.delete()
         result["review_cleanup"] = True
+
+    result["trakteer"] = await upsert_trakteer_card(guild)
 
     log.info("Server housekeeping completed for guild=%s result=%s", guild.id, result)
     print(f"[SERVER] Housekeeping result: {result}", flush=True)
