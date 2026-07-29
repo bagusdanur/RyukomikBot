@@ -514,7 +514,8 @@ async def trakteer_channel_id() -> str | None:
     if not isinstance(channels, list):
         return None
     for channel in channels:
-        if channel.get("type") == 0 and str(channel.get("name", "")).casefold() == TRAKTEER_CHANNEL_NAME:
+        channel_name = str(channel.get("name", "")).casefold()
+        if channel.get("type") == 0 and TRAKTEER_CHANNEL_NAME in channel_name:
             return str(channel["id"])
     return None
 
