@@ -151,7 +151,7 @@ export type RecruitmentSettings = {
     updated_by: string | null;
   }>;
 };
-export type RecruitmentSubmission = { id:number; applicant_id:string; applicant_name:string; position:string; ticket_channel_id:string; status:string; submitted_at:string };
+export type RecruitmentSubmission = { id:number; applicant_id:string; applicant_name:string; ticket_name:string; position:string; ticket_channel_id:string; status:string; submitted_at:string };
 export type Paged<T> = {
   items: T[];
   page: number;

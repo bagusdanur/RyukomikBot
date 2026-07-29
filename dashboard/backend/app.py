@@ -1698,7 +1698,7 @@ async def recruitment_submissions(_user=Depends(admin_user)):
             continue
         profile = member.get("user", {}) if isinstance(member, dict) else {}
         applicant_name = str(member.get("nick") or profile.get("global_name") or profile.get("username") or f"User {owner.group(1)}") if isinstance(member, dict) else f"User {owner.group(1)}"
-        result.append({"id": str(channel["id"]), "applicant_id": owner.group(1), "applicant_name": applicant_name, "position": re.search(r"position=([^|]+)", topic).group(1).strip() if "position=" in topic else "Belum dipilih", "ticket_channel_id": str(channel["id"]), "status": "submitted", "submitted_at": ""})
+        result.append({"id": str(channel["id"]), "applicant_id": owner.group(1), "applicant_name": applicant_name, "ticket_name": str(channel.get("name") or "tiket-pendaftaran"), "position": re.search(r"position=([^|]+)", topic).group(1).strip() if "position=" in topic else "Belum dipilih", "ticket_channel_id": str(channel["id"]), "status": "submitted", "submitted_at": ""})
     return result
 
 @app.post("/api/recruitment/submissions/{submission_id}/close")
