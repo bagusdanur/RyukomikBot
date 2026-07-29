@@ -1147,7 +1147,7 @@ onMounted(async () => {
           <div class="section-title"><div><span>Pelamar Aktif</span><small>Tutup hanya pendaftaran yang belum menjadi Staff.</small></div></div>
           <div v-if="recruitmentSubmissions.length" class="recap-list">
             <article v-for="item in recruitmentSubmissions" :key="item.id">
-              <div><b>Pelamar #{{ item.id }}</b><small>Posisi {{ item.position }} • <a :href="`https://discord.com/channels/1524448659951849666/${item.ticket_channel_id}`" target="_blank">Buka tiket</a></small></div>
+              <div><b>{{ item.applicant_name }}</b><small>Posisi {{ item.position }} • <a :href="`https://discord.com/channels/1524448659951849666/${item.ticket_channel_id}`" target="_blank">Buka tiket</a></small></div>
               <div><small>Discord ID</small><b>{{ item.applicant_id }}</b></div>
               <Button label="Tutup pendaftaran" severity="danger" icon="pi pi-lock" @click="closeRegistration(item)" />
             </article>
