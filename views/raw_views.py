@@ -18,6 +18,7 @@ from raw_downloader.resolver import (
     resolve_assignment_raw,
 )
 from raw_downloader.retry import RETRYABLE_STATUSES
+from raw_downloader.image_processing import resize_for_editor
 
 RAW_ROOT = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "raw")
 FILEBIN_BASE_URL = "https://filebin.net"
@@ -104,6 +105,7 @@ async def create_filebin_download(source, manga_id, chapter_ids, fallbacks=None)
         if not chapter_directories:
             return None, [], source
 
+        resized_images = 0
         for chapter_id, result in chapter_directories:
             safe_chapter = re.sub(r"[^a-zA-Z0-9_-]+", "-", chapter_id).strip("-")[:30] or "chapter"
             image_number = 0
@@ -118,6 +120,8 @@ async def create_filebin_download(source, manga_id, chapter_ids, fallbacks=None)
                 image_number += 1
                 extension = os.path.splitext(filename)[1] or ".jpg"
                 remote_name = f"ch-{safe_chapter}_{image_number:03d}{extension}"
+                resize_result = await asyncio.to_thread(resize_for_editor, image_path)
+                resized_images += int(resize_result.resized)
                 if not await upload_to_filebin(bin_id, image_path, remote_name):
                     uploaded = False
                     break
@@ -127,6 +131,8 @@ async def create_filebin_download(source, manga_id, chapter_ids, fallbacks=None)
                 shutil.rmtree(result, ignore_errors=True)
         if not completed:
             return None, [], selected_source
+        if resized_images:
+            print(f"RAW editor-safe resize: {resized_images} image(s) limited to 8192px height")
         return f"{FILEBIN_BASE_URL}/{bin_id}", completed, selected_source
     finally:
         for path in temporary_directories:
