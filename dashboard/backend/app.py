@@ -1532,7 +1532,7 @@ async def raw_rate_analysis(payload: RawRateAnalysisRequest, _user=Depends(admin
     )
     label, level, reason = classify_workload(workload)
     minimum, maximum = await role_rate_range(payload.role)
-    suggested = suggested_rate(minimum, maximum, level)
+    suggested = suggested_rate(minimum, maximum, workload)
     return {
         "source": source,
         "matched_title": resolved["manga"].get("title", payload.manga),
