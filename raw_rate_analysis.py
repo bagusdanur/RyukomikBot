@@ -53,5 +53,9 @@ def suggested_rate(minimum: int, maximum: int, workload: RawWorkload) -> int:
         score += 0.10
     if workload.max_height > 16_000 or average_height > 10_000:
         score += 0.15
+    # A short chapter is still short. Even several vertical pages should only
+    # nudge its rate, not make it equal to a genuinely long package.
+    if workload.page_count <= 15:
+        score = min(score, 0.22)
     target = minimum + (maximum - minimum) * min(score, 0.90)
     return max(minimum, min(maximum, int(round(target / 500.0) * 500)))

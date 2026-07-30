@@ -20,3 +20,7 @@ class RawRateAnalysisTests(unittest.TestCase):
     def test_one_tall_page_is_only_a_small_adjustment(self):
         raw = RawWorkload(11, 11, 65_000, 13_745, 1)
         self.assertEqual(suggested_rate(9_000, 18_000, raw), 10_000)
+
+    def test_short_chapter_with_many_tall_pages_stays_at_owner_standard(self):
+        raw = RawWorkload(11, 11, 112_000, 14_000, 4)
+        self.assertEqual(suggested_rate(9_000, 18_000, raw), 11_000)
