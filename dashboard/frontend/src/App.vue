@@ -17,6 +17,7 @@ import {
   type RecruitmentSettings,
   type RecruitmentSubmission,
   type Recap,
+  type RawRateAnalysis,
   type Staff,
   type Submission,
   type User,
@@ -74,6 +75,8 @@ const task = ref({
   final_rate: 4000,
   deadline_at: "",
 });
+const rawRateAnalysis = ref<RawRateAnalysis | null>(null);
+const rawRateAnalyzing = ref(false);
 const submissions = ref<Submission[]>([]);
 // Compatibility state for an old cached modal. No new dashboard uploads are accepted.
 const uploadTask = ref<Assignment | null>(null),
@@ -413,6 +416,7 @@ async function createTask() {
       final_rate: 4000,
       deadline_at: "",
     };
+    rawRateAnalysis.value = null;
     await loadPage();
   } catch (e) {
     error.value = e instanceof Error ? e.message : "Gagal membuat tugas.";
@@ -420,8 +424,28 @@ async function createTask() {
     loading.value = false;
   }
 }
+async function analyzeRawRate() {
+  if (!task.value.manga.trim() || !task.value.chapter.trim()) {
+    error.value = "Isi judul manga dan chapter dahulu agar RAW dapat dianalisis.";
+    return;
+  }
+  try {
+    rawRateAnalyzing.value = true;
+    error.value = "";
+    const result = await api.analyzeRawRate(task.value.manga, task.value.chapter, task.value.role);
+    rawRateAnalysis.value = result;
+    task.value.final_rate = result.rate_per_chapter;
+    success.value = `RAW dianalisis: ${result.workload}. Rekomendasi rate diterapkan dan masih dapat diubah.`;
+  } catch (e) {
+    rawRateAnalysis.value = null;
+    error.value = e instanceof Error ? e.message : "Analisis RAW gagal.";
+  } finally {
+    rawRateAnalyzing.value = false;
+  }
+}
 async function openTask(staffId?: string) {
   editingTask.value = null;
+  rawRateAnalysis.value = null;
   error.value = "";
   if (!staff.value.length) {
     loading.value = true;
@@ -452,6 +476,7 @@ function editTask(item: Assignment) {
     final_rate: item.rate_per_chapter || Math.floor(item.final_rate / (item.chapter_count || 1)),
     deadline_at: item.deadline_at || "",
   };
+  rawRateAnalysis.value = null;
   showTask.value = true;
 }
 async function downloadResult(item: Submission) {
@@ -1439,6 +1464,23 @@ onMounted(async () => {
               <option>TS</option>
               <option>TL+TS</option>
             </select></label
+          ><div class="wide raw-rate-tool">
+            <div>
+              <small>REKOMENDASI OTOMATIS</small>
+              <b>Analisis beban RAW</b>
+              <span>Cek jumlah halaman dan tinggi gambar dari sumber RAW yang cocok.</span>
+            </div>
+            <Button type="button" label="Analisis RAW" icon="pi pi-sparkles" severity="secondary"
+              :loading="rawRateAnalyzing" @click="analyzeRawRate" />
+          </div
+          ><div v-if="rawRateAnalysis" class="wide raw-rate-result" :class="rawRateAnalysis.workload.toLowerCase()">
+            <div>
+              <small>{{ rawRateAnalysis.source.toUpperCase() }} · {{ rawRateAnalysis.matched_title }}</small>
+              <b>{{ rawRateAnalysis.workload }} — {{ money(rawRateAnalysis.rate_per_chapter) }}/chapter</b>
+              <span>{{ rawRateAnalysis.reason }}. {{ rawRateAnalysis.measured_pages }}/{{ rawRateAnalysis.page_count }} gambar berhasil diukur.</span>
+            </div>
+            <span class="rate-range">Rentang {{ money(rawRateAnalysis.minimum_rate) }}–{{ money(rawRateAnalysis.maximum_rate) }}</span>
+          </div
           ><label class="wide"
             >Staff tujuan<select v-model="task.staff_id" :disabled="!!editingTask" required>
               <option value="" disabled>Pilih staf Discord</option>

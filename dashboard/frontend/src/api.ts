@@ -22,6 +22,22 @@ export type Assignment = {
   staff_name?: string;
   staff_avatar?: string | null;
 };
+export type RawRateAnalysis = {
+  source: string;
+  matched_title: string;
+  chapter_count: number;
+  page_count: number;
+  measured_pages: number;
+  max_height: number;
+  total_height: number;
+  tall_pages: number;
+  workload: "Ringan" | "Sedang" | "Berat";
+  reason: string;
+  rate_per_chapter: number;
+  minimum_rate: number;
+  maximum_rate: number;
+  note: string;
+};
 export type Staff = {
   id: string;
   staff_id: string;
@@ -218,6 +234,11 @@ const liveApi = {
     request<{ ok: boolean; notified: boolean }>(`/api/assignments/${id}`, {
       method: "PUT",
       body: JSON.stringify(payload),
+    }),
+  analyzeRawRate: (manga: string, chapter: string, role: string) =>
+    request<RawRateAnalysis>("/api/raw-rate-analysis", {
+      method: "POST",
+      body: JSON.stringify({ manga, chapter, role }),
     }),
   approveAssignment: (id: number) =>
     request(`/api/assignments/${id}/approve`, { method: "POST" }),
@@ -421,6 +442,13 @@ const demoApi = {
   ],
   createAssignment: async () => ({ id: 25, notified: true }),
   updateAssignment: async () => ({ ok: true, notified: true }),
+  analyzeRawRate: async (): Promise<RawRateAnalysis> => ({
+    source: "asura", matched_title: "Contoh Manga", chapter_count: 1,
+    page_count: 18, measured_pages: 18, max_height: 6200, total_height: 106000,
+    tall_pages: 0, workload: "Sedang", reason: "18 halaman, tinggi maks. 6,200 px",
+    rate_per_chapter: 6000, minimum_rate: 4000, maximum_rate: 8000,
+    note: "Rekomendasi dapat diubah administrator sebelum tugas dikirim.",
+  }),
   approveAssignment: async () => ({ ok: true }),
   reviseAssignment: async () => ({ ok: true }),
   payrates: async () => [
