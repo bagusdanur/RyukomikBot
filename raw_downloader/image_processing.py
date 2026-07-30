@@ -54,9 +54,9 @@ def resize_for_editor(image_path: str, max_height: int = MAX_RAW_IMAGE_HEIGHT) -
                 if image_format == "JPEG":
                     if resized.mode not in {"RGB", "L"}:
                         resized = resized.convert("RGB")
-                    save_options = {"quality": 100, "subsampling": 0, "optimize": True}
+                    save_options = {"quality": 95, "subsampling": 0, "optimize": True}
                 elif image_format == "WEBP":
-                    save_options = {"quality": 100, "method": 6}
+                    save_options = {"quality": 95, "method": 6}
                 resized.save(temporary_path, format=image_format, **save_options)
                 os.replace(temporary_path, image_path)
             finally:
