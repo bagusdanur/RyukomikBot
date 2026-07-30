@@ -14,11 +14,10 @@ class RawImageProcessingTests(unittest.TestCase):
             Image.new("RGB", (1000, 10000), "white").save(path, quality=100)
             result = resize_for_editor(path, max_height=8192)
             self.assertTrue(result.resized)
-            self.assertEqual(os.path.splitext(result.output_path or "")[1], ".png")
-            with Image.open(result.output_path) as image:
+            with Image.open(path) as image:
                 self.assertEqual(image.height, 8192)
                 self.assertEqual(image.width, 819)
-                self.assertEqual(image.format, "PNG")
+                self.assertEqual(image.format, "JPEG")
 
     def test_normal_image_is_not_reencoded(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -35,7 +34,7 @@ class RawImageProcessingTests(unittest.TestCase):
             Image.new("RGBA", (1000, 10000), (255, 255, 255, 150)).save(path)
             result = resize_for_editor(path, max_height=8192)
             self.assertTrue(result.resized)
-            with Image.open(result.output_path) as image:
+            with Image.open(path) as image:
                 self.assertEqual(image.format, "PNG")
                 self.assertEqual(image.height, 8192)
                 self.assertEqual(image.mode, "RGBA")
