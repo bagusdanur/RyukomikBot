@@ -105,7 +105,15 @@ async def sync_project_events(guild: discord.Guild) -> int:
         channel = guild.get_channel(channel_id)
         if not isinstance(channel, discord.TextChannel):
             raise RuntimeError(f"Project announcement channel unavailable: {channel_id}")
-        message = await channel.send(embed=embed, view=view, allowed_mentions=discord.AllowedMentions.none())
+        # Project changes are announcements for the whole community.  Keep
+        # every other mention disabled so data from the website cannot ping a
+        # user or role unexpectedly.
+        message = await channel.send(
+            content="@everyone",
+            embed=embed,
+            view=view,
+            allowed_mentions=discord.AllowedMentions(everyone=True, users=False, roles=False),
+        )
         await _record_delivery(event, message.id)
         delivered += 1
     return delivered
