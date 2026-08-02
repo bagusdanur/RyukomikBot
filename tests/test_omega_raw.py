@@ -4,6 +4,7 @@ import tempfile
 from unittest.mock import AsyncMock, patch
 
 from raw_downloader.omega import OmegaDownloader
+from raw_downloader.siren import SirenDownloader
 from raw_downloader.resolver import (
     SOURCE_ORDER,
     deduplicate_results,
@@ -96,6 +97,36 @@ class OmegaAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(images, payload["images"])
 
 
+class SirenAdapterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_search_and_chapter_schema_are_normalized(self):
+        downloader = SirenDownloader()
+        search_payload = {"data": [{
+            "title": "The Girl Next to Me Is a Beast", "slug": "64db57fa096",
+            "type_genre": "manga", "image": "cover.webp",
+        }]}
+        with patch("raw_downloader.siren._create_session", return_value=SessionContext()), patch(
+            "raw_downloader.siren.get_json", new=AsyncMock(return_value=search_payload)
+        ):
+            result = await downloader.search_manga("girl beast")
+        self.assertEqual(result[0]["id"], "64db57fa096")
+        self.assertEqual(result[0]["source"], "siren")
+
+        downloader.get_manga_info = AsyncMock(return_value={"chapters": [{
+            "title": "Chapter 4", "slug": "chapter-4", "date": "today",
+        }]})
+        chapter_rows = await downloader.get_chapter_list("64db57fa096")
+        self.assertEqual(chapter_rows[0]["id"], "chapter-4")
+
+    async def test_image_order_is_preserved(self):
+        downloader = SirenDownloader()
+        payload = {"images": ["page-01.jpg", "page-02.jpg", "page-03.jpg"]}
+        with patch("raw_downloader.siren._create_session", return_value=SessionContext()), patch(
+            "raw_downloader.siren.get_json", new=AsyncMock(return_value=payload)
+        ):
+            images = await downloader.get_chapter_images("64db57fa096", "4")
+        self.assertEqual(images, payload["images"])
+
+
 class ThreeSourceResolverTests(unittest.IsolatedAsyncioTestCase):
     def test_duplicate_titles_are_grouped_with_all_candidates(self):
         grouped = deduplicate_results({
@@ -119,7 +150,7 @@ class ThreeSourceResolverTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["missing"], [])
 
     async def test_equal_coverage_uses_business_priority(self):
-        self.assertEqual(SOURCE_ORDER, ("asura", "omega", "doujiva"))
+        self.assertEqual(SOURCE_ORDER, ("asura", "omega", "doujiva", "siren"))
         downloaders = {
             source: FakeDownloader([manga(source)], chapters(source, 1, 2))
             for source in SOURCE_ORDER
@@ -128,7 +159,7 @@ class ThreeSourceResolverTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["source"], "asura")
         self.assertEqual(
             [item["source"] for item in result["fallbacks"]],
-            ["omega", "doujiva"],
+            ["omega", "doujiva", "siren"],
         )
 
     async def test_partial_sources_are_not_merged(self):

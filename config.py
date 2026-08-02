@@ -30,5 +30,6 @@ ROLE_ADMIN_ID = int(os.getenv("ROLE_ADMIN_ID", "1524457168072343762"))
 ASURA_API = os.getenv("ASURA_API", "https://api.ryukomik.web.id/asura")
 DOUJIVA_API = os.getenv("DOUJIVA_API", "https://api.ryukomik.web.id/doujiva")
 OMEGA_API = os.getenv("OMEGA_API", "https://api.ryukomik.web.id/omega")
+SIREN_API = os.getenv("SIREN_API", "https://api.ryukomik.web.id/siren")
 DASHBOARD_URL = os.getenv("DASHBOARD_URL", "https://staff.ryukomik.web.id")
 
