@@ -407,7 +407,9 @@ async function createTask() {
         tl_rate_per_chapter: task.value.final_rate, ts_rate_per_chapter: task.value.ts_rate,
         deadline_at: task.value.deadline_at || null,
       });
-      success.value = `Pair dibuat: tugas TL #${result.tl_assignment_id} dikirim. Tugas TS akan otomatis aktif setelah TL disetujui.`;
+      success.value = result.notified
+        ? `Pair dibuat: tugas TL #${result.tl_assignment_id} dikirim ke tiket staff. Tugas TS akan otomatis aktif setelah TL disetujui.`
+        : `Pair #${result.tl_assignment_id} tersimpan, tetapi tiket staff tidak ditemukan. Periksa tiket staff sebelum melanjutkan.`;
     } else {
       const result = await api.createAssignment({ ...task.value, rate_per_chapter: task.value.final_rate, staff_id: task.value.staff_id, deadline_at: task.value.deadline_at || null });
       success.value = `Tugas #${result.id} dibuat${result.notified ? " dan staf sudah diberi notifikasi." : ", tetapi notifikasi Discord gagal."}`;

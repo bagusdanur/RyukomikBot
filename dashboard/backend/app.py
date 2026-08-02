@@ -942,9 +942,8 @@ def normalize_paging(page, page_size, paginated):
     )
 
 
-async def send_assignment_notice(staff_id: int, assignment_id: int, payload: AssignmentCreate, handoff_note: str | None = None):
-    if DEV_BYPASS:
-        return True
+async def resolve_staff_ticket_channel(staff_id: int, assignment_id: int) -> str | None:
+    """Find the private staff ticket from Discord, even for a first dashboard task."""
     connection = await dashboard_db()
     try:
         row = await (await connection.execute(
@@ -953,7 +952,34 @@ async def send_assignment_notice(staff_id: int, assignment_id: int, payload: Ass
         )).fetchone()
     finally:
         await connection.close()
-    channel_id = row[0] if row else None
+    channel_id = str(row[0]) if row and row[0] else None
+    if not channel_id:
+        channels = await discord_api("GET", f"/guilds/{GUILD_ID}/channels") or []
+        for channel in channels:
+            if channel.get("type") != 0 or "tiket-" not in str(channel.get("name", "")).casefold():
+                continue
+            topic = str(channel.get("topic") or "")
+            owns_overwrite = any(
+                str(overwrite.get("id")) == str(staff_id) and overwrite.get("type") == 1
+                for overwrite in channel.get("permission_overwrites", [])
+            )
+            if str(staff_id) in topic or owns_overwrite:
+                channel_id = str(channel["id"])
+                break
+    if channel_id:
+        connection = await dashboard_db()
+        try:
+            await connection.execute("UPDATE assignments SET ticket_channel_id=? WHERE id=?", (channel_id, assignment_id))
+            await connection.commit()
+        finally:
+            await connection.close()
+    return channel_id
+
+
+async def send_assignment_notice(staff_id: int, assignment_id: int, payload: AssignmentCreate, handoff_note: str | None = None):
+    if DEV_BYPASS:
+        return True
+    channel_id = await resolve_staff_ticket_channel(staff_id, assignment_id)
     if not channel_id:
         dm = await discord_api("POST", "/users/@me/channels", {"recipient_id": str(staff_id)})
         channel_id = dm.get("id") if dm else None
