@@ -433,10 +433,6 @@ async function createTask() {
   }
 }
 async function analyzeRawRate() {
-  if (task.value.role === "PAIR") {
-    error.value = "Untuk Pair TL → TS, isi rate TL dan TS masing-masing. Analisis otomatis berlaku untuk tugas tunggal.";
-    return;
-  }
   if (!task.value.manga.trim() || !task.value.chapter.trim()) {
     error.value = "Isi judul manga dan chapter dahulu agar RAW dapat dianalisis.";
     return;
@@ -444,6 +440,17 @@ async function analyzeRawRate() {
   try {
     rawRateAnalyzing.value = true;
     error.value = "";
+    if (task.value.role === "PAIR") {
+      const [tl, ts] = await Promise.all([
+        api.analyzeRawRate(task.value.manga, task.value.chapter, "TL"),
+        api.analyzeRawRate(task.value.manga, task.value.chapter, "TS"),
+      ]);
+      rawRateAnalysis.value = tl;
+      task.value.final_rate = tl.rate_per_chapter;
+      task.value.ts_rate = ts.rate_per_chapter;
+      success.value = `RAW dianalisis: ${tl.workload}. Rekomendasi TL ${money(tl.rate_per_chapter)}/chapter dan TS ${money(ts.rate_per_chapter)}/chapter sudah diterapkan.`;
+      return;
+    }
     const result = await api.analyzeRawRate(task.value.manga, task.value.chapter, task.value.role);
     rawRateAnalysis.value = result;
     task.value.final_rate = result.rate_per_chapter;
