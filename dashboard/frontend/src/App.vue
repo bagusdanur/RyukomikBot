@@ -17,6 +17,7 @@ import {
   type RecruitmentSettings,
   type RecruitmentSubmission,
   type Recap,
+  type RecapSummary,
   type RawRateAnalysis,
   type Staff,
   type Submission,
@@ -46,6 +47,7 @@ const payrates = ref<
   >([]),
   deadlines = ref<Assignment[]>([]),
   recap = ref<Recap[]>([]),
+  recapSummary = ref<RecapSummary>({ total_earned: 0, unpaid_amount: 0, paid_amount: 0, chapter_count: 0 }),
   invoices = ref<Invoice[]>([]),
   payouts = ref<Payout[]>([]),
   payoutDetail = ref<PayoutDetail | null>(null),
@@ -217,6 +219,7 @@ async function loadPage() {
     if (!staff.value.length) staff.value = await api.staff();
     await Promise.all([
       run(() => api.recap(period.value), recap),
+      run(api.recapSummary, recapSummary),
       run(() => api.invoices(period.value), invoices),
     ]);
   }
@@ -1239,15 +1242,22 @@ onMounted(async () => {
         </div>
         <div class="salary-summary">
           <article>
-            <small>Total periode</small><strong>{{ money(recapTotal) }}</strong>
+            <small>Saldo seluruh periode</small><strong>{{ money(recapSummary.unpaid_amount) }}</strong>
           </article>
           <article>
-            <small>Menunggu pembayaran</small
-            ><strong>{{ money(pendingTotal) }}</strong>
+            <small>Total penghasilan</small><strong>{{ money(recapSummary.total_earned) }}</strong>
           </article>
           <article>
-            <small>Invoice diterbitkan</small
-            ><strong>{{ invoices.length }}</strong>
+            <small>Total sudah dibayar</small><strong>{{ money(recapSummary.paid_amount) }}</strong>
+          </article>
+          <article>
+            <small>Total periode {{ period }}</small><strong>{{ money(recapTotal) }}</strong>
+          </article>
+          <article>
+            <small>Belum dibayar periode ini</small><strong>{{ money(pendingTotal) }}</strong>
+          </article>
+          <article>
+            <small>Invoice periode ini</small><strong>{{ invoices.length }}</strong>
           </article>
         </div>
         <div class="recap-layout">

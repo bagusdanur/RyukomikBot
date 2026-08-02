@@ -390,6 +390,8 @@ async def get_staff_stats(staff_id: int, period: Optional[str] = None) -> Dict[s
                     COUNT(*) as total,
                     SUM(CASE WHEN status = 'approved' THEN final_rate ELSE 0 END) as total_earned,
                     SUM(CASE WHEN status = 'paid' THEN final_rate ELSE 0 END) as total_paid,
+                    SUM(CASE WHEN status IN ('approved', 'paid') THEN final_rate ELSE 0 END) as total_completed_amount,
+                    SUM(CASE WHEN status IN ('approved', 'paid') THEN COALESCE(chapter_count, 1) ELSE 0 END) as completed_chapters,
                     SUM(CASE WHEN status IN ('open', 'claimed', 'submitted', 'revision') THEN 1 ELSE 0 END) as pending
                 FROM assignments 
                 WHERE staff_id = ? 
@@ -405,12 +407,22 @@ async def get_staff_stats(staff_id: int, period: Optional[str] = None) -> Dict[s
                     COUNT(*) as total,
                     SUM(CASE WHEN status = 'approved' THEN final_rate ELSE 0 END) as total_earned,
                     SUM(CASE WHEN status = 'paid' THEN final_rate ELSE 0 END) as total_paid,
+                    SUM(CASE WHEN status IN ('approved', 'paid') THEN final_rate ELSE 0 END) as total_completed_amount,
+                    SUM(CASE WHEN status IN ('approved', 'paid') THEN COALESCE(chapter_count, 1) ELSE 0 END) as completed_chapters,
                     SUM(CASE WHEN status IN ('open', 'claimed', 'submitted', 'revision') THEN 1 ELSE 0 END) as pending
                 FROM assignments 
                 WHERE staff_id = ?
             """, (staff_id,))
         row = await cursor.fetchone()
-        return dict(row) if row else {"total": 0, "total_earned": 0, "total_paid": 0, "pending": 0}
+        result = dict(row) if row else {}
+        return {
+            "total": result.get("total") or 0,
+            "total_earned": result.get("total_earned") or 0,
+            "total_paid": result.get("total_paid") or 0,
+            "total_completed_amount": result.get("total_completed_amount") or 0,
+            "completed_chapters": result.get("completed_chapters") or 0,
+            "pending": result.get("pending") or 0,
+        }
     finally:
         await db.close()
 

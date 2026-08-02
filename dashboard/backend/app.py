@@ -2038,6 +2038,28 @@ async def recap(period: str = Query(pattern=r"^\d{4}-\d{2}$"), _user=Depends(adm
         await connection.close()
 
 
+@app.get("/api/recap-summary")
+async def recap_summary(_user=Depends(admin_user)):
+    """All-time salary totals; intentionally independent from the period filter."""
+    connection = await dashboard_db()
+    try:
+        row = await (await connection.execute("""
+            SELECT
+                SUM(CASE WHEN status IN ('approved','paid') THEN final_rate ELSE 0 END) total_earned,
+                SUM(CASE WHEN status='approved' THEN final_rate ELSE 0 END) unpaid_amount,
+                SUM(CASE WHEN status='paid' THEN final_rate ELSE 0 END) paid_amount,
+                SUM(CASE WHEN status IN ('approved','paid') THEN COALESCE(chapter_count,1) ELSE 0 END) chapter_count
+            FROM assignments
+            WHERE staff_id IS NOT NULL
+        """)).fetchone()
+        result = dict(row) if row else {}
+        return {key: result.get(key) or 0 for key in (
+            "total_earned", "unpaid_amount", "paid_amount", "chapter_count"
+        )}
+    finally:
+        await connection.close()
+
+
 @app.get("/api/invoices")
 async def invoices(period: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$"), _user=Depends(admin_user)):
     connection = await dashboard_db()

@@ -1,5 +1,7 @@
 ﻿import discord
 
+import asyncio
+
 import database as db
 from helpers.utils import STATUS_EMOJI, format_currency, get_current_period, is_staff
 from helpers.panel_content import build_guide_embed, build_staff_panel_embed
@@ -73,16 +75,43 @@ class StaffPanelView(discord.ui.View):
     async def income_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=False)
         period = get_current_period()
-        stats = await db.get_staff_stats(interaction.user.id, period)
+        period_stats, lifetime_stats = await asyncio.gather(
+            db.get_staff_stats(interaction.user.id, period),
+            db.get_staff_stats(interaction.user.id),
+        )
         embed = discord.Embed(
             title="Penghasilan Saya",
-            description=f"Periode **{period}**",
+            description=(
+                "Ringkasan saldo ini tidak direset saat bulan berganti.\n"
+                f"Rincian periode aktif: **{period}**"
+            ),
             color=discord.Color.gold(),
         )
-        embed.add_field(name="Total Tugas", value=str(stats["total"]), inline=True)
-        embed.add_field(name="Disetujui", value=format_currency(stats["total_earned"]), inline=True)
-        embed.add_field(name="Sudah Dibayar", value=format_currency(stats["total_paid"]), inline=True)
-        embed.add_field(name="Menunggu", value=str(stats["pending"]), inline=True)
+        embed.add_field(
+            name="Saldo Belum Dibayar",
+            value=format_currency(lifetime_stats["total_earned"]),
+            inline=True,
+        )
+        embed.add_field(
+            name="Total Penghasilan",
+            value=format_currency(lifetime_stats["total_completed_amount"]),
+            inline=True,
+        )
+        embed.add_field(
+            name="Total Sudah Dibayar",
+            value=format_currency(lifetime_stats["total_paid"]),
+            inline=True,
+        )
+        embed.add_field(
+            name=f"Periode {period}",
+            value=(
+                f"**{period_stats['completed_chapters']} chapter selesai**\n"
+                f"Disetujui: {format_currency(period_stats['total_earned'])}\n"
+                f"Dibayar: {format_currency(period_stats['total_paid'])}\n"
+                f"Tugas berjalan: {period_stats['pending']}"
+            ),
+            inline=False,
+        )
         methods = await payments.list_methods(interaction.user.id)
         default = next((item for item in methods if item["is_default"]), None)
         payouts = await payments.list_staff_payouts(interaction.user.id)

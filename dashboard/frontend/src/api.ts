@@ -57,6 +57,12 @@ export type Recap = {
   pending_amount: number;
   paid_amount: number;
 };
+export type RecapSummary = {
+  total_earned: number;
+  unpaid_amount: number;
+  paid_amount: number;
+  chapter_count: number;
+};
 export type Invoice = {
   id: number;
   invoice_number: string;
@@ -272,6 +278,7 @@ const liveApi = {
   closeRecruitmentSubmission: (id:number, reason:string) => request(`/api/recruitment/submissions/${id}/close`, {method:"POST",body:JSON.stringify({reason})}),
   deadlines: () => request<Assignment[]>("/api/deadlines"),
   recap: (period: string) => request<Recap[]>(`/api/recap?period=${period}`),
+  recapSummary: () => request<RecapSummary>("/api/recap-summary"),
   invoices: (period: string) =>
     request<Invoice[]>(`/api/invoices?period=${period}`),
   invoice: (id: number) => request<InvoiceDetail>(`/api/invoices/${id}`),
@@ -497,6 +504,12 @@ const demoApi = {
       paid_amount: 50000,
     },
   ],
+  recapSummary: async (): Promise<RecapSummary> => ({
+    total_earned: 168000,
+    unpaid_amount: 18000,
+    paid_amount: 150000,
+    chapter_count: 14,
+  }),
   invoices: async (): Promise<Invoice[]> => [
     {
       id: 1,
