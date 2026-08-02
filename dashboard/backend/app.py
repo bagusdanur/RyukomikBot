@@ -42,7 +42,7 @@ import operations
 from database import DB_PATH, setup_database
 from chapter_utils import chapter_display, parse_chapters
 from invoice_pdf import render_paid_invoice
-from raw_downloader import asura_downloader, doujiva_downloader, omega_downloader, siren_downloader
+from raw_downloader import asura_downloader, doujiva_downloader, omega_downloader, evascan_downloader
 from raw_downloader.resolver import resolve_assignment_raw
 from raw_rate_analysis import RawWorkload, classify_workload, suggested_rate
 
@@ -1491,13 +1491,13 @@ async def raw_rate_analysis(payload: RawRateAnalysisRequest, _user=Depends(admin
             "asura": asura_downloader,
             "omega": omega_downloader,
             "doujiva": doujiva_downloader,
-            "siren": siren_downloader,
+            "evascan": evascan_downloader,
         },
         timeout=12,
     )
     if resolved.get("status") != "resolved":
         message = {
-            "not_found": "Judul RAW tidak ditemukan di Asura, Omega, Doujiva, atau Siren.",
+            "not_found": "Judul RAW tidak ditemukan di Asura, Omega, Doujiva, atau EvaScan.",
             "ambiguous": "Judul RAW ambigu. Perjelas judul manga sebelum dianalisis.",
             "chapters_missing": "Chapter tugas belum tersedia pada sumber RAW yang ditemukan.",
             "timeout": "Analisis RAW terlalu lama. Coba lagi beberapa saat.",
@@ -1505,7 +1505,7 @@ async def raw_rate_analysis(payload: RawRateAnalysisRequest, _user=Depends(admin
         raise HTTPException(status_code=422, detail=message)
 
     source = resolved["source"]
-    downloader = {"asura": asura_downloader, "omega": omega_downloader, "doujiva": doujiva_downloader, "siren": siren_downloader}[source]
+    downloader = {"asura": asura_downloader, "omega": omega_downloader, "doujiva": doujiva_downloader, "evascan": evascan_downloader}[source]
     image_sets = await asyncio.gather(
         *(downloader.get_chapter_images(resolved["manga"]["id"], chapter["id"])
           for chapter in resolved["chapters"]),
