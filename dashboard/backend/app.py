@@ -446,6 +446,16 @@ class AssignmentCreate(BaseModel):
     deadline_at: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
 
 
+class TlTsPairCreate(BaseModel):
+    manga: str = Field(min_length=2, max_length=150)
+    chapter: str = Field(min_length=1, max_length=30)
+    tl_staff_id: int
+    ts_staff_id: int
+    tl_rate_per_chapter: int = Field(ge=0, le=1_000_000)
+    ts_rate_per_chapter: int = Field(ge=0, le=1_000_000)
+    deadline_at: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
 class AssignmentUpdate(BaseModel):
     manga: str = Field(min_length=2, max_length=150)
     chapter: str = Field(min_length=1, max_length=30)
@@ -932,7 +942,7 @@ def normalize_paging(page, page_size, paginated):
     )
 
 
-async def send_assignment_notice(staff_id: int, assignment_id: int, payload: AssignmentCreate):
+async def send_assignment_notice(staff_id: int, assignment_id: int, payload: AssignmentCreate, handoff_note: str | None = None):
     if DEV_BYPASS:
         return True
     connection = await dashboard_db()
@@ -958,7 +968,7 @@ async def send_assignment_notice(staff_id: int, assignment_id: int, payload: Ass
             "fields": [
                 {"name": "Bayaran", "value": f"Rp {payload.final_rate:,.0f}".replace(",", "."), "inline": True},
                 {"name": "Deadline", "value": payload.deadline_at or "Tidak ditentukan", "inline": True},
-            ],
+            ] + ([{"name": "Bahan dari TL", "value": handoff_note, "inline": False}] if handoff_note else []),
             "footer": {"text": "Buka Staff Panel atau dashboard untuk melihat dan submit tugas."},
         }],
     }
@@ -1593,6 +1603,39 @@ async def create_dashboard_assignment(payload: AssignmentCreate, user=Depends(ad
     return {"id": assignment_id, "notified": notified}
 
 
+@app.post("/api/assignments/tl-ts-pair", status_code=201)
+async def create_tl_ts_pair(payload: TlTsPairCreate, user=Depends(admin_user)):
+    try:
+        chapters = parse_chapters(payload.chapter)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error))
+    tl_min, tl_max = await role_rate_range("TL")
+    ts_min, ts_max = await role_rate_range("TS")
+    if not tl_min <= payload.tl_rate_per_chapter <= tl_max:
+        raise HTTPException(status_code=422, detail=f"Rate TL harus Rp{tl_min:,.0f}–Rp{tl_max:,.0f} per chapter.".replace(",", "."))
+    if not ts_min <= payload.ts_rate_per_chapter <= ts_max:
+        raise HTTPException(status_code=422, detail=f"Rate TS harus Rp{ts_min:,.0f}–Rp{ts_max:,.0f} per chapter.".replace(",", "."))
+    profiles = {item["id"] for item in await staff_directory()}
+    if payload.tl_staff_id not in profiles or payload.ts_staff_id not in profiles:
+        raise HTTPException(status_code=422, detail="Pilih staff TL dan TS yang memiliki role Staff.")
+    if payload.tl_staff_id == payload.ts_staff_id:
+        raise HTTPException(status_code=422, detail="Untuk Pair TL → TS, pilih dua staff berbeda. Gunakan TL+TS untuk satu staff.")
+    display = chapter_display(chapters)
+    tl_id = await staff_db.create_tl_ts_pair(
+        manga=payload.manga.strip(), chapter=display, chapters=chapters,
+        tl_staff_id=payload.tl_staff_id, ts_staff_id=payload.ts_staff_id,
+        tl_rate_per_chapter=payload.tl_rate_per_chapter,
+        ts_rate_per_chapter=payload.ts_rate_per_chapter,
+        deadline_at=payload.deadline_at, created_by=user["id"],
+    )
+    tl_payload = AssignmentCreate(manga=payload.manga.strip(), chapter=display, staff_id=payload.tl_staff_id,
+        role="TL", rate_per_chapter=payload.tl_rate_per_chapter,
+        final_rate=payload.tl_rate_per_chapter * len(chapters), deadline_at=payload.deadline_at)
+    notified = await send_assignment_notice(payload.tl_staff_id, tl_id, tl_payload)
+    await audit(user["id"], "assignment.pair_create", "assignment", tl_id, after={**payload.model_dump(), "chapters": chapters, "notified": notified})
+    return {"tl_assignment_id": tl_id, "notified": notified}
+
+
 @app.put("/api/assignments/{assignment_id}")
 async def update_dashboard_assignment(
     assignment_id: int,
@@ -1681,9 +1724,21 @@ async def dashboard_approve_assignment(assignment_id: int, user=Depends(admin_us
     if not await staff_db.approve_assignment(assignment_id):
         raise HTTPException(status_code=409, detail="Status tugas berubah. Muat ulang dashboard.")
     after = await staff_db.get_assignment(assignment_id)
+    next_task = await staff_db.activate_ts_handoff(assignment_id)
+    next_notified = False
+    if next_task:
+        next_payload = AssignmentCreate(
+            manga=next_task["manga"], chapter=next_task["chapter"], staff_id=int(next_task["staff_id"]),
+            role="TS", rate_per_chapter=int(next_task["rate_per_chapter"]),
+            final_rate=int(next_task["final_rate"]), deadline_at=next_task.get("deadline_at"),
+        )
+        next_notified = await send_assignment_notice(
+            int(next_task["staff_id"]), int(next_task["id"]), next_payload,
+            handoff_note=next_task.get("admin_notes"),
+        )
     notified = await send_ticket_review_notice(after, True)
-    await audit(user["id"], "assignment.approve", "assignment", assignment_id, dict(before), {**after, "notified": notified})
-    return {"ok": True, "notified": notified}
+    await audit(user["id"], "assignment.approve", "assignment", assignment_id, dict(before), {**after, "notified": notified, "ts_assignment_id": next_task.get("id") if next_task else None})
+    return {"ok": True, "notified": notified, "ts_assignment_id": next_task.get("id") if next_task else None, "ts_notified": next_notified}
 
 
 @app.post("/api/assignments/{assignment_id}/revision")

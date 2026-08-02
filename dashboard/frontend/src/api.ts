@@ -230,6 +230,11 @@ const liveApi = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  createTlTsPair: (payload: Record<string, unknown>) =>
+    request<{ tl_assignment_id: number; notified: boolean }>("/api/assignments/tl-ts-pair", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   updateAssignment: (id: number, payload: Record<string, unknown>) =>
     request<{ ok: boolean; notified: boolean }>(`/api/assignments/${id}`, {
       method: "PUT",
@@ -441,6 +446,7 @@ const demoApi = {
     },
   ],
   createAssignment: async () => ({ id: 25, notified: true }),
+  createTlTsPair: async () => ({ tl_assignment_id: 26, notified: true }),
   updateAssignment: async () => ({ ok: true, notified: true }),
   analyzeRawRate: async (): Promise<RawRateAnalysis> => ({
     source: "asura", matched_title: "Contoh Manga", chapter_count: 1,

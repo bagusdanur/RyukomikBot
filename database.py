@@ -192,6 +192,20 @@ async def setup_database():
         await db.execute("CREATE INDEX IF NOT EXISTS idx_assignments_status_time ON assignments(status,assigned_at)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_assignments_staff_status ON assignments(staff_id,status)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_assignments_deadline_status ON assignments(deadline_at,status)")
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS tl_ts_handoffs (
+                tl_assignment_id INTEGER PRIMARY KEY,
+                ts_staff_id INTEGER NOT NULL,
+                ts_rate_per_chapter INTEGER NOT NULL,
+                deadline_at DATETIME,
+                created_by TEXT,
+                ts_assignment_id INTEGER UNIQUE,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                activated_at DATETIME,
+                FOREIGN KEY(tl_assignment_id) REFERENCES assignments(id),
+                FOREIGN KEY(ts_assignment_id) REFERENCES assignments(id)
+            )
+        """)
         
         await db.commit()
     finally:
@@ -416,6 +430,84 @@ async def get_rekap(period: str) -> List[Dict[str, Any]]:
         """, (f"{period}%",))
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
+    finally:
+        await db.close()
+
+
+async def create_tl_ts_pair(
+    *, manga: str, chapter: str, chapters: List[str], tl_staff_id: int,
+    ts_staff_id: int, tl_rate_per_chapter: int, ts_rate_per_chapter: int,
+    deadline_at: Optional[str], created_by: Optional[int] = None,
+) -> int:
+    """Create the TL task now; reserve TS until the TL result is approved."""
+    tl_assignment_id = await create_assignment(
+        manga=manga, chapter=chapter, chapters=chapters, role="TL",
+        base_rate=tl_rate_per_chapter, rate_per_chapter=tl_rate_per_chapter,
+        final_rate=tl_rate_per_chapter * len(chapters), multiplier=1.0,
+        staff_id=tl_staff_id, deadline_at=deadline_at,
+    )
+    db = await get_db()
+    try:
+        await db.execute(
+            """INSERT INTO tl_ts_handoffs
+               (tl_assignment_id,ts_staff_id,ts_rate_per_chapter,deadline_at,created_by)
+               VALUES(?,?,?,?,?)""",
+            (tl_assignment_id, ts_staff_id, ts_rate_per_chapter, deadline_at,
+             str(created_by) if created_by else None),
+        )
+        await db.commit()
+        await add_assignment_event(
+            tl_assignment_id, "pair_created", created_by,
+            f"Pair TL → TS disiapkan untuk staff {ts_staff_id}.",
+        )
+        return tl_assignment_id
+    finally:
+        await db.close()
+
+
+async def activate_ts_handoff(tl_assignment_id: int) -> Optional[Dict[str, Any]]:
+    """Create exactly one TS task after its paired TL has been approved."""
+    db = await get_db()
+    try:
+        await db.execute("BEGIN IMMEDIATE")
+        row = await (await db.execute(
+            """SELECT h.*,a.manga,a.chapter,a.chapters,a.chapter_count,a.gdrive_link
+               FROM tl_ts_handoffs h JOIN assignments a ON a.id=h.tl_assignment_id
+               WHERE h.tl_assignment_id=? AND a.status='approved'""",
+            (tl_assignment_id,),
+        )).fetchone()
+        if not row or row["ts_assignment_id"]:
+            await db.rollback()
+            return None
+        chapters = json.loads(row["chapters"] or "[]") or [row["chapter"]]
+        handoff_note = f"Pair TL #{tl_assignment_id} sudah disetujui. Hasil TL: {row['gdrive_link'] or 'Link tidak tersedia'}"
+        cursor = await db.execute(
+            """INSERT INTO assignments
+               (manga,chapter,staff_id,role,base_rate,final_rate,multiplier,status,
+                claimed_at,deadline_at,chapters,chapter_count,rate_per_chapter,admin_notes)
+               VALUES(?,?,?,?,?,?,1.0,'claimed',?,?,?,?,?,?)""",
+            (row["manga"], row["chapter"], row["ts_staff_id"], "TS",
+             row["ts_rate_per_chapter"], row["ts_rate_per_chapter"] * len(chapters),
+             datetime.now().isoformat(timespec="seconds"), row["deadline_at"],
+             json.dumps(chapters, ensure_ascii=False), len(chapters),
+             row["ts_rate_per_chapter"], handoff_note),
+        )
+        ts_assignment_id = cursor.lastrowid
+        await db.execute(
+            "UPDATE tl_ts_handoffs SET ts_assignment_id=?,activated_at=CURRENT_TIMESTAMP WHERE tl_assignment_id=?",
+            (ts_assignment_id, tl_assignment_id),
+        )
+        await db.commit()
+        await add_assignment_event(ts_assignment_id, "activated_from_tl", None, handoff_note)
+        result = dict(row)
+        result.update({"id": ts_assignment_id, "staff_id": row["ts_staff_id"], "role": "TS",
+                       "rate_per_chapter": row["ts_rate_per_chapter"],
+                       "final_rate": row["ts_rate_per_chapter"] * len(chapters),
+                       "admin_notes": handoff_note})
+        return result
+    except Exception:
+        await db.rollback()
+        raise
     finally:
         await db.close()
 

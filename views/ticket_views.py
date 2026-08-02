@@ -199,9 +199,21 @@ async def approve_task(interaction: discord.Interaction, assignment_id: int):
     if not await db.approve_assignment(assignment_id):
         return await _respond(interaction, "Approve gagal karena status tugas telah berubah.")
     assignment = await db.get_assignment(assignment_id)
+    next_task = await db.activate_ts_handoff(assignment_id)
     if interaction.message:
         await interaction.message.edit(embed=build_admin_completed_embed(assignment, interaction.user), view=None)
     notified = await _notify_ticket(interaction, assignment, build_completed_embed(assignment))
+    if next_task:
+        handoff = discord.Embed(
+            title="✍️ Tugas TS Aktif",
+            description="Hasil TL telah disetujui. Kamu dapat mulai typesetting.",
+            color=discord.Color.teal(),
+        )
+        handoff.add_field(name="Manga", value=next_task["manga"], inline=True)
+        handoff.add_field(name="Chapter", value=next_task["chapter"], inline=True)
+        handoff.add_field(name="Hasil TL", value=assignment.get("gdrive_link") or "Link tidak tersedia", inline=False)
+        handoff.add_field(name="Rate TS", value=f"Rp {int(next_task['rate_per_chapter']):,.0f}".replace(",", "."), inline=True)
+        await _notify_ticket(interaction, next_task, handoff)
     await interaction.followup.send(
         (
             f"Tugas #{assignment_id} disetujui. Laporan akhir disimpan di staff-mod dan dikirim ke tiket staff."

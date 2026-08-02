@@ -73,6 +73,8 @@ const task = ref({
   staff_id: "",
   role: "TL",
   final_rate: 4000,
+  ts_staff_id: "",
+  ts_rate: 5000,
   deadline_at: "",
 });
 const rawRateAnalysis = ref<RawRateAnalysis | null>(null);
@@ -386,6 +388,7 @@ async function confirmCloseRegistration() {
 }
 async function createTask() {
   if (!editingTask.value && !task.value.staff_id) return (error.value = "Pilih staf tujuan.");
+  if (!editingTask.value && task.value.role === "PAIR" && !task.value.ts_staff_id) return (error.value = "Pilih staff Typesetter.");
   try {
     loading.value = true;
     if (editingTask.value) {
@@ -397,13 +400,16 @@ async function createTask() {
         deadline_at: task.value.deadline_at || null,
       });
       success.value = `Tugas #${editingTask.value.id} diperbarui${result.notified ? " dan staff sudah diberi notifikasi." : "."}`;
-    } else {
-      const result = await api.createAssignment({
-        ...task.value,
-        rate_per_chapter: task.value.final_rate,
-        staff_id: task.value.staff_id,
+    } else if (task.value.role === "PAIR") {
+      const result = await api.createTlTsPair({
+        manga: task.value.manga, chapter: task.value.chapter,
+        tl_staff_id: task.value.staff_id, ts_staff_id: task.value.ts_staff_id,
+        tl_rate_per_chapter: task.value.final_rate, ts_rate_per_chapter: task.value.ts_rate,
         deadline_at: task.value.deadline_at || null,
       });
+      success.value = `Pair dibuat: tugas TL #${result.tl_assignment_id} dikirim. Tugas TS akan otomatis aktif setelah TL disetujui.`;
+    } else {
+      const result = await api.createAssignment({ ...task.value, rate_per_chapter: task.value.final_rate, staff_id: task.value.staff_id, deadline_at: task.value.deadline_at || null });
       success.value = `Tugas #${result.id} dibuat${result.notified ? " dan staf sudah diberi notifikasi." : ", tetapi notifikasi Discord gagal."}`;
     }
     showTask.value = false;
@@ -414,6 +420,8 @@ async function createTask() {
       staff_id: "",
       role: "TL",
       final_rate: 4000,
+      ts_staff_id: "",
+      ts_rate: 5000,
       deadline_at: "",
     };
     rawRateAnalysis.value = null;
@@ -425,6 +433,10 @@ async function createTask() {
   }
 }
 async function analyzeRawRate() {
+  if (task.value.role === "PAIR") {
+    error.value = "Untuk Pair TL → TS, isi rate TL dan TS masing-masing. Analisis otomatis berlaku untuk tugas tunggal.";
+    return;
+  }
   if (!task.value.manga.trim() || !task.value.chapter.trim()) {
     error.value = "Isi judul manga dan chapter dahulu agar RAW dapat dianalisis.";
     return;
@@ -474,6 +486,8 @@ function editTask(item: Assignment) {
     staff_id: item.staff_id || "",
     role: item.role,
     final_rate: item.rate_per_chapter || Math.floor(item.final_rate / (item.chapter_count || 1)),
+    ts_staff_id: "",
+    ts_rate: 5000,
     deadline_at: item.deadline_at || "",
   };
   rawRateAnalysis.value = null;
@@ -1463,7 +1477,9 @@ onMounted(async () => {
               <option>TL</option>
               <option>TS</option>
               <option>TL+TS</option>
+              <option value="PAIR">Pair TL → TS (dua staff)</option>
             </select></label
+          ><div v-if="task.role === 'PAIR'" class="wide pair-guide"><b>Alur Pair: TL → TS</b><span>Tugas TL dikirim sekarang. Setelah Anda menyetujui hasil TL, tugas TS aktif otomatis dan membawa link hasil terjemahan.</span></div>
           ><div class="wide raw-rate-tool">
             <div>
               <small>REKOMENDASI OTOMATIS</small>
@@ -1481,20 +1497,22 @@ onMounted(async () => {
             </div>
             <span class="rate-range">Rentang {{ money(rawRateAnalysis.minimum_rate) }}–{{ money(rawRateAnalysis.maximum_rate) }}</span>
           </div
-          ><label class="wide"
-            >Staff tujuan<select v-model="task.staff_id" :disabled="!!editingTask" required>
+          ><label :class="task.role === 'PAIR' ? '' : 'wide'"
+            >{{ task.role === 'PAIR' ? 'Staff Translator (TL)' : 'Staff tujuan' }}<select v-model="task.staff_id" :disabled="!!editingTask" required>
               <option value="" disabled>Pilih staf Discord</option>
               <option v-for="s in staff" :value="String(s.id)">
                 {{ s.username }}
               </option>
             </select></label
+          ><label v-if="task.role === 'PAIR'">Staff Typesetter (TS)<select v-model="task.ts_staff_id" required><option value="" disabled>Pilih staf Discord</option><option v-for="s in staff" :value="String(s.id)">{{ s.username }}</option></select></label
           ><label
-            >Bayaran per chapter<InputNumber
+            >{{ task.role === 'PAIR' ? 'Rate TL / chapter' : 'Bayaran per chapter' }}<InputNumber
               v-model="task.final_rate"
               mode="currency"
               currency="IDR"
               locale="id-ID"
               :min="0" /></label
+          ><label v-if="task.role === 'PAIR'">Rate TS / chapter<InputNumber v-model="task.ts_rate" mode="currency" currency="IDR" locale="id-ID" :min="0" /></label
           ><div class="wide upload-tip">
             <i class="pi pi-calculator"></i>
             <span>{{ taskChapterCount || 0 }} chapter × {{ money(task.final_rate) }} = <b>{{ money(taskTotalRate) }}</b></span>
