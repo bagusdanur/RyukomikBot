@@ -39,6 +39,7 @@ from config import (
 import database as staff_db
 import payment_service as payout_service
 import operations
+import pair_workflow as pair_service
 from database import DB_PATH, setup_database
 from chapter_utils import chapter_display, parse_chapters
 from invoice_pdf import render_paid_invoice
@@ -81,6 +82,7 @@ async def dashboard_db():
 
 
 async def setup_dashboard_tables():
+    await pair_service.setup_pair_tables()
     connection = await dashboard_db()
     try:
         await connection.execute("PRAGMA foreign_keys=OFF")
@@ -532,6 +534,113 @@ async def discord_api(method: str, path: str, payload=None):
                 except (aiohttp.ContentTypeError, json.JSONDecodeError):
                     return {}
             return None
+
+
+def pair_panel_payload(project: dict) -> dict:
+    state_labels = {
+        "waiting_tl": "Menunggu TL", "ready_for_ts": "Siap TS",
+        "tl_revision": "Perbaikan TL", "ts_revision": "Perbaikan TS",
+        "both_revision": "Perbaikan TL + TS", "final_review": "Review Final",
+        "completed": "Selesai",
+    }
+    progress = "\n".join(
+        f"{'✅' if item['status'] == 'completed' else '🔄' if 'revision' in item['status'] else '•'} "
+        f"**Chapter {item['chapter']}** — {state_labels.get(item['status'], item['status'])}"
+        for item in project["chapters"]
+    )
+    return {
+        "embeds": [{
+            "title": f"Kolaborasi TL–TS • {project['manga']}",
+            "description": (
+                f"<@{project['tl_staff_id']}> sebagai **Translator** dan <@{project['ts_staff_id']}> "
+                "sebagai **Typesetter** bekerja dalam satu ruang.\n"
+                "Gaji setiap chapter dilepas untuk keduanya setelah hasil final disetujui Administrator."
+            ),
+            "color": 6253567,
+            "fields": [
+                {"name": "Progress", "value": progress, "inline": False},
+                {"name": "Rate TL", "value": f"Rp {project['tl_rate_per_chapter']:,.0f}".replace(",", "."), "inline": True},
+                {"name": "Rate TS", "value": f"Rp {project['ts_rate_per_chapter']:,.0f}".replace(",", "."), "inline": True},
+                {"name": "Deadline", "value": project.get("deadline_at") or "Tidak ditentukan", "inline": True},
+            ],
+            "footer": {"text": f"Pair Project #{project['id']} • Gunakan tombol sesuai peran"},
+        }],
+        "components": [{"type": 1, "components": [
+            {"type": 2, "style": 1, "label": "Submit Hasil TL", "custom_id": f"pair:tl:{project['id']}:v2"},
+            {"type": 2, "style": 3, "label": "Submit Final TS", "custom_id": f"pair:ts:{project['id']}:v2"},
+            {"type": 2, "style": 4, "label": "Minta Perbaikan TL", "custom_id": f"pair:tl-revision:{project['id']}:v2"},
+        ]}],
+        "allowed_mentions": {"users": [str(project["tl_staff_id"]), str(project["ts_staff_id"])]},
+    }
+
+
+async def create_pair_workspace(project_id: int) -> tuple[str, str]:
+    project = await pair_service.get_project(project_id)
+    if not project:
+        raise RuntimeError("Pair project tidak ditemukan setelah dibuat.")
+    slug = re.sub(r"[^a-z0-9]+", "-", project["manga"].casefold()).strip("-")[:45] or "project"
+    chapter_slug = "-".join(item["chapter"] for item in project["chapters"])[:25]
+    staff_allow = str((1 << 10) | (1 << 11) | (1 << 14) | (1 << 15) | (1 << 16))
+    admin_allow = str(int(staff_allow) | (1 << 4) | (1 << 13))
+    channel = await discord_api("POST", f"/guilds/{GUILD_ID}/channels", {
+        "name": f"🔒・project-{slug}-ch-{chapter_slug}",
+        "type": 0,
+        "parent_id": str(REKRUT_CAT_ID),
+        "topic": f"Pair Project #{project_id} | TL:{project['tl_staff_id']} | TS:{project['ts_staff_id']}",
+        "permission_overwrites": [
+            {"id": str(GUILD_ID), "type": 0, "deny": str(1 << 10), "allow": "0"},
+            {"id": str(project["tl_staff_id"]), "type": 1, "allow": staff_allow, "deny": "0"},
+            {"id": str(project["ts_staff_id"]), "type": 1, "allow": staff_allow, "deny": "0"},
+            {"id": str(ROLE_ADMIN_ID), "type": 0, "allow": admin_allow, "deny": "0"},
+        ],
+    })
+    if not channel:
+        raise RuntimeError("Discord gagal membuat channel proyek privat.")
+    message = await discord_api("POST", f"/channels/{channel['id']}/messages", {
+        "content": f"<@{project['tl_staff_id']}> <@{project['ts_staff_id']}> ruang kolaborasi kalian sudah siap.",
+        **pair_panel_payload(project),
+    })
+    if not message:
+        await discord_api("DELETE", f"/channels/{channel['id']}")
+        raise RuntimeError("Discord gagal membuat panel pair.")
+    await discord_api("PUT", f"/channels/{channel['id']}/pins/{message['id']}")
+    await pair_service.set_workspace(project_id, int(channel["id"]), int(message["id"]))
+    return str(channel["id"]), str(message["id"])
+
+
+async def refresh_pair_workspace_rest(project_id: int) -> None:
+    project = await pair_service.get_project(project_id)
+    if not project or not project.get("channel_id") or not project.get("panel_message_id") or DEV_BYPASS:
+        return
+    await discord_api(
+        "PATCH", f"/channels/{project['channel_id']}/messages/{project['panel_message_id']}",
+        pair_panel_payload(project),
+    )
+
+
+async def remove_pair_review_rest(chapter: dict) -> None:
+    if chapter.get("review_message_id") and not DEV_BYPASS:
+        await discord_api("DELETE", f"/channels/{STAFF_LOG_CHANNEL_ID}/messages/{chapter['review_message_id']}")
+    await pair_service.set_review_message(int(chapter["id"]), None)
+
+
+async def complete_pair_review_rest(chapter: dict) -> None:
+    if not chapter.get("review_message_id") or DEV_BYPASS:
+        return
+    await discord_api(
+        "PATCH", f"/channels/{STAFF_LOG_CHANNEL_ID}/messages/{chapter['review_message_id']}",
+        {"embeds": [{
+            "title": f"✅ Pair Selesai • {chapter['manga']} Chapter {chapter['chapter']}",
+            "description": "Hasil final disetujui. Gaji TL dan TS masuk ke saldo secara bersamaan.",
+            "color": 5763719,
+            "fields": [
+                {"name": "Translator", "value": f"<@{chapter['tl_staff_id']}> • Rp {chapter['tl_rate_per_chapter']:,.0f}".replace(",", "."), "inline": True},
+                {"name": "Typesetter", "value": f"<@{chapter['ts_staff_id']}> • Rp {chapter['ts_rate_per_chapter']:,.0f}".replace(",", "."), "inline": True},
+                {"name": "Hasil TL", "value": chapter.get("tl_link") or "Tidak tersedia", "inline": False},
+                {"name": "Hasil Final", "value": chapter.get("final_link") or "Tidak tersedia", "inline": False},
+            ],
+        }], "components": []},
+    )
 
 
 async def trakteer_channel_id() -> str | None:
@@ -1462,7 +1571,9 @@ async def assignments(
     user=Depends(current_user),
 ):
     page, page_size, paginated = normalize_paging(page, page_size, paginated)
-    clauses, params = [], []
+    # Pair child assignments are payment records; the grouped pair endpoint is
+    # their public dashboard representation.
+    clauses, params = ["pair_project_id IS NULL"], []
     if user["role"] == "staff":
         clauses.append("staff_id = ?")
         params.append(user["id"])
@@ -1646,20 +1757,131 @@ async def create_tl_ts_pair(payload: TlTsPairCreate, user=Depends(admin_user)):
         raise HTTPException(status_code=422, detail="Pilih staff TL dan TS yang memiliki role Staff.")
     if payload.tl_staff_id == payload.ts_staff_id:
         raise HTTPException(status_code=422, detail="Untuk Pair TL → TS, pilih dua staff berbeda. Gunakan TL+TS untuk satu staff.")
-    display = chapter_display(chapters)
-    tl_id = await staff_db.create_tl_ts_pair(
-        manga=payload.manga.strip(), chapter=display, chapters=chapters,
+    project = await pair_service.create_project(
+        manga=payload.manga.strip(), chapters=chapters,
         tl_staff_id=payload.tl_staff_id, ts_staff_id=payload.ts_staff_id,
         tl_rate_per_chapter=payload.tl_rate_per_chapter,
         ts_rate_per_chapter=payload.ts_rate_per_chapter,
         deadline_at=payload.deadline_at, created_by=user["id"],
     )
-    tl_payload = AssignmentCreate(manga=payload.manga.strip(), chapter=display, staff_id=payload.tl_staff_id,
-        role="TL", rate_per_chapter=payload.tl_rate_per_chapter,
-        final_rate=payload.tl_rate_per_chapter * len(chapters), deadline_at=payload.deadline_at)
-    notified = await send_assignment_notice(payload.tl_staff_id, tl_id, tl_payload)
-    await audit(user["id"], "assignment.pair_create", "assignment", tl_id, after={**payload.model_dump(), "chapters": chapters, "notified": notified})
-    return {"tl_assignment_id": tl_id, "notified": notified}
+    try:
+        channel_id, panel_message_id = await create_pair_workspace(int(project["id"]))
+    except RuntimeError as error:
+        await pair_service.delete_unpublished_project(int(project["id"]))
+        raise HTTPException(status_code=503, detail=str(error))
+    first_tl_id = (await pair_service.get_chapter(int(project["chapters"][0]["id"]))) ["tl_assignment_id"]
+    await audit(user["id"], "assignment.pair_create", "pair_project", project["id"], after={
+        **payload.model_dump(), "chapters": chapters, "channel_id": channel_id,
+    })
+    return {
+        "tl_assignment_id": first_tl_id, "pair_project_id": project["id"],
+        "channel_id": channel_id, "panel_message_id": panel_message_id, "notified": True,
+    }
+
+
+@app.get("/api/pair-projects")
+async def pair_projects(user=Depends(current_user)):
+    rows = await pair_service.list_projects(None if user["role"] == "admin" else int(user["id"]))
+    directory = {str(item["id"]): item for item in await staff_directory()}
+    for item in rows:
+        tl = directory.get(str(item["tl_staff_id"]), {})
+        ts = directory.get(str(item["ts_staff_id"]), {})
+        item["tl_staff_name"] = tl.get("username") or str(item["tl_staff_id"])
+        item["ts_staff_name"] = ts.get("username") or str(item["ts_staff_id"])
+        item["tl_staff_id"], item["ts_staff_id"] = str(item["tl_staff_id"]), str(item["ts_staff_id"])
+        item["channel_id"] = str(item["channel_id"]) if item.get("channel_id") else None
+    return rows
+
+
+class PairRevisionRequest(BaseModel):
+    target: Literal["tl", "ts", "both"]
+    notes: str = Field(min_length=3, max_length=1500)
+
+
+async def send_pair_ticket_notice(chapter: dict, staff_id: int, role: str, approved: bool, notes: str | None = None) -> bool:
+    assignment_id = int(chapter["tl_assignment_id"] if role == "TL" else chapter["ts_assignment_id"])
+    channel_id = await resolve_staff_ticket_channel(staff_id, assignment_id)
+    if DEV_BYPASS:
+        return True
+    if not channel_id:
+        return False
+    rate = int(chapter["tl_rate_per_chapter"] if role == "TL" else chapter["ts_rate_per_chapter"])
+    fields = [
+        {"name": "Manga", "value": chapter["manga"], "inline": False},
+        {"name": "Chapter", "value": chapter["chapter"], "inline": True},
+        {"name": "Role", "value": role, "inline": True},
+        {"name": "Ruang Proyek", "value": f"<#{chapter['channel_id']}>", "inline": False},
+    ]
+    if approved:
+        fields.extend([
+            {"name": "Bayaran", "value": f"Rp {rate:,.0f}".replace(",", "."), "inline": True},
+            {"name": "Hasil Final", "value": chapter.get("final_link") or "Tidak tersedia", "inline": False},
+        ])
+    elif notes:
+        fields.append({"name": "Catatan Revisi", "value": notes, "inline": False})
+    return bool(await discord_api("POST", f"/channels/{channel_id}/messages", {
+        "content": f"<@{staff_id}>",
+        "embeds": [{
+            "title": "✅ Chapter Pair Selesai" if approved else f"🔄 Perbaikan Pair untuk {role}",
+            "description": (
+                "Hasil final disetujui Administrator dan bayaran masuk ke saldo."
+                if approved else "Administrator meminta perbaikan sebelum review final."
+            ),
+            "color": 5763719 if approved else 16753920,
+            "fields": fields,
+        }],
+        "allowed_mentions": {"users": [str(staff_id)]},
+    }))
+
+
+@app.post("/api/pair-chapters/{chapter_id}/approve")
+async def dashboard_pair_approve(chapter_id: int, user=Depends(admin_user)):
+    chapter = await pair_service.approve_final(chapter_id, int(user["id"]))
+    if not chapter:
+        raise HTTPException(status_code=409, detail="Chapter bukan dalam status review final atau sudah diproses.")
+    notices = await asyncio.gather(
+        send_pair_ticket_notice(chapter, int(chapter["tl_staff_id"]), "TL", True),
+        send_pair_ticket_notice(chapter, int(chapter["ts_staff_id"]), "TS", True),
+    )
+    await refresh_pair_workspace_rest(int(chapter["project_id"]))
+    await complete_pair_review_rest(chapter)
+    await audit(user["id"], "pair.final_approve", "pair_chapter", chapter_id, after={
+        "project_id": chapter["project_id"], "tl_notified": notices[0], "ts_notified": notices[1]
+    })
+    return {"ok": True, "chapter": chapter, "notified": all(notices)}
+
+
+@app.post("/api/pair-chapters/{chapter_id}/revision")
+async def dashboard_pair_revision(chapter_id: int, payload: PairRevisionRequest, user=Depends(admin_user)):
+    before = await pair_service.get_chapter(chapter_id)
+    if not await pair_service.request_revision(
+        chapter_id, int(user["id"]), payload.target, payload.notes.strip(), admin=True
+    ):
+        raise HTTPException(status_code=409, detail="Chapter bukan dalam status review final atau sudah diproses.")
+    chapter = await pair_service.get_chapter(chapter_id)
+    if before:
+        await remove_pair_review_rest(before)
+    await refresh_pair_workspace_rest(int(chapter["project_id"]))
+    targets = []
+    if payload.target in {"tl", "both"}:
+        targets.append(send_pair_ticket_notice(chapter, int(chapter["tl_staff_id"]), "TL", False, payload.notes.strip()))
+    if payload.target in {"ts", "both"}:
+        targets.append(send_pair_ticket_notice(chapter, int(chapter["ts_staff_id"]), "TS", False, payload.notes.strip()))
+    notices = await asyncio.gather(*targets) if targets else []
+    await audit(user["id"], f"pair.revision_{payload.target}", "pair_chapter", chapter_id, after={
+        "notes": payload.notes.strip(), "notified": all(notices)
+    })
+    return {"ok": True, "chapter": chapter, "notified": all(notices)}
+
+
+@app.get("/api/pair-projects/{project_id}/timeline")
+async def pair_project_timeline(project_id: int, user=Depends(current_user)):
+    project = await pair_service.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Pair project tidak ditemukan.")
+    if user["role"] != "admin" and int(user["id"]) not in {int(project["tl_staff_id"]), int(project["ts_staff_id"])}:
+        raise HTTPException(status_code=403, detail="Kamu bukan anggota pair project ini.")
+    return await pair_service.timeline(project_id)
 
 
 @app.put("/api/assignments/{assignment_id}")
@@ -1797,7 +2019,7 @@ async def staff(
         rows = await (await connection.execute("""
             SELECT staff_id,
                    COUNT(*) task_count,
-                   SUM(CASE WHEN status IN ('claimed','submitted','revision') THEN 1 ELSE 0 END) active_count,
+                   SUM(CASE WHEN status IN ('claimed','submitted','revision','pair_waiting') THEN 1 ELSE 0 END) active_count,
                    SUM(CASE WHEN status='approved' THEN final_rate ELSE 0 END) approved_amount,
                    SUM(CASE WHEN status='paid' THEN final_rate ELSE 0 END) paid_amount
             FROM assignments WHERE staff_id IS NOT NULL GROUP BY staff_id ORDER BY task_count DESC

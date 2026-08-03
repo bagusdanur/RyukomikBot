@@ -22,6 +22,29 @@ export type Assignment = {
   staff_name?: string;
   staff_avatar?: string | null;
 };
+export type PairChapter = {
+  id: number;
+  project_id: number;
+  chapter: string;
+  status: string;
+  tl_link: string | null;
+  final_link: string | null;
+  notes: string | null;
+};
+export type PairProject = {
+  id: number;
+  manga: string;
+  tl_staff_id: string;
+  ts_staff_id: string;
+  tl_staff_name: string;
+  ts_staff_name: string;
+  tl_rate_per_chapter: number;
+  ts_rate_per_chapter: number;
+  deadline_at: string | null;
+  status: string;
+  channel_id: string | null;
+  chapters: PairChapter[];
+};
 export type RawRateAnalysis = {
   source: string;
   matched_title: string;
@@ -237,9 +260,16 @@ const liveApi = {
       body: JSON.stringify(payload),
     }),
   createTlTsPair: (payload: Record<string, unknown>) =>
-    request<{ tl_assignment_id: number; notified: boolean }>("/api/assignments/tl-ts-pair", {
+    request<{ tl_assignment_id: number; pair_project_id: number; channel_id: string; notified: boolean }>("/api/assignments/tl-ts-pair", {
       method: "POST",
       body: JSON.stringify(payload),
+    }),
+  pairProjects: () => request<PairProject[]>("/api/pair-projects"),
+  approvePairChapter: (id: number) =>
+    request(`/api/pair-chapters/${id}/approve`, { method: "POST" }),
+  revisePairChapter: (id: number, target: "tl" | "ts" | "both", notes: string) =>
+    request(`/api/pair-chapters/${id}/revision`, {
+      method: "POST", body: JSON.stringify({ target, notes }),
     }),
   updateAssignment: (id: number, payload: Record<string, unknown>) =>
     request<{ ok: boolean; notified: boolean }>(`/api/assignments/${id}`, {
@@ -453,7 +483,10 @@ const demoApi = {
     },
   ],
   createAssignment: async () => ({ id: 25, notified: true }),
-  createTlTsPair: async () => ({ tl_assignment_id: 26, notified: true }),
+  createTlTsPair: async () => ({ tl_assignment_id: 26, pair_project_id: 1, channel_id: "123", notified: true }),
+  pairProjects: async (): Promise<PairProject[]> => [],
+  approvePairChapter: async () => ({ ok: true }),
+  revisePairChapter: async () => ({ ok: true }),
   updateAssignment: async () => ({ ok: true, notified: true }),
   analyzeRawRate: async (): Promise<RawRateAnalysis> => ({
     source: "asura", matched_title: "Contoh Manga", chapter_count: 1,

@@ -4,6 +4,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import AsyncMock, patch
 from cryptography.fernet import Fernet
 
 
@@ -122,6 +123,28 @@ class DashboardApiTests(unittest.TestCase):
         self.assertEqual(result["id"], assignment["id"])
         self.assertEqual(assignment["staff_id"], "100")
 
+    def test_admin_pair_is_grouped_and_children_are_hidden(self):
+        user = {"id": 1, "username": "Admin", "role": "admin"}
+        payload = self.module.TlTsPairCreate(
+            manga="Pair Baru", chapter="1-2", tl_staff_id=100, ts_staff_id=200,
+            tl_rate_per_chapter=4000, ts_rate_per_chapter=5000,
+            deadline_at="2026-08-20",
+        )
+        with patch.object(
+            self.module, "create_pair_workspace",
+            AsyncMock(side_effect=self._fake_pair_workspace),
+        ):
+            result = asyncio.run(self.module.create_tl_ts_pair(payload, user))
+        grouped = asyncio.run(self.module.pair_projects(user))
+        ordinary = asyncio.run(self.module.assignments(status=None, search="Pair Baru", user=user))
+        self.assertEqual(result["pair_project_id"], grouped[0]["id"])
+        self.assertEqual(len(grouped[0]["chapters"]), 2)
+        self.assertEqual(ordinary, [])
+
+    async def _fake_pair_workspace(self, project_id):
+        await self.module.pair_service.set_workspace(project_id, 12345, 67890)
+        return "12345", "67890"
+
     def test_admin_can_raise_active_assignment_rate(self):
         user = {"id": 1, "username": "Admin", "role": "admin"}
         payload = self.module.AssignmentUpdate(
@@ -193,13 +216,23 @@ class DashboardApiTests(unittest.TestCase):
         user = {"id": 1, "username": "Admin", "role": "admin"}
         created = asyncio.run(self.module.create_invoice(self.module.InvoiceCreate(staff_id=100, period="2026-07"), user))
         connection = sqlite3.connect(self.db_path)
-        connection.execute("INSERT INTO assignments VALUES (5,'Late','5',100,'TL',3000,4000,1,'approved',NULL,'2026-07-05','2026-07-06',NULL,NULL,NULL,NULL,NULL,NULL,NULL,'[\"5\"]',1,4000)")
+        connection.execute("""INSERT INTO assignments
+            (id,manga,chapter,staff_id,role,base_rate,final_rate,multiplier,status,
+             deadline_at,assigned_at,approved_at,paid_period,message_id,ticket_channel_id,
+             claimed_at,submitted_at,gdrive_link,admin_notes,chapters,chapter_count,rate_per_chapter)
+            VALUES (5,'Late','5',100,'TL',3000,4000,1,'approved',NULL,'2026-07-05',
+                    '2026-07-06',NULL,NULL,NULL,NULL,NULL,NULL,NULL,'[\"5\"]',1,4000)""")
         connection.commit(); connection.close()
         refreshed = asyncio.run(self.module.refresh_invoice(created["id"], user))
         self.assertEqual(refreshed["total_amount"], 11000)
         asyncio.run(self.module.pay_invoice(created["id"], user))
         connection = sqlite3.connect(self.db_path)
-        connection.execute("INSERT INTO assignments VALUES (6,'Very Late','6',100,'TL',3000,9000,1,'approved',NULL,'2026-07-07','2026-07-08',NULL,NULL,NULL,NULL,NULL,NULL,NULL,'[\"6\"]',1,9000)")
+        connection.execute("""INSERT INTO assignments
+            (id,manga,chapter,staff_id,role,base_rate,final_rate,multiplier,status,
+             deadline_at,assigned_at,approved_at,paid_period,message_id,ticket_channel_id,
+             claimed_at,submitted_at,gdrive_link,admin_notes,chapters,chapter_count,rate_per_chapter)
+            VALUES (6,'Very Late','6',100,'TL',3000,9000,1,'approved',NULL,'2026-07-07',
+                    '2026-07-08',NULL,NULL,NULL,NULL,NULL,NULL,NULL,'[\"6\"]',1,9000)""")
         connection.commit(); connection.close()
         correction = asyncio.run(self.module.create_correction_invoice(created["id"], user))
         detail = asyncio.run(self.module.invoice_detail(correction["id"], user))

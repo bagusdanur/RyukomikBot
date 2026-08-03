@@ -108,7 +108,8 @@ class StaffPanelView(discord.ui.View):
                 f"**{period_stats['completed_chapters']} chapter selesai**\n"
                 f"Disetujui: {format_currency(period_stats['total_earned'])}\n"
                 f"Dibayar: {format_currency(period_stats['total_paid'])}\n"
-                f"Tugas berjalan: {period_stats['pending']}"
+                f"Tugas solo berjalan: {period_stats['pending']}\n"
+                f"Chapter pair belum final: {lifetime_stats['pair_pending']}"
             ),
             inline=False,
         )

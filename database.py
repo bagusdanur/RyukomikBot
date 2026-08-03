@@ -211,6 +211,10 @@ async def setup_database():
     finally:
         await db.close()
 
+    # Kept in a separate module so pair workflow transactions stay isolated.
+    from pair_workflow import setup_pair_tables
+    await setup_pair_tables()
+
 
 async def create_assignment(
     manga: str,
@@ -392,6 +396,7 @@ async def get_staff_stats(staff_id: int, period: Optional[str] = None) -> Dict[s
                     SUM(CASE WHEN status = 'paid' THEN final_rate ELSE 0 END) as total_paid,
                     SUM(CASE WHEN status IN ('approved', 'paid') THEN final_rate ELSE 0 END) as total_completed_amount,
                     SUM(CASE WHEN status IN ('approved', 'paid') THEN COALESCE(chapter_count, 1) ELSE 0 END) as completed_chapters,
+                    SUM(CASE WHEN status = 'pair_waiting' THEN 1 ELSE 0 END) as pair_pending,
                     SUM(CASE WHEN status IN ('open', 'claimed', 'submitted', 'revision') THEN 1 ELSE 0 END) as pending
                 FROM assignments 
                 WHERE staff_id = ? 
@@ -409,6 +414,7 @@ async def get_staff_stats(staff_id: int, period: Optional[str] = None) -> Dict[s
                     SUM(CASE WHEN status = 'paid' THEN final_rate ELSE 0 END) as total_paid,
                     SUM(CASE WHEN status IN ('approved', 'paid') THEN final_rate ELSE 0 END) as total_completed_amount,
                     SUM(CASE WHEN status IN ('approved', 'paid') THEN COALESCE(chapter_count, 1) ELSE 0 END) as completed_chapters,
+                    SUM(CASE WHEN status = 'pair_waiting' THEN 1 ELSE 0 END) as pair_pending,
                     SUM(CASE WHEN status IN ('open', 'claimed', 'submitted', 'revision') THEN 1 ELSE 0 END) as pending
                 FROM assignments 
                 WHERE staff_id = ?
@@ -421,6 +427,7 @@ async def get_staff_stats(staff_id: int, period: Optional[str] = None) -> Dict[s
             "total_paid": result.get("total_paid") or 0,
             "total_completed_amount": result.get("total_completed_amount") or 0,
             "completed_chapters": result.get("completed_chapters") or 0,
+            "pair_pending": result.get("pair_pending") or 0,
             "pending": result.get("pending") or 0,
         }
     finally:
@@ -588,7 +595,6 @@ async def set_recruitment_review_message(submission_id: int, message_id: int) ->
         await db.commit()
     finally:
         await db.close()
-
 
 async def approve_recruitment_submission(submission_id: int, admin_id: int) -> bool:
     """Atomically finish one active recruitment review."""

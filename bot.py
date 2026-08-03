@@ -38,6 +38,10 @@ from views.payment_views import (
     RetryInvoiceDynamic,
 )
 from views.role_views import ZodiacRoleView
+from views.pair_views import (
+    PairApproveDynamic, PairReviseDynamic, PairTlDynamic,
+    PairTlRevisionDynamic, PairTsDynamic,
+)
 import database as db
 from server_management import apply_server_housekeeping, send_goodbye, send_welcome
 
@@ -85,6 +89,10 @@ class RyukomikBot(commands.Bot):
         self.add_view(ZodiacRoleView())
         self.add_view(LegacyTaskView())
         self.add_dynamic_items(SubmitDynamicItem, ApproveDynamicItem, ReviseDynamicItem)
+        self.add_dynamic_items(
+            PairTlDynamic, PairTsDynamic, PairTlRevisionDynamic,
+            PairApproveDynamic, PairReviseDynamic,
+        )
         self.add_dynamic_items(RecruitmentApproveDynamic)
         self.add_dynamic_items(
             PayPayoutDynamic, ConfirmPayPayoutDynamic,

@@ -13,6 +13,7 @@ import {
   type Invoice,
   type Payout,
   type PayoutDetail,
+  type PairProject,
   type ProjectProgress,
   type RecruitmentSettings,
   type RecruitmentSubmission,
@@ -41,6 +42,7 @@ const overview = ref({
     project_progress: [] as ProjectProgress[],
   }),
   assignments = ref<Assignment[]>([]),
+  pairProjects = ref<PairProject[]>([]),
   staff = ref<Staff[]>([]);
 const payrates = ref<
     Array<{ role: string; base_rate: number; min_rate: number; max_rate: number; updated_at: string }>
@@ -197,14 +199,16 @@ async function loadPage() {
     loading.value = true;
     error.value = "";
     try {
-      const [result, submissionRows] = await Promise.all([
+      const [result, submissionRows, pairRows] = await Promise.all([
         api.assignmentsPage(status.value, search.value, taskPage.value, 20),
         api.submissions(),
+        api.pairProjects(),
       ]);
       assignments.value = result.items;
       taskPages.value = result.total_pages;
       taskTotal.value = result.total;
       submissions.value = submissionRows;
+      pairProjects.value = pairRows;
     } catch (reason) {
       error.value = reason instanceof Error ? reason.message : "Tugas gagal dimuat.";
     } finally {
@@ -549,6 +553,33 @@ async function reviseTask(item: Assignment) {
   } finally {
     loading.value = false;
   }
+}
+const pairStatusLabel: Record<string, string> = {
+  waiting_tl: "Menunggu TL", ready_for_ts: "Siap TS", tl_revision: "Perbaikan TL",
+  ts_revision: "Perbaikan TS", both_revision: "Perbaikan TL + TS",
+  final_review: "Review Final", completed: "Selesai",
+};
+async function approvePairChapter(project: PairProject, chapter: PairProject["chapters"][number]) {
+  if (!confirm(`Setujui final ${project.manga} chapter ${chapter.chapter} dan lepaskan gaji TL + TS?`)) return;
+  try {
+    loading.value = true;
+    await api.approvePairChapter(chapter.id);
+    success.value = `Chapter ${chapter.chapter} disetujui; kedua gaji masuk saldo.`;
+    await loadPage();
+  } catch (e) { error.value = e instanceof Error ? e.message : "Approve pair gagal."; }
+  finally { loading.value = false; }
+}
+async function revisePairChapter(project: PairProject, chapter: PairProject["chapters"][number], target: "tl" | "ts" | "both") {
+  const label = target === "both" ? "TL dan TS" : target.toUpperCase();
+  const notes = prompt(`Catatan revisi ${label} untuk ${project.manga} chapter ${chapter.chapter}:`)?.trim();
+  if (!notes) return;
+  try {
+    loading.value = true;
+    await api.revisePairChapter(chapter.id, target, notes);
+    success.value = `Revisi ${label} dikirim ke staff terkait.`;
+    await loadPage();
+  } catch (e) { error.value = e instanceof Error ? e.message : "Revisi pair gagal."; }
+  finally { loading.value = false; }
 }
 async function createInvoice(item: Recap) {
   try {
@@ -934,6 +965,31 @@ onMounted(async () => {
             <option value="status">Grup per status</option></select
           ><Button icon="pi pi-search" label="Cari" @click="loadPage" />
         </div>
+        <section v-if="pairProjects.length" class="pair-projects">
+          <div class="section-title"><div><span>Kolaborasi TL–TS</span><small>Satu ruang kerja, progres dan pembayaran per chapter.</small></div></div>
+          <article v-for="project in pairProjects" :key="project.id" class="pair-project-card">
+            <div class="pair-project-head">
+              <div><small>PAIR PROJECT #{{ project.id }}</small><h3>{{ project.manga }}</h3><p>{{ project.tl_staff_name }} (TL) → {{ project.ts_staff_name }} (TS)</p></div>
+              <a v-if="project.channel_id" :href="`https://discord.com/channels/1524448659951849666/${project.channel_id}`" target="_blank" rel="noopener" class="p-button p-button-sm p-button-secondary">Buka ruang Discord</a>
+            </div>
+            <div class="pair-rate-row"><span>TL {{ money(project.tl_rate_per_chapter) }}/chapter</span><span>TS {{ money(project.ts_rate_per_chapter) }}/chapter</span><span>Deadline {{ project.deadline_at || 'Tidak ditentukan' }}</span></div>
+            <div class="pair-chapter-list">
+              <div v-for="chapter in project.chapters" :key="chapter.id" class="pair-chapter-row">
+                <div><b>Chapter {{ chapter.chapter }}</b><Tag :value="pairStatusLabel[chapter.status] || chapter.status" :severity="chapter.status === 'completed' ? 'success' : chapter.status.includes('revision') ? 'danger' : chapter.status === 'final_review' ? 'warn' : 'info'" /></div>
+                <div class="button-row">
+                  <a v-if="chapter.tl_link" :href="chapter.tl_link" target="_blank" rel="noopener" class="p-button p-button-sm p-button-secondary">Hasil TL</a>
+                  <a v-if="chapter.final_link" :href="chapter.final_link" target="_blank" rel="noopener" class="p-button p-button-sm p-button-secondary">Hasil Final</a>
+                  <template v-if="user.role === 'admin' && chapter.status === 'final_review'">
+                    <Button label="Setujui Final" icon="pi pi-check" size="small" @click="approvePairChapter(project, chapter)" />
+                    <Button label="Revisi TL" size="small" severity="danger" @click="revisePairChapter(project, chapter, 'tl')" />
+                    <Button label="Revisi TS" size="small" severity="danger" @click="revisePairChapter(project, chapter, 'ts')" />
+                    <Button label="Revisi Keduanya" size="small" severity="danger" @click="revisePairChapter(project, chapter, 'both')" />
+                  </template>
+                </div>
+              </div>
+            </div>
+          </article>
+        </section>
         <section
           v-for="group in groupedAssignments"
           :key="group.label"

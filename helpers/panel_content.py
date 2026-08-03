@@ -79,7 +79,10 @@ def build_staff_panel_embed(staff: discord.Member) -> discord.Embed:
     )
     embed.add_field(
         name="🔄 Alur Singkat",
-        value="**Claim → Kerjakan → Submit → Review → Approved → Paid**\nJika direvisi, perbaiki lalu submit kembali.",
+        value=(
+            "**Tugas solo:** Claim → Kerjakan → Submit → Review → Approved → Paid\n"
+            "**Tugas pair:** TL submit → TS mengerjakan → Review final → gaji TL + TS dilepas bersama."
+        ),
         inline=False,
     )
     embed.set_footer(text="Ryukomik Staff Management • Private Staff Panel")
@@ -129,6 +132,17 @@ def build_guide_embed(audience: str = "all") -> discord.Embed:
                 "• `revision` — baca catatan, perbaiki, lalu submit ulang pada tugas yang sama.\n"
                 "• `approved` — pekerjaan diterima dan siap ditagihkan.\n"
                 "• `paid` — transfer telah dikonfirmasi."
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="🤝 Tugas Pair TL–TS",
+            value=(
+                "• Bot menyediakan satu channel proyek privat untuk TL, TS, Administrator, dan bot.\n"
+                "• TL mengirim hasil per chapter lewat **Submit Hasil TL**; TS kemudian mengerjakannya.\n"
+                "• TS dapat memakai **Minta Perbaikan TL** jika terjemahan perlu dikoreksi.\n"
+                "• TS mengirim **Submit Final TS**, lalu Administrator memilih setujui atau revisi TL/TS/keduanya.\n"
+                "• Gaji kedua role baru masuk saldo ketika hasil final chapter disetujui; chapter lain tidak perlu ditunggu."
             ),
             inline=False,
         )
