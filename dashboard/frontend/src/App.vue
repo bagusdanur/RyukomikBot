@@ -1015,7 +1015,7 @@ onMounted(async () => {
           </div>
           <div v-else class="empty">Belum ada tugas proyek untuk ditampilkan.</div>
         </section>
-      ></template>
+      </template>
       <Suspense v-if="page === 'actions'">
         <ActionCenterPage :items="actionItems" :loading="loading" @reload="loadPage" @handle="handleAction" />
         <template #fallback><div class="operations-skeleton"><span v-for="n in 4" :key="n"></span></div></template>
@@ -1372,8 +1372,8 @@ onMounted(async () => {
                 ><Tag
                   :value="statusLabel[data.status]"
                   :severity="severity(data.status)" /></template></Column
-          ></DataTable></div
-      ></template>
+          ></DataTable></div>
+      </template>
       <template v-if="page === 'recap'"
         ><div class="toolbar recap-toolbar">
           <label>Periode<input v-model="period" type="month" /></label
@@ -1513,7 +1513,7 @@ onMounted(async () => {
             <span>Halaman {{ auditPage }} / {{ auditPages }} • {{ auditTotal }} aktivitas</span>
             <Button icon="pi pi-chevron-right" severity="secondary" :disabled="auditPage >= auditPages" @click="changeServerPage('audit', 1)" />
           </div>
-      ></template>
+      </template>
       <template v-if="page === 'payouts'">
         <div class="toolbar">
           <select v-model="payoutStatus" @change="loadPage">
