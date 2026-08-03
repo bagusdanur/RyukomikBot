@@ -6,7 +6,7 @@ from difflib import SequenceMatcher
 from chapter_utils import normalize_chapter
 
 
-SOURCE_ORDER = ("asura", "omega", "doujiva", "evascan")
+SOURCE_ORDER = ("asura", "omega", "doujiva", "evascan", "thunder")
 
 
 def normalize_title(value):
@@ -92,7 +92,7 @@ async def resolve_assignment_raw(title, allowed_chapters, downloaders, progress=
         active_sources = [source for source in SOURCE_ORDER if source in downloaders]
         if not active_sources:
             return {"status": "not_found", "combined": []}
-        await report("Mencari judul di Asura, Omega, Doujiva, dan EvaScan secara bersamaan...")
+        await report("Mencari judul di Asura, Omega, Doujiva, EvaScan, dan Thunder secara bersamaan...")
         searches = await asyncio.gather(
             *(downloaders[source].search_manga(title) for source in active_sources),
             return_exceptions=True,

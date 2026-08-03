@@ -31,5 +31,6 @@ ASURA_API = os.getenv("ASURA_API", "https://api.ryukomik.web.id/asura")
 DOUJIVA_API = os.getenv("DOUJIVA_API", "https://api.ryukomik.web.id/doujiva")
 OMEGA_API = os.getenv("OMEGA_API", "https://api.ryukomik.web.id/omega")
 EVASCAN_API = os.getenv("EVASCAN_API", "https://api.ryukomik.web.id/evascan")
+THUNDER_API = os.getenv("THUNDER_API", "https://api.ryukomik.web.id/thunder")
 DASHBOARD_URL = os.getenv("DASHBOARD_URL", "https://staff.ryukomik.web.id")
 

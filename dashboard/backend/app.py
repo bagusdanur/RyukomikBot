@@ -43,7 +43,7 @@ import pair_workflow as pair_service
 from database import DB_PATH, setup_database
 from chapter_utils import chapter_display, parse_chapters
 from invoice_pdf import render_paid_invoice
-from raw_downloader import asura_downloader, doujiva_downloader, omega_downloader, evascan_downloader
+from raw_downloader import asura_downloader, doujiva_downloader, omega_downloader, evascan_downloader, thunder_downloader
 from raw_downloader.resolver import resolve_assignment_raw
 from raw_rate_analysis import RawWorkload, classify_workload, suggested_rate
 
@@ -578,11 +578,23 @@ async def create_pair_workspace(project_id: int) -> tuple[str, str]:
     project = await pair_service.get_project(project_id)
     if not project:
         raise RuntimeError("Pair project tidak ditemukan setelah dibuat.")
-    slug = re.sub(r"[^a-z0-9]+", "-", project["manga"].casefold()).strip("-")[:45] or "project"
-    chapter_slug = "-".join(item["chapter"] for item in project["chapters"])[:25]
-    staff_allow = str((1 << 10) | (1 << 11) | (1 << 14) | (1 << 15) | (1 << 16))
-    admin_allow = str(int(staff_allow) | (1 << 4) | (1 << 13))
-    channel = await discord_api("POST", f"/guilds/{GUILD_ID}/channels", {
+    reusable = await pair_service.find_reusable_workspace(
+        int(project["tl_staff_id"]), int(project["ts_staff_id"])
+    )
+    channel = None
+    created_new_channel = False
+    if reusable:
+        channel = await discord_api("GET", f"/channels/{reusable['channel_id']}")
+    if channel:
+        await discord_api("PATCH", f"/channels/{channel['id']}", {
+            "topic": f"Workspace Pair TL:{project['tl_staff_id']} | TS:{project['ts_staff_id']} | Proyek aktif #{project_id}",
+        })
+    else:
+        slug = re.sub(r"[^a-z0-9]+", "-", project["manga"].casefold()).strip("-")[:45] or "project"
+        chapter_slug = "-".join(item["chapter"] for item in project["chapters"])[:25]
+        staff_allow = str((1 << 10) | (1 << 11) | (1 << 14) | (1 << 15) | (1 << 16))
+        admin_allow = str(int(staff_allow) | (1 << 4) | (1 << 13))
+        channel = await discord_api("POST", f"/guilds/{GUILD_ID}/channels", {
         "name": f"🔒・project-{slug}-ch-{chapter_slug}",
         "type": 0,
         "parent_id": str(REKRUT_CAT_ID),
@@ -593,18 +605,22 @@ async def create_pair_workspace(project_id: int) -> tuple[str, str]:
             {"id": str(project["ts_staff_id"]), "type": 1, "allow": staff_allow, "deny": "0"},
             {"id": str(ROLE_ADMIN_ID), "type": 0, "allow": admin_allow, "deny": "0"},
         ],
-    })
-    if not channel:
-        raise RuntimeError("Discord gagal membuat channel proyek privat.")
+        })
+        if not channel:
+            raise RuntimeError("Discord gagal membuat channel proyek privat.")
+        created_new_channel = True
     message = await discord_api("POST", f"/channels/{channel['id']}/messages", {
         "content": f"<@{project['tl_staff_id']}> <@{project['ts_staff_id']}> ruang kolaborasi kalian sudah siap.",
         **pair_panel_payload(project),
     })
     if not message:
-        await discord_api("DELETE", f"/channels/{channel['id']}")
+        if created_new_channel:
+            await discord_api("DELETE", f"/channels/{channel['id']}")
         raise RuntimeError("Discord gagal membuat panel pair.")
     await discord_api("PUT", f"/channels/{channel['id']}/pins/{message['id']}")
     await pair_service.set_workspace(project_id, int(channel["id"]), int(message["id"]))
+    if reusable and str(reusable["channel_id"]) == str(channel["id"]):
+        await pair_service.record_workspace_reuse(project_id, int(reusable["id"]))
     return str(channel["id"]), str(message["id"])
 
 
@@ -1639,12 +1655,13 @@ async def raw_rate_analysis(payload: RawRateAnalysisRequest, _user=Depends(admin
             "omega": omega_downloader,
             "doujiva": doujiva_downloader,
             "evascan": evascan_downloader,
+            "thunder": thunder_downloader,
         },
         timeout=12,
     )
     if resolved.get("status") != "resolved":
         message = {
-            "not_found": "Judul RAW tidak ditemukan di Asura, Omega, Doujiva, atau EvaScan.",
+            "not_found": "Judul RAW tidak ditemukan di Asura, Omega, Doujiva, EvaScan, atau Thunder.",
             "ambiguous": "Judul RAW ambigu. Perjelas judul manga sebelum dianalisis.",
             "chapters_missing": "Chapter tugas belum tersedia pada sumber RAW yang ditemukan.",
             "timeout": "Analisis RAW terlalu lama. Coba lagi beberapa saat.",
@@ -1652,7 +1669,7 @@ async def raw_rate_analysis(payload: RawRateAnalysisRequest, _user=Depends(admin
         raise HTTPException(status_code=422, detail=message)
 
     source = resolved["source"]
-    downloader = {"asura": asura_downloader, "omega": omega_downloader, "doujiva": doujiva_downloader, "evascan": evascan_downloader}[source]
+    downloader = {"asura": asura_downloader, "omega": omega_downloader, "doujiva": doujiva_downloader, "evascan": evascan_downloader, "thunder": thunder_downloader}[source]
     image_sets = await asyncio.gather(
         *(downloader.get_chapter_images(resolved["manga"]["id"], chapter["id"])
           for chapter in resolved["chapters"]),

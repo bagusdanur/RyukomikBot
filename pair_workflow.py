@@ -157,6 +157,35 @@ async def set_workspace(project_id: int, channel_id: int, panel_message_id: int)
         await db.close()
 
 
+async def find_reusable_workspace(tl_staff_id: int, ts_staff_id: int) -> Optional[dict[str, Any]]:
+    """Return the latest completed workspace for the exact TL/TS pair."""
+    db = await db_module.get_db()
+    try:
+        row = await (await db.execute(
+            """SELECT id,channel_id,panel_message_id,manga,completed_at
+               FROM pair_projects
+               WHERE tl_staff_id=? AND ts_staff_id=? AND status='completed'
+                 AND channel_id IS NOT NULL
+               ORDER BY completed_at DESC,id DESC LIMIT 1""",
+            (tl_staff_id, ts_staff_id),
+        )).fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def record_workspace_reuse(project_id: int, previous_project_id: int) -> None:
+    db = await db_module.get_db()
+    try:
+        await db.execute(
+            "INSERT INTO pair_events(project_id,event_type,detail) VALUES(?,?,?)",
+            (project_id, "workspace_reused", f"Channel digunakan ulang dari Pair Project #{previous_project_id}."),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
 async def delete_unpublished_project(project_id: int) -> None:
     """Rollback a newly-created project when Discord workspace creation fails."""
     db = await db_module.get_db()

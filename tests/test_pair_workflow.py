@@ -95,6 +95,23 @@ class PairWorkflowTests(unittest.TestCase):
             chapter_id, 100, "https://drive.google.com/wrong", None
         )))
 
+    def test_completed_exact_pair_workspace_can_be_reused(self):
+        project = self.create_pair(["1"])
+        asyncio.run(pair_workflow.set_workspace(project["id"], 12345, 67890))
+        chapter_id = project["chapters"][0]["id"]
+        asyncio.run(pair_workflow.submit_tl(chapter_id, 100, "https://drive.google.com/tl", None))
+        asyncio.run(pair_workflow.submit_final(chapter_id, 200, "https://drive.google.com/final", None))
+        asyncio.run(pair_workflow.approve_final(chapter_id, 999))
+        reusable = asyncio.run(pair_workflow.find_reusable_workspace(100, 200))
+        self.assertEqual(reusable["id"], project["id"])
+        self.assertEqual(reusable["channel_id"], 12345)
+        self.assertIsNone(asyncio.run(pair_workflow.find_reusable_workspace(200, 100)))
+
+    def test_active_workspace_is_not_reused(self):
+        project = self.create_pair(["1"])
+        asyncio.run(pair_workflow.set_workspace(project["id"], 12345, 67890))
+        self.assertIsNone(asyncio.run(pair_workflow.find_reusable_workspace(100, 200)))
+
 
 if __name__ == "__main__":
     unittest.main()
