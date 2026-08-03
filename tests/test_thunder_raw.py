@@ -38,6 +38,25 @@ class ThunderDownloaderTests(unittest.IsolatedAsyncioTestCase):
             images = await ThunderDownloader().get_chapter_images("thunder-manga", "thunder-manga-chapter-1")
         self.assertEqual(images, ["page-1.jpg", "page-2.jpg", "page-3.jpg"])
 
+    async def test_numeric_chapter_resolves_to_official_slug(self):
+        downloader = ThunderDownloader()
+        downloader.get_chapter_list = AsyncMock(return_value=[{
+            "id": "the-old-man-vows-revenge-against-his-demon-wife-chapter-1",
+            "title": "Chapter 1",
+        }])
+        get_json = AsyncMock(return_value={"images": ["page-1.webp", "page-2.webp"]})
+        with patch("raw_downloader.thunder._create_session", return_value=SessionContext()), patch(
+            "raw_downloader.thunder.get_json", new=get_json
+        ):
+            images = await downloader.get_chapter_images(
+                "the-old-man-vows-revenge-against-his-demon-wife", "1"
+            )
+        self.assertEqual(images, ["page-1.webp", "page-2.webp"])
+        self.assertIn(
+            "/the-old-man-vows-revenge-against-his-demon-wife-chapter-1",
+            get_json.await_args.args[1],
+        )
+
     def test_get_downloader_accepts_aliases(self):
         self.assertIsInstance(get_downloader("thunder"), ThunderDownloader)
         self.assertIsInstance(get_downloader("thunderscans"), ThunderDownloader)

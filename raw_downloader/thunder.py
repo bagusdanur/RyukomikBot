@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, unquote, urlparse
@@ -22,6 +23,15 @@ def _clean_id(value: str) -> str:
 
 def _clean_chapter(value: str) -> str:
     return str(value or "").strip("/").split("/")[-1]
+
+
+def _chapter_number(value: str) -> str:
+    """Extract the chapter number without being confused by digits in a title."""
+    value = str(value or "").strip().casefold()
+    match = re.search(r"chapter[-\s]+(\d+)(?:[.-](\d+))?$", value)
+    if match:
+        return f"{int(match.group(1))}.{match.group(2)}" if match.group(2) else str(int(match.group(1)))
+    return value if re.fullmatch(r"\d+(?:\.\d+)?", value) else ""
 
 
 def _image_extension(url: str) -> str:
@@ -59,6 +69,20 @@ class ThunderDownloader:
 
     async def get_chapter_images(self, manga_id: str, chapter_id: str) -> List[str]:
         clean_manga, clean_chapter = _clean_id(manga_id), _clean_chapter(chapter_id)
+        requested_number = _chapter_number(clean_chapter)
+        needs_resolution = bool(re.fullmatch(r"(?:chapter[-\s]*)?\d+(?:[.-]\d+)?", clean_chapter.casefold()))
+        if requested_number and needs_resolution:
+            chapters = await self.get_chapter_list(clean_manga)
+            matched = next((
+                chapter for chapter in chapters
+                if requested_number in {
+                    _chapter_number(chapter.get("id", "")),
+                    _chapter_number(chapter.get("title", "")),
+                }
+            ), None)
+            if not matched:
+                return []
+            clean_chapter = _clean_chapter(matched["id"])
         async with _create_session() as session:
             payload = await get_json(session, f"{self.api_url}/chapter/{clean_manga}/{clean_chapter}", source="thunder", stage=f"chapter:{clean_manga}:{clean_chapter}", timeout=10, validator=lambda item: bool((item.get("data") or item).get("images")))
         root = payload.get("data", payload) if payload else {}
