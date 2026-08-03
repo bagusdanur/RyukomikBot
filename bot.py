@@ -40,8 +40,9 @@ from views.payment_views import (
 from views.role_views import ZodiacRoleView
 from views.pair_views import (
     PairApproveDynamic, PairReviseDynamic, PairTlDynamic,
-    PairTlRevisionDynamic, PairTsDynamic,
+    PairStatusDynamic, PairTlRevisionDynamic, PairTsDynamic, refresh_project_panel,
 )
+import pair_workflow as pair_service
 import database as db
 from server_management import apply_server_housekeeping, send_goodbye, send_welcome
 
@@ -71,6 +72,7 @@ class RyukomikBot(commands.Bot):
         self.recruitment_reconciled = False
         self.recruitment_panel_synced = False
         self.payrate_panel_synced = False
+        self.pair_panels_reconciled = False
     
     async def setup_hook(self):
         """Called when the bot is starting up."""
@@ -91,7 +93,7 @@ class RyukomikBot(commands.Bot):
         self.add_dynamic_items(SubmitDynamicItem, ApproveDynamicItem, ReviseDynamicItem)
         self.add_dynamic_items(
             PairTlDynamic, PairTsDynamic, PairTlRevisionDynamic,
-            PairApproveDynamic, PairReviseDynamic,
+            PairStatusDynamic, PairApproveDynamic, PairReviseDynamic,
         )
         self.add_dynamic_items(RecruitmentApproveDynamic)
         self.add_dynamic_items(
@@ -195,6 +197,19 @@ class RyukomikBot(commands.Bot):
                     print("[OK] Staff payrate panel synchronized", flush=True)
             except Exception as exc:
                 print(f"[ERROR] Payrate panel synchronization failed: {exc}", flush=True)
+
+        if not self.pair_panels_reconciled:
+            try:
+                target_guild = self.get_guild(GUILD_ID)
+                if target_guild is not None:
+                    projects = await pair_service.list_projects()
+                    for project in projects:
+                        if project.get("channel_id") and project.get("panel_message_id"):
+                            await refresh_project_panel(target_guild, int(project["id"]))
+                    self.pair_panels_reconciled = True
+                    print(f"[OK] Synchronized {len(projects)} pair project panel(s)", flush=True)
+            except Exception as exc:
+                print(f"[ERROR] Pair panel synchronization failed: {exc}", flush=True)
 
 
 # Create bot instance

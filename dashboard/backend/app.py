@@ -569,6 +569,7 @@ def pair_panel_payload(project: dict) -> dict:
             {"type": 2, "style": 1, "label": "Submit Hasil TL", "custom_id": f"pair:tl:{project['id']}:v2"},
             {"type": 2, "style": 3, "label": "Submit Final TS", "custom_id": f"pair:ts:{project['id']}:v2"},
             {"type": 2, "style": 4, "label": "Minta Perbaikan TL", "custom_id": f"pair:tl-revision:{project['id']}:v2"},
+            {"type": 2, "style": 2, "label": "Lihat Status Chapter", "custom_id": f"pair:status:{project['id']}:v2"},
         ]}],
         "allowed_mentions": {"users": [str(project["tl_staff_id"]), str(project["ts_staff_id"])]},
     }

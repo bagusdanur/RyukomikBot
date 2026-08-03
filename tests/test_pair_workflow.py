@@ -69,6 +69,9 @@ class PairWorkflowTests(unittest.TestCase):
         )))
         chapter = asyncio.run(pair_workflow.get_chapter(chapter_id))
         self.assertEqual(chapter["status"], "tl_revision")
+        timeline = asyncio.run(pair_workflow.timeline(project["id"]))
+        revision = next(item for item in timeline if item["event_type"] == "revision_tl")
+        self.assertIn("Perbaiki dialog halaman 3.", revision["detail"])
         connection = sqlite3.connect(database.DB_PATH)
         self.assertEqual(
             connection.execute("SELECT COUNT(*) FROM assignments WHERE status='approved'").fetchone()[0], 0

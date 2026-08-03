@@ -20,6 +20,15 @@ STATE_LABELS = {
     "final_review": "Review Final",
     "completed": "Selesai",
 }
+NEXT_ACTION = {
+    "waiting_tl": "TL mengirim hasil terjemahan",
+    "tl_revision": "TL memperbaiki terjemahan",
+    "both_revision": "TL dan TS memperbaiki hasil",
+    "ready_for_ts": "TS mengerjakan hasil final",
+    "ts_revision": "TS memperbaiki hasil final",
+    "final_review": "Administrator melakukan review final",
+    "completed": "Tidak ada — chapter selesai",
+}
 
 
 def build_project_embed(project: dict) -> discord.Embed:
@@ -221,6 +230,52 @@ async def open_project_action(interaction: discord.Interaction, project_id: int,
     await interaction.response.send_message("Pilih chapter yang ingin diproses.", view=PairChapterSelectView(project, action), ephemeral=True)
 
 
+async def show_project_status(interaction: discord.Interaction, project_id: int):
+    project = await pairs.get_project(project_id)
+    if not project:
+        return await interaction.response.send_message("Proyek pair tidak ditemukan.", ephemeral=True)
+    participants = {int(project["tl_staff_id"]), int(project["ts_staff_id"])}
+    if interaction.user.id not in participants and not is_admin(interaction.user):
+        return await interaction.response.send_message(
+            "Status detail hanya dapat dilihat oleh TL, TS, dan Administrator proyek.", ephemeral=True
+        )
+    events = await pairs.timeline(project_id)
+    embed = discord.Embed(
+        title=f"Status Chapter • {project['manga']}",
+        description=(
+            f"**TL:** <@{project['tl_staff_id']}> • **TS:** <@{project['ts_staff_id']}>\n"
+            "Gunakan bagian *Tindakan berikutnya* untuk mengetahui siapa yang perlu bergerak."
+        ),
+        color=discord.Color.blurple(),
+    )
+    for chapter in project["chapters"][:5]:
+        details = [
+            f"**Status:** {STATE_LABELS.get(chapter['status'], chapter['status'])}",
+            f"**Tindakan berikutnya:** {NEXT_ACTION.get(chapter['status'], 'Periksa bersama Administrator')}",
+        ]
+        if chapter.get("tl_link"):
+            details.append(f"[Buka hasil TL]({chapter['tl_link']})")
+        if chapter.get("final_link"):
+            details.append(f"[Buka hasil final]({chapter['final_link']})")
+        embed.add_field(
+            name=f"Chapter {chapter['chapter']}", value="\n".join(details), inline=False
+        )
+    revision_events = [event for event in events if str(event["event_type"]).startswith("revision_")][:5]
+    if revision_events:
+        history = []
+        for event in revision_events:
+            detail = str(event.get("detail") or "Tanpa catatan").replace("\n", " ")
+            if len(detail) > 160:
+                detail = detail[:157] + "..."
+            actor = f"<@{event['actor_id']}>" if event.get("actor_id") else "Sistem"
+            history.append(f"• {event['created_at'][:16]} • {actor}: {detail}")
+        embed.add_field(name="Riwayat Revisi Terbaru", value="\n".join(history), inline=False)
+    else:
+        embed.add_field(name="Riwayat Revisi", value="Belum ada permintaan revisi.", inline=False)
+    embed.set_footer(text=f"Pair Project #{project_id} • Tampilan privat")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
 class PairTlDynamic(discord.ui.DynamicItem[discord.ui.Button], template=r"pair:tl:(?P<project_id>\d+):v2"):
     def __init__(self, project_id: int):
         self.project_id = project_id
@@ -246,6 +301,18 @@ class PairTlRevisionDynamic(discord.ui.DynamicItem[discord.ui.Button], template=
     @classmethod
     async def from_custom_id(cls, interaction, item, match): return cls(int(match["project_id"]))
     async def callback(self, interaction): await open_project_action(interaction, self.project_id, "request_tl")
+
+
+class PairStatusDynamic(discord.ui.DynamicItem[discord.ui.Button], template=r"pair:status:(?P<project_id>\d+):v2"):
+    def __init__(self, project_id: int):
+        self.project_id = project_id
+        super().__init__(discord.ui.Button(
+            label="Lihat Status Chapter", style=discord.ButtonStyle.secondary,
+            custom_id=f"pair:status:{project_id}:v2",
+        ))
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match): return cls(int(match["project_id"]))
+    async def callback(self, interaction): await show_project_status(interaction, self.project_id)
 
 
 class PairApproveDynamic(discord.ui.DynamicItem[discord.ui.Button], template=r"pair:approve:(?P<chapter_id>\d+):v2"):
@@ -322,6 +389,7 @@ class PairProjectView(discord.ui.View):
         self.add_item(PairTlDynamic(project_id))
         self.add_item(PairTsDynamic(project_id))
         self.add_item(PairTlRevisionDynamic(project_id))
+        self.add_item(PairStatusDynamic(project_id))
 
 
 class PairAdminReviewView(discord.ui.View):
