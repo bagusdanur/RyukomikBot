@@ -793,8 +793,8 @@ onMounted(async () => {
   </div>
   <main v-else-if="!user" class="login-page">
     <section class="login-card">
-      <div class="brand-mark">R</div>
-      <p class="eyebrow">RYUKOMIK OPERATIONS</p>
+      <img class="brand-mark" src="/icons/ryukomik.png" alt="Logo Ryukomik" />
+      <p class="eyebrow">RYUKOMIK STAFF</p>
       <h1>Satu ruang kerja untuk<br /><span>administrator Ryukomik.</span></h1>
       <p class="login-copy">
         Kelola tugas, review hasil, gaji, dan invoice yang terhubung langsung
@@ -811,8 +811,8 @@ onMounted(async () => {
   <div v-else class="app-shell app-dark">
     <aside class="sidebar">
       <div class="brand">
-        <div class="brand-mark small">R</div>
-        <div><strong>Ryukomik</strong><span>Operations Center</span></div>
+        <img class="brand-mark small" src="/icons/ryukomik.png" alt="Logo Ryukomik" />
+        <div><strong>Ryukomik</strong><span>Ryukomik Staff</span></div>
       </div>
       <nav>
         <button

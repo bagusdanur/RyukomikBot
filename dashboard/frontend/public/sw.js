@@ -1,5 +1,5 @@
-const CACHE = 'ryukomik-shell-v1'
-const SHELL = ['/', '/manifest.webmanifest', '/icons/ryukomik.svg']
+const CACHE = 'ryukomik-shell-v2'
+const SHELL = ['/', '/manifest.webmanifest', '/icons/ryukomik.png']
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)))

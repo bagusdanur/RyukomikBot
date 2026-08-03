@@ -1,6 +1,6 @@
 {
-  "name": "Ryukomik Operations Center",
-  "short_name": "Ryukomik",
+  "name": "Ryukomik Staff",
+  "short_name": "Ryukomik Staff",
   "description": "Dashboard pengelolaan staff dan pekerjaan Ryukomik.",
   "start_url": "/?source=pwa",
   "scope": "/",
@@ -12,10 +12,10 @@
   "categories": ["business", "productivity"],
   "icons": [
     {
-      "src": "/icons/ryukomik.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "src": "/icons/ryukomik.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
     }
   ]
 }
