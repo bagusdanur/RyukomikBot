@@ -1,0 +1,53 @@
+/* Final mobile layer: width containment and a denser app-like workspace. */
+.mobile-quick-section { display: none; }
+html, body, #app { max-width: 100%; overflow-x: clip; }
+img, svg, canvas, video { max-width: 100%; }
+a { overflow-wrap: anywhere; }
+
+@media (max-width: 900px) {
+  .app-shell, .content { max-width: 100%; overflow-x: clip; }
+  .content > * { min-width: 0; max-width: 100%; }
+  .content .p-component, .content .p-inputnumber, .content input,
+  .content select, .content textarea { max-width: 100%; min-width: 0; }
+  .content .p-button { max-width: 100%; }
+  .content .p-button-label { white-space: normal; }
+  .content .p-tag { max-width: 100%; white-space: normal; text-align: left; }
+  .content h1, .content h2, .content h3, .content h4, .content p,
+  .content span, .content strong, .content small { overflow-wrap: anywhere; }
+
+  .mobile-quick-section { display: block; margin-bottom: 12px; }
+  .mobile-section-label { display: flex; align-items: end; justify-content: space-between; gap: 10px; margin: 0 3px 9px; }
+  .mobile-section-label span { font: 700 15px Manrope; }
+  .mobile-section-label small { color: var(--muted); font-size: 10px; }
+  .mobile-quick-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+  .mobile-quick-grid button { min-width: 0; min-height: 76px; display: flex; align-items: center; gap: 11px; padding: 12px; border: 1px solid #2a3448; border-radius: 15px; background: linear-gradient(145deg,#151c2a,#10151f); color: var(--text); text-align: left; }
+  .mobile-quick-grid button:active { transform: scale(.98); }
+  .mobile-quick-grid button > i { flex: 0 0 34px; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; background: #7180ff1d; color: #93a0ff; font-size: 16px; }
+  .mobile-quick-grid button span, .mobile-quick-grid button b, .mobile-quick-grid button small { display: block; min-width: 0; }
+  .mobile-quick-grid button b { font-size: 12px; }
+  .mobile-quick-grid button small { margin-top: 3px; color: var(--muted); font-size: 9px; line-height: 1.25; }
+
+  .table-card .p-paginator { max-width: 100%; overflow-x: auto !important; justify-content: flex-start !important; flex-wrap: nowrap !important; }
+  .table-card .p-paginator-page, .table-card .p-paginator-first,
+  .table-card .p-paginator-prev, .table-card .p-paginator-next,
+  .table-card .p-paginator-last { flex: 0 0 38px; }
+  .modal-card, .payout-detail, .payment-confirm-card { max-width: 100vw !important; }
+}
+
+@media (max-width: 580px) {
+  .payout-detail .table-card .p-datatable { min-width: 0 !important; }
+  .payout-detail, .payment-confirm-card { width: 100% !important; }
+  .invoice-list h4, .invoice-list strong { overflow-wrap: anywhere; word-break: break-word; }
+  .operation-row > div, .action-list article > div, .person-head > div { min-width: 0; max-width: 100%; }
+}
+
+@media (max-width: 430px) {
+  .hero-card { padding: 18px 16px; }
+  .hero-card h3 { font-size: 22px; }
+  .panel { padding: 16px; }
+  .empty-state { padding: 30px 16px; }
+  .mobile-section-label small { display: none; }
+  .mobile-menu-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stats-grid article { padding: 13px 10px; }
+  .stats-grid strong { font-size: 18px; }
+}

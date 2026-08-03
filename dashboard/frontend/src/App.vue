@@ -904,7 +904,20 @@ onMounted(async () => {
         }}<button @click="success = ''">×</button>
       </div>
       <template v-if="page === 'overview'"
-        ><div class="hero-card">
+        ><section class="mobile-quick-section">
+          <div class="mobile-section-label"><span>Akses Cepat</span><small>Tindakan yang paling sering digunakan</small></div>
+          <div class="mobile-quick-grid" v-if="user.role === 'admin'">
+            <button @click="openTask()"><i class="pi pi-plus-circle"></i><span><b>Buat Tugas</b><small>Kirim pekerjaan baru</small></span></button>
+            <button @click="navigateMobile('actions')"><i class="pi pi-bell"></i><span><b>Review</b><small>{{ actionItems.length }} perlu tindakan</small></span></button>
+            <button @click="navigateMobile('payouts')"><i class="pi pi-money-bill"></i><span><b>Bayar Gaji</b><small>Proses permintaan</small></span></button>
+            <button @click="navigateMobile('recruitment')"><i class="pi pi-user-plus"></i><span><b>Rekrutmen</b><small>Atur pelamar</small></span></button>
+          </div>
+          <div class="mobile-quick-grid" v-else>
+            <button @click="navigateMobile('tasks')"><i class="pi pi-list-check"></i><span><b>Tugas Saya</b><small>Lihat progres kerja</small></span></button>
+            <button @click="navigateMobile('deadlines')"><i class="pi pi-clock"></i><span><b>Deadline</b><small>Cek tenggat tugas</small></span></button>
+          </div>
+        </section>
+        <div class="hero-card">
           <div>
             <p>Selamat datang kembali,</p>
             <h3>{{ user.username }}</h3>
