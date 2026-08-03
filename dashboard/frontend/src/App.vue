@@ -57,6 +57,8 @@ const payrates = ref<
   payoutStatus = ref(""),
   audit = ref<Array<Record<string, string | number | null>>>([]);
 const actionItems = ref<ActionItem[]>([]);
+const mobileMenuOpen = ref(false);
+const installPrompt = ref<any>(null);
 const recruitment = ref<RecruitmentSettings>({ open: true, positions: [] });
 const recruitmentSubmissions = ref<RecruitmentSubmission[]>([]);
 const taskPage = ref(1), taskPages = ref(1), taskTotal = ref(0),
@@ -109,6 +111,28 @@ const navItems = computed(() => [
     : []),
   { id: "deadlines", label: "Deadline", icon: "pi pi-clock" },
 ]);
+const mobilePrimaryIds = computed(() =>
+  user.value?.role === "admin"
+    ? ["overview", "actions", "tasks", "recap"]
+    : ["overview", "tasks", "deadlines"],
+);
+const mobilePrimaryItems = computed(() =>
+  navItems.value.filter((item) => mobilePrimaryIds.value.includes(item.id)),
+);
+const mobileMoreItems = computed(() =>
+  navItems.value.filter((item) => !mobilePrimaryIds.value.includes(item.id)),
+);
+function navigateMobile(target: string) {
+  page.value = target as Page;
+  mobileMenuOpen.value = false;
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+async function installDashboard() {
+  if (!installPrompt.value) return;
+  await installPrompt.value.prompt();
+  await installPrompt.value.userChoice;
+  installPrompt.value = null;
+}
 const money = (v: number) =>
   new Intl.NumberFormat("id-ID", {
     style: "currency",
@@ -741,6 +765,13 @@ watch(
   },
 );
 onMounted(async () => {
+  window.addEventListener("beforeinstallprompt", (event) => {
+    event.preventDefault();
+    installPrompt.value = event;
+  });
+  window.addEventListener("appinstalled", () => {
+    installPrompt.value = null;
+  });
   try {
     user.value = await api.me();
     const params = new URLSearchParams(location.search);
@@ -809,6 +840,45 @@ onMounted(async () => {
         </button>
       </div>
     </aside>
+    <nav class="mobile-bottom-nav" aria-label="Navigasi utama">
+      <button
+        v-for="item in mobilePrimaryItems"
+        :key="item.id"
+        :class="{ active: page === item.id }"
+        @click="navigateMobile(item.id)"
+      >
+        <span class="mobile-nav-icon">
+          <i :class="item.icon"></i>
+          <b v-if="item.id === 'actions' && actionItems.length" class="mobile-nav-badge">{{ actionItems.length }}</b>
+        </span>
+        <small>{{ item.label === 'Gaji & Invoice' ? 'Gaji' : item.label }}</small>
+      </button>
+      <button :class="{ active: mobileMenuOpen || mobileMoreItems.some((item) => item.id === page) }" @click="mobileMenuOpen = true">
+        <span class="mobile-nav-icon"><i class="pi pi-th-large"></i></span>
+        <small>Lainnya</small>
+      </button>
+    </nav>
+    <div v-if="mobileMenuOpen" class="mobile-menu-backdrop" @click.self="mobileMenuOpen = false">
+      <section class="mobile-menu-sheet">
+        <div class="mobile-menu-handle"></div>
+        <div class="mobile-menu-head">
+          <div>
+            <strong>Menu Ryukomik</strong>
+            <span>{{ user.username }} • {{ user.role === 'admin' ? 'Administrator' : 'Staff' }}</span>
+          </div>
+          <button aria-label="Tutup menu" @click="mobileMenuOpen = false">×</button>
+        </div>
+        <div class="mobile-menu-grid">
+          <button v-for="item in mobileMoreItems" :key="item.id" :class="{ active: page === item.id }" @click="navigateMobile(item.id)">
+            <i :class="item.icon"></i><span>{{ item.label }}</span>
+          </button>
+        </div>
+        <button v-if="installPrompt" class="install-app-button" @click="installDashboard">
+          <i class="pi pi-mobile"></i><span><b>Pasang Aplikasi</b><small>Tambahkan dashboard ke layar utama</small></span>
+        </button>
+        <button class="mobile-logout" @click="logout"><i class="pi pi-sign-out"></i> Keluar dari dashboard</button>
+      </section>
+    </div>
     <section class="content">
       <header>
         <div>

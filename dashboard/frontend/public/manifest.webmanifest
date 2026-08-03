@@ -1,0 +1,21 @@
+{
+  "name": "Ryukomik Operations Center",
+  "short_name": "Ryukomik",
+  "description": "Dashboard pengelolaan staff dan pekerjaan Ryukomik.",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#090c14",
+  "theme_color": "#0c1020",
+  "lang": "id-ID",
+  "categories": ["business", "productivity"],
+  "icons": [
+    {
+      "src": "/icons/ryukomik.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
