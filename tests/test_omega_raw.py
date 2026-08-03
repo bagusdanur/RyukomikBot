@@ -203,3 +203,29 @@ class ThreeSourceResolverTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(url.startswith("https://filebin.net/"))
         self.assertEqual(completed, ["1", "2"])
         self.assertEqual(final_source, "doujiva")
+
+    async def test_thunder_keeps_original_images_without_resize(self):
+        downloaders = {
+            "thunder": FakePackageDownloader("thunder"),
+        }
+        with tempfile.TemporaryDirectory() as temporary, patch(
+            "views.raw_views.RAW_ROOT", temporary
+        ), patch(
+            "views.raw_views.get_downloader",
+            side_effect=lambda source: downloaders[source],
+        ), patch(
+            "views.raw_views.upload_to_filebin",
+            new=AsyncMock(return_value=True),
+        ), patch(
+            "views.raw_views.verify_filebin",
+            new=AsyncMock(return_value=True),
+        ), patch(
+            "views.raw_views.resize_for_editor",
+        ) as resize_mock:
+            url, completed, final_source = await create_filebin_download(
+                "thunder", "shared-title", ["1"]
+            )
+        self.assertTrue(url.startswith("https://filebin.net/"))
+        self.assertEqual(completed, ["1"])
+        self.assertEqual(final_source, "thunder")
+        resize_mock.assert_not_called()

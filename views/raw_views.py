@@ -159,8 +159,11 @@ async def create_filebin_download(source, manga_id, chapter_ids, fallbacks=None)
                 for filename in files:
                     image_files.append(os.path.join(root, filename))
             for image_path in sorted(image_files, key=lambda path: os.path.relpath(path, result)):
-                resize_result = await asyncio.to_thread(resize_for_editor, image_path)
-                resized_images += int(resize_result.resized)
+                # Thunder RAW must remain byte-for-byte original. Its long pages are
+                # intentionally not capped to the editor-safe 8192 px height.
+                if selected_source != "thunder":
+                    resize_result = await asyncio.to_thread(resize_for_editor, image_path)
+                    resized_images += int(resize_result.resized)
                 image_number += 1
                 extension = os.path.splitext(image_path)[1] or ".jpg"
                 remote_name = f"ch-{safe_chapter}_{image_number:03d}{extension}"
