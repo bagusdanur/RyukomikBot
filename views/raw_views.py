@@ -45,30 +45,70 @@ def cleanup_old_raw_files(max_age_hours=24):
                 pass
 
 
-async def upload_to_filebin(bin_id, file_path, remote_filename=None):
+async def upload_to_filebin(bin_id, file_path, remote_filename=None, session=None):
     """Upload one file into a shared Filebin bin."""
     filename = remote_filename or os.path.basename(file_path)
     timeout = aiohttp.ClientTimeout(total=900)
-    for attempt in range(1, 4):
-        try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
+    owned_session = session is None
+    client = session or aiohttp.ClientSession(timeout=timeout)
+    try:
+        for attempt in range(1, 4):
+            try:
                 with open(file_path, "rb") as upload_file:
-                    async with session.post(
+                    async with client.post(
                         f"{FILEBIN_BASE_URL}/{bin_id}/{filename}",
                         data=upload_file,
-                        headers={"Content-Type": "application/octet-stream"},
+                        headers={
+                            "Content-Type": "application/octet-stream",
+                            "Accept": "application/json",
+                            "Content-Length": str(os.path.getsize(file_path)),
+                        },
                     ) as response:
-                        if response.status in (200, 201):
-                            return True
-                        if response.status not in RETRYABLE_STATUSES:
+                        if response.status == 201:
+                            try:
+                                payload = await response.json()
+                            except (aiohttp.ContentTypeError, ValueError):
+                                payload = {}
+                            uploaded_name = str((payload.get("file") or {}).get("filename") or "")
+                            if uploaded_name == filename:
+                                return True
+                            reason = "respons sukses tidak memuat metadata file yang benar"
+                        elif response.status == 200:
+                            reason = "HTTP 200 non-upload (kemungkinan halaman verifikasi)"
+                        elif response.status not in RETRYABLE_STATUSES:
                             print(f"Filebin upload {filename} failed permanently: HTTP {response.status}")
                             return False
-                        reason = f"HTTP {response.status}"
-        except (aiohttp.ClientError, TimeoutError, OSError) as error:
-            reason = type(error).__name__
-        print(f"Filebin upload {filename} attempt {attempt}/3 failed: {reason}")
+                        else:
+                            reason = f"HTTP {response.status}"
+            except (aiohttp.ClientError, TimeoutError, OSError) as error:
+                reason = type(error).__name__
+            print(f"Filebin upload {filename} attempt {attempt}/3 failed: {reason}")
+            if attempt < 3:
+                await asyncio.sleep(0.75 * attempt)
+        return False
+    finally:
+        if owned_session:
+            await client.close()
+
+
+async def verify_filebin(bin_id, expected_filenames, session):
+    """Never publish a Filebin URL until every expected page is listed."""
+    expected = set(expected_filenames)
+    for attempt in range(1, 4):
+        try:
+            async with session.get(
+                f"{FILEBIN_BASE_URL}/{bin_id}",
+                headers={"Accept": "application/json"},
+            ) as response:
+                if response.status == 200:
+                    payload = await response.json()
+                    actual = {str(item.get("filename")) for item in payload.get("files", [])}
+                    if actual == expected:
+                        return True
+        except (aiohttp.ClientError, aiohttp.ContentTypeError, TimeoutError, ValueError):
+            pass
         if attempt < 3:
-            await asyncio.sleep(0.75 * attempt)
+            await asyncio.sleep(attempt)
     return False
 
 
@@ -80,6 +120,7 @@ async def create_filebin_download(source, manga_id, chapter_ids, fallbacks=None)
     bin_id = secrets.token_urlsafe(12).replace("_", "").replace("-", "").lower()
     request_root = os.path.join(RAW_ROOT, f"request-{bin_id}")
     os.makedirs(request_root, exist_ok=True)
+    filebin_session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=900))
     try:
         candidates = [{"source": source, "manga_id": manga_id}] + list(fallbacks or [])
         selected_source = source
@@ -106,6 +147,8 @@ async def create_filebin_download(source, manga_id, chapter_ids, fallbacks=None)
             return None, [], source
 
         resized_images = 0
+        expected_filenames = []
+        upload_failed = False
         for chapter_id, result in chapter_directories:
             safe_chapter = re.sub(r"[^a-zA-Z0-9_-]+", "-", chapter_id).strip("-")[:30] or "chapter"
             image_number = 0
@@ -121,19 +164,30 @@ async def create_filebin_download(source, manga_id, chapter_ids, fallbacks=None)
                 image_number += 1
                 extension = os.path.splitext(image_path)[1] or ".jpg"
                 remote_name = f"ch-{safe_chapter}_{image_number:03d}{extension}"
-                if not await upload_to_filebin(bin_id, image_path, remote_name):
+                if not await upload_to_filebin(bin_id, image_path, remote_name, filebin_session):
                     uploaded = False
+                    upload_failed = True
                     break
+                expected_filenames.append(remote_name)
             if uploaded and image_number:
                 completed.append(chapter_id)
             else:
                 shutil.rmtree(result, ignore_errors=True)
-        if not completed:
+            if upload_failed:
+                break
+        if upload_failed or not completed:
+            return None, [], selected_source
+        if not await verify_filebin(bin_id, expected_filenames, filebin_session):
+            print(
+                f"Filebin verification failed for {bin_id}: "
+                f"expected {len(expected_filenames)} file(s)"
+            )
             return None, [], selected_source
         if resized_images:
             print(f"RAW editor-safe resize: {resized_images} image(s) limited to 8192px height")
         return f"{FILEBIN_BASE_URL}/{bin_id}", completed, selected_source
     finally:
+        await filebin_session.close()
         for path in temporary_directories:
             shutil.rmtree(path, ignore_errors=True)
         shutil.rmtree(request_root, ignore_errors=True)

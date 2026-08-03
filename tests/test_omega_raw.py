@@ -190,6 +190,9 @@ class ThreeSourceResolverTests(unittest.IsolatedAsyncioTestCase):
         ), patch(
             "views.raw_views.upload_to_filebin",
             new=AsyncMock(return_value=True),
+        ), patch(
+            "views.raw_views.verify_filebin",
+            new=AsyncMock(return_value=True),
         ):
             url, completed, final_source = await create_filebin_download(
                 "omega",
