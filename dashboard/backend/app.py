@@ -883,11 +883,11 @@ async def staff_directory(force=False):
 
 
 async def enrich_staff(rows):
-    profiles = {item["id"]: item for item in await staff_directory()}
+    profiles = {str(item["id"]): item for item in await staff_directory()}
     enriched = []
     for row in rows:
         item = dict(row)
-        profile = profiles.get(item.get("staff_id"), {})
+        profile = profiles.get(str(item.get("staff_id")), {})
         item["staff_name"] = profile.get("username") or f"Staff {item.get('staff_id') or 'belum dipilih'}"
         item["staff_avatar"] = profile.get("avatar")
         if item.get("staff_id") is not None:
