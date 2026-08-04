@@ -41,7 +41,7 @@ from views.role_views import ZodiacRoleView
 from views.pair_views import (
     PairApproveDynamic, PairReviseDynamic, PairTlDynamic,
     PairStatusDynamic, PairTlRevisionChapterDynamic, PairTlRevisionDynamic,
-    PairTsChapterDynamic, PairTsDynamic, refresh_project_panel,
+    PairTsChapterDynamic, PairTsDynamic, publish_ts_handoff, refresh_project_panel,
 )
 import pair_workflow as pair_service
 import database as db
@@ -208,6 +208,9 @@ class RyukomikBot(commands.Bot):
                     for project in projects:
                         if project.get("channel_id") and project.get("panel_message_id"):
                             await refresh_project_panel(target_guild, int(project["id"]))
+                        for chapter in project.get("chapters", []):
+                            if chapter.get("status") in {"ready_for_ts", "ts_revision"} and chapter.get("tl_link"):
+                                await publish_ts_handoff(target_guild, int(chapter["id"]))
                     self.pair_panels_reconciled = True
                     print(f"[OK] Synchronized {len(projects)} pair project panel(s)", flush=True)
             except Exception as exc:
