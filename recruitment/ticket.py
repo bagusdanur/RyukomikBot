@@ -39,9 +39,16 @@ POSITION_INSTRUCTIONS = {
         "banner, cover, dan watermark dari tombol **Asset TS**."
     ),
     "TL+TS": (
-        "Terjemahkan seluruh 12 halaman ke Bahasa Indonesia natural dengan gaya **aku/kamu**, lalu "
-        "kerjakan cleaning, redraw, dan typesetting lengkap. Gunakan banner, cover, dan watermark "
-        "dari tombol **Asset TS**."
+        "**Bagian TL (Translator)**\n"
+        "Terjemahkan sendiri seluruh **12 halaman** ke Bahasa Indonesia natural dengan gaya "
+        "**aku/kamu**. Periksa konteks panel, hubungan antarkalimat, nama tokoh, dan jangan "
+        "menerjemahkan kata per kata secara kaku. Pastikan tidak ada dialog, narasi, atau SFX "
+        "penting yang terlewat.\n\n"
+        "**Bagian TS (Typesetter / Editor)**\n"
+        "Gunakan hasil terjemahanmu untuk melakukan **cleaning, redraw, dan typesetting** pada "
+        "seluruh halaman. Bedakan font dialog, teriakan, pikiran, narasi, serta SFX; rapikan "
+        "penempatan teks dan pulihkan bagian gambar yang tertutup teks asli. Pasang banner, cover, "
+        "dan watermark dari tombol **Asset TS**."
     ),
 }
 

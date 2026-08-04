@@ -142,6 +142,9 @@ class RecruitmentSubmissionTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(any(field.name.startswith("Panduan TS") for field in tl.fields))
         self.assertIn("Terjemahkan", both.description)
         self.assertIn("typesetting", both.description)
+        self.assertIn("Bagian TL (Translator)", both.description)
+        self.assertIn("Bagian TS (Typesetter / Editor)", both.description)
+        self.assertIn("hasil terjemahanmu", both.description)
         self.assertTrue(any(field.name.startswith("Panduan TS") for field in both.fields))
 
     async def test_material_expiry_status(self):
