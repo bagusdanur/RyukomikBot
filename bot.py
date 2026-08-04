@@ -74,6 +74,7 @@ class RyukomikBot(commands.Bot):
         self.server_housekeeping_done = False
         self.recruitment_reconciled = False
         self.recruitment_panel_synced = False
+        self.admin_panel_synced = False
         self.payrate_panel_synced = False
         self.pair_panels_reconciled = False
     
@@ -173,6 +174,17 @@ class RyukomikBot(commands.Bot):
                     print(f"[OK] Reconciled {moved} legacy recruitment review(s)", flush=True)
             except Exception as exc:
                 print(f"[ERROR] Recruitment review reconciliation failed: {exc}", flush=True)
+
+        if not self.admin_panel_synced:
+            try:
+                target_guild = self.get_guild(GUILD_ID)
+                admin_channel = target_guild.get_channel(STAFF_LOG_CHANNEL_ID) if target_guild else None
+                if isinstance(admin_channel, discord.TextChannel):
+                    await upsert_admin_panel(admin_channel)
+                    self.admin_panel_synced = True
+                    print("[OK] Administrator panel synchronized", flush=True)
+            except Exception as exc:
+                print(f"[ERROR] Administrator panel synchronization failed: {exc}", flush=True)
 
         if not self.recruitment_panel_synced:
             try:
