@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 import database as db_module
+from raw_downloader.resolver import normalize_title
 
 
 PAIR_ACTIVE_STATES = {
@@ -162,18 +163,18 @@ async def set_workspace(project_id: int, channel_id: int, panel_message_id: int)
         await db.close()
 
 
-async def find_reusable_workspace(tl_staff_id: int, ts_staff_id: int) -> Optional[dict[str, Any]]:
-    """Return the latest completed workspace for the exact TL/TS pair."""
+async def find_reusable_workspace(manga: str) -> Optional[dict[str, Any]]:
+    """Return the permanent Discord workspace for this manga title."""
     db = await db_module.get_db()
     try:
-        row = await (await db.execute(
+        rows = await (await db.execute(
             """SELECT id,channel_id,panel_message_id,manga,completed_at
                FROM pair_projects
-               WHERE tl_staff_id=? AND ts_staff_id=? AND status='completed'
-                 AND channel_id IS NOT NULL
-               ORDER BY completed_at DESC,id DESC LIMIT 1""",
-            (tl_staff_id, ts_staff_id),
-        )).fetchone()
+               WHERE channel_id IS NOT NULL
+               ORDER BY id DESC""",
+        )).fetchall()
+        wanted = normalize_title(manga)
+        row = next((entry for entry in rows if normalize_title(entry["manga"]) == wanted), None)
         return dict(row) if row else None
     finally:
         await db.close()

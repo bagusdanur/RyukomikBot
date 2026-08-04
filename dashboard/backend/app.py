@@ -592,27 +592,33 @@ async def create_pair_workspace(project_id: int) -> tuple[str, str]:
     project = await pair_service.get_project(project_id)
     if not project:
         raise RuntimeError("Pair project tidak ditemukan setelah dibuat.")
-    reusable = await pair_service.find_reusable_workspace(
-        int(project["tl_staff_id"]), int(project["ts_staff_id"])
-    )
+    reusable = await pair_service.find_reusable_workspace(project["manga"])
     channel = None
     created_new_channel = False
     if reusable:
         channel = await discord_api("GET", f"/channels/{reusable['channel_id']}")
     if channel:
+        slug = re.sub(r"[^a-z0-9]+", "-", project["manga"].casefold()).strip("-")[:70] or "project"
         await discord_api("PATCH", f"/channels/{channel['id']}", {
-            "topic": f"Workspace Pair TL:{project['tl_staff_id']} | TS:{project['ts_staff_id']} | Proyek aktif #{project_id}",
+            "name": f"project-{slug}",
+            "topic": f"Ruang permanen {project['manga']} | Pair aktif #{project_id} | TL:{project['tl_staff_id']} | TS:{project['ts_staff_id']}",
         })
+        staff_allow = str((1 << 10) | (1 << 11) | (1 << 14) | (1 << 15) | (1 << 16))
+        for staff_id in {str(project["tl_staff_id"]), str(project["ts_staff_id"])}:
+            await discord_api("PUT", f"/channels/{channel['id']}/permissions/{staff_id}", {
+                "type": 1, "allow": staff_allow, "deny": "0",
+            })
+        if reusable.get("panel_message_id"):
+            await discord_api("DELETE", f"/channels/{channel['id']}/pins/{reusable['panel_message_id']}")
     else:
-        slug = re.sub(r"[^a-z0-9]+", "-", project["manga"].casefold()).strip("-")[:45] or "project"
-        chapter_slug = "-".join(item["chapter"] for item in project["chapters"])[:25]
+        slug = re.sub(r"[^a-z0-9]+", "-", project["manga"].casefold()).strip("-")[:70] or "project"
         staff_allow = str((1 << 10) | (1 << 11) | (1 << 14) | (1 << 15) | (1 << 16))
         admin_allow = str(int(staff_allow) | (1 << 4) | (1 << 13))
         channel = await discord_api("POST", f"/guilds/{GUILD_ID}/channels", {
-        "name": f"🔒・project-{slug}-ch-{chapter_slug}",
+        "name": f"project-{slug}",
         "type": 0,
         "parent_id": str(REKRUT_CAT_ID),
-        "topic": f"Pair Project #{project_id} | TL:{project['tl_staff_id']} | TS:{project['ts_staff_id']}",
+        "topic": f"Ruang permanen {project['manga']} | Pair aktif #{project_id} | TL:{project['tl_staff_id']} | TS:{project['ts_staff_id']}",
         "permission_overwrites": [
             {"id": str(GUILD_ID), "type": 0, "deny": str(1 << 10), "allow": "0"},
             {"id": str(project["tl_staff_id"]), "type": 1, "allow": staff_allow, "deny": "0"},

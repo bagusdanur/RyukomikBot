@@ -2,6 +2,7 @@
 from discord.ext import commands, tasks
 import asyncio
 import os
+import re
 import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -220,7 +221,18 @@ class RyukomikBot(commands.Bot):
                 target_guild = self.get_guild(GUILD_ID)
                 if target_guild is not None:
                     projects = await pair_service.list_projects()
+                    renamed_channels = set()
                     for project in projects:
+                        if project.get("channel_id") and int(project["channel_id"]) not in renamed_channels:
+                            project_channel = target_guild.get_channel(int(project["channel_id"]))
+                            slug = re.sub(r"[^a-z0-9]+", "-", project["manga"].casefold()).strip("-")[:70] or "project"
+                            expected_name = f"project-{slug}"
+                            if isinstance(project_channel, discord.TextChannel) and project_channel.name != expected_name:
+                                await project_channel.edit(
+                                    name=expected_name,
+                                    reason="Ruang pair permanen berdasarkan judul manga",
+                                )
+                            renamed_channels.add(int(project["channel_id"]))
                         if project.get("channel_id") and project.get("panel_message_id"):
                             await refresh_project_panel(target_guild, int(project["id"]))
                         for chapter in project.get("chapters", []):

@@ -146,7 +146,8 @@ def build_guide_embed(audience: str = "all") -> discord.Embed:
         embed.add_field(
             name="🤝 Tugas Pair TL–TS",
             value=(
-                "• Bot menyediakan satu channel proyek privat untuk TL, TS, Administrator, dan bot.\n"
+                "• Bot menyediakan satu channel privat permanen per judul, misalnya `project-judul-komik`.\n"
+                "• Saat RAW chapter baru terbit, tugas pair berikutnya untuk judul yang sama masuk ke channel tersebut.\n"
                 "• TL mengirim hasil per chapter lewat **Submit Hasil TL**; TS kemudian mengerjakannya.\n"
                 "• TS dapat memakai **Minta Perbaikan TL** jika terjemahan perlu dikoreksi.\n"
                 "• TS mengirim **Submit Final TS**, lalu Administrator memilih setujui atau revisi TL/TS/keduanya.\n"
