@@ -107,7 +107,7 @@ onMounted(load);
       <label><span>Sumber RAW</span><select v-model="rawSource"><option value="all">Semua sumber</option><option value="asura">Asura</option><option value="omega">Omega</option><option value="doujiva">Doujiva</option><option value="evascan">EvaScan</option><option value="thunder">Thunder</option></select></label>
       <Button label="Bandingkan" icon="pi pi-search" :loading="scanning" :disabled="title.trim().length < 2" @click="scan(false)" />
     </div>
-    <p class="scout-safety"><i class="pi pi-shield"></i> Komiku, Kiryuu, Ikiru, Sekte, Doujindesu, KomikID, dan project internal diperiksa paralel dengan batas request.</p>
+    <p class="scout-safety"><i class="pi pi-shield"></i> Pustaka Komiku, Kiryuu, Ikiru, Sekte, Doujindesu, KomikID, dan project internal diperiksa paralel dengan batas request.</p>
   </section>
 
   <section class="scout-toolbar">

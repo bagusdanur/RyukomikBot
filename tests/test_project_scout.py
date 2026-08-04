@@ -19,6 +19,14 @@ class ProjectScoutTests(unittest.TestCase):
             scout.normalize_title("lets-do-it-after-work"),
         )
 
+    def test_catalog_rows_accepts_pustaka_data(self):
+        rows = scout._catalog_rows({"success": True, "data": [{"title": "Affair Agency"}]})
+        self.assertEqual(rows, [{"title": "Affair Agency"}])
+
+    def test_catalog_rows_accepts_nested_variant(self):
+        rows = scout._catalog_rows({"data": {"items": [{"title": "Example"}]}})
+        self.assertEqual(rows[0]["title"], "Example")
+
     def test_untranslated_when_no_confident_match(self):
         raw = [self.entry("omega", "Affair Agency", 11, "raw")]
         result = scout._classify(raw, [self.entry("komiku", "Different Story", 30)])

@@ -91,6 +91,23 @@ def _chapter_list(payload: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _catalog_rows(payload: Any) -> list[dict[str, Any]]:
+    """Extract catalogue rows from the slightly different /pustaka schemas."""
+    if isinstance(payload, list):
+        return [entry for entry in payload if isinstance(entry, dict)]
+    if not isinstance(payload, dict):
+        return []
+    for key in ("data", "results", "items", "manga"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return [entry for entry in value if isinstance(entry, dict)]
+        if isinstance(value, dict):
+            rows = _catalog_rows(value)
+            if rows:
+                return rows
+    return []
+
+
 def _latest_chapter(item: dict[str, Any], detail: Optional[dict[str, Any]] = None) -> Optional[float]:
     chapters = _chapter_list(detail or {})
     numbers = [
@@ -181,13 +198,34 @@ async def _search_indonesian(query: str) -> list[dict[str, Any]]:
     timeout = aiohttp.ClientTimeout(total=15)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         async def search(source: str) -> list[dict[str, Any]]:
+            # /pustaka is the canonical Indonesian catalogue.  Only fetch its
+            # first (freshest) page here; some catalogues have hundreds of pages.
             async with semaphore:
-                payload = await _request_json(session, f"{API_BASE}/{source}/search?q={quote(query, safe='')}")
-            rows = payload.get("data") if isinstance(payload.get("data"), list) else []
+                payload = await _request_json(session, f"{API_BASE}/{source}/pustaka?page=1")
+            rows = _catalog_rows(payload)
             ranked = sorted(
                 (( _title_score(query, str(row.get("title") or ""), _aliases(row)), row) for row in rows if isinstance(row, dict)),
                 key=lambda pair: pair[0], reverse=True,
             )
+
+            # A direct lookup prevents older catalogue entries from being
+            # missed without downloading every /pustaka page on every scan.
+            if not ranked or ranked[0][0] < 90:
+                async with semaphore:
+                    lookup = await _request_json(
+                        session, f"{API_BASE}/{source}/search?q={quote(query, safe='')}"
+                    )
+                lookup_rows = _catalog_rows(lookup)
+                combined = {
+                    str(row.get("id") or _slug(row) or row.get("title")): row
+                    for row in (*rows, *lookup_rows)
+                    if isinstance(row, dict)
+                }
+                ranked = sorted(
+                    ((_title_score(query, str(row.get("title") or ""), _aliases(row)), row)
+                     for row in combined.values()),
+                    key=lambda pair: pair[0], reverse=True,
+                )
             output = []
             for score, item in ranked[:3]:
                 detail = {}
