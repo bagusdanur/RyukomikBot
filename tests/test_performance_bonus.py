@@ -56,7 +56,7 @@ class PerformanceBonusTests(unittest.TestCase):
         result = asyncio.run(performance_bonus.list_bonuses("2026-07"))[0]
         self.assertEqual(result["status"], "pending")
         self.assertEqual(result["total_score"], 100)
-        self.assertEqual(result["proposed_amount"], 4500)
+        self.assertEqual(result["proposed_amount"], 2400)
 
     def test_no_deadline_redistributes_speed_weight(self):
         for chapter in ("1", "2", "3"):
@@ -93,7 +93,7 @@ class PerformanceBonusTests(unittest.TestCase):
         asyncio.run(performance_bonus.review_bonus(bonus["id"], "approve", 999))
         method = asyncio.run(payment_service.create_method(100, "bank", "BCA", "Staff", "1234567890"))
         payout = asyncio.run(payment_service.create_payout(100, method))
-        self.assertEqual(payout["total_amount"], 34500)
+        self.assertEqual(payout["total_amount"], 32400)
         detail = asyncio.run(payment_service.payout_detail(payout["id"]))
         self.assertEqual(sum(1 for item in detail["items"] if item.get("role") == "BONUS"), 1)
         asyncio.run(payment_service.pay_payout(payout["id"], 999))
@@ -104,10 +104,10 @@ class PerformanceBonusTests(unittest.TestCase):
 
     def test_cap_and_rejection(self):
         for chapter in ("1", "2", "3"):
-            self.assignment(chapter=chapter, amount=100000)
+            self.assignment(chapter=chapter, amount=200000)
         asyncio.run(performance_bonus.evaluate_period("2026-07"))
         bonus = asyncio.run(performance_bonus.list_bonuses("2026-07"))[0]
-        self.assertEqual(bonus["proposed_amount"], 30000)
+        self.assertEqual(bonus["proposed_amount"], 20000)
         with self.assertRaises(ValueError):
             asyncio.run(performance_bonus.review_bonus(bonus["id"], "reject", 999, ""))
         asyncio.run(performance_bonus.review_bonus(bonus["id"], "reject", 999, "Data belum lengkap"))

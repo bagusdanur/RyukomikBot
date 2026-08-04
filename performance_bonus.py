@@ -32,12 +32,12 @@ async def setup_tables(connection=None):
                 consistency_weight INTEGER NOT NULL DEFAULT 20,
                 min_chapters INTEGER NOT NULL DEFAULT 3,
                 tier_1_score INTEGER NOT NULL DEFAULT 70,
-                tier_1_percent INTEGER NOT NULL DEFAULT 5,
+                tier_1_percent INTEGER NOT NULL DEFAULT 3,
                 tier_2_score INTEGER NOT NULL DEFAULT 80,
-                tier_2_percent INTEGER NOT NULL DEFAULT 10,
+                tier_2_percent INTEGER NOT NULL DEFAULT 5,
                 tier_3_score INTEGER NOT NULL DEFAULT 90,
-                tier_3_percent INTEGER NOT NULL DEFAULT 15,
-                max_amount INTEGER NOT NULL DEFAULT 30000,
+                tier_3_percent INTEGER NOT NULL DEFAULT 8,
+                max_amount INTEGER NOT NULL DEFAULT 20000,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_by TEXT
             );
@@ -91,6 +91,13 @@ async def setup_tables(connection=None):
             CREATE INDEX IF NOT EXISTS idx_invoice_bonus_invoice
                 ON dashboard_invoice_bonus_items(invoice_id);
         """)
+        # One-time safe rebalance: only replace the original untouched defaults.
+        # Any configuration already customized by an administrator is preserved.
+        await connection.execute("""UPDATE performance_bonus_settings
+            SET tier_1_percent=3,tier_2_percent=5,tier_3_percent=8,max_amount=20000,
+                updated_at=CURRENT_TIMESTAMP
+            WHERE id=1 AND tier_1_percent=5 AND tier_2_percent=10
+              AND tier_3_percent=15 AND max_amount=30000""")
         if own:
             await connection.commit()
     finally:

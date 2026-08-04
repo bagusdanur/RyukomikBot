@@ -675,8 +675,8 @@ const demoApi = {
   performanceBonuses: async () => [] as PerformanceBonus[],
   performanceBonusSettings: async (): Promise<PerformanceBonusSettings> => ({
     quality_weight: 50, speed_weight: 30, consistency_weight: 20, min_chapters: 3,
-    tier_1_score: 70, tier_1_percent: 5, tier_2_score: 80, tier_2_percent: 10,
-    tier_3_score: 90, tier_3_percent: 15, max_amount: 30000,
+    tier_1_score: 70, tier_1_percent: 3, tier_2_score: 80, tier_2_percent: 5,
+    tier_3_score: 90, tier_3_percent: 8, max_amount: 20000,
   }),
   runPerformanceBonuses: async (period: string) => ({ count: 0, period }),
   updatePerformanceBonusSettings: async (payload: PerformanceBonusSettings) => payload,
