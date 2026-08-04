@@ -127,6 +127,17 @@ class AdminPanelView(discord.ui.View):
     async def guide_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(embed=build_guide_embed("admin"), ephemeral=False)
 
+    @discord.ui.button(label="Project Scout", style=discord.ButtonStyle.primary, custom_id="admin_project_scout", row=2)
+    async def project_scout_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        from config import DASHBOARD_URL
+        from views.scout_views import ProjectScoutModal
+        await interaction.response.send_modal(ProjectScoutModal(DASHBOARD_URL))
+
+    @discord.ui.button(label="Cari & Download RAW", style=discord.ButtonStyle.success, custom_id="admin_raw_tools", row=2)
+    async def raw_tools_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        from views.raw_views import RawSearchModal
+        await interaction.response.send_modal(RawSearchModal())
+
 
 async def upsert_admin_panel(channel: discord.TextChannel):
     embed = build_admin_panel_embed()

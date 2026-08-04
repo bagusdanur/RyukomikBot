@@ -8,7 +8,7 @@ import time
 
 import discord
 
-from helpers.utils import is_staff
+from helpers.utils import is_admin, is_staff
 from chapter_utils import chapters_from_assignment, normalize_chapter
 from raw_downloader import get_downloader
 from raw_downloader.resolver import (
@@ -199,9 +199,14 @@ async def create_filebin_download(source, manga_id, chapter_ids, fallbacks=None)
 class RawSearchModal(discord.ui.Modal, title="Cari dan Download RAW"):
     query = discord.ui.TextInput(label="Judul Komik", placeholder="Contoh: Solo Leveling", min_length=2, max_length=100)
 
+    def __init__(self, initial_query: str = ""):
+        super().__init__()
+        if initial_query:
+            self.query.default = initial_query[:100]
+
     async def on_submit(self, interaction):
-        if not is_staff(interaction.user):
-            return await interaction.response.send_message("Hanya staff yang dapat download RAW.")
+        if not (is_staff(interaction.user) or is_admin(interaction.user)):
+            return await interaction.response.send_message("Hanya staff atau administrator yang dapat download RAW.")
         await interaction.response.defer()
         searches = await asyncio.gather(
             *(get_downloader(source).search_manga(self.query.value) for source in SOURCE_ORDER),

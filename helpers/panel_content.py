@@ -43,6 +43,14 @@ def build_admin_panel_embed() -> discord.Embed:
         ),
         inline=False,
     )
+    embed.add_field(
+        name="🔎 Project Scout & RAW",
+        value=(
+            "Cari kandidat project yang belum tersedia di Indonesia, lalu lanjutkan ke "
+            "pencarian chapter dan download RAW tanpa mengetik ulang judul."
+        ),
+        inline=False,
+    )
     embed.set_footer(text="Ryukomik Staff Management • Administrator Panel")
     return embed
 

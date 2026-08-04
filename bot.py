@@ -7,7 +7,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Literal
 
-from config import TOKEN, GUILD_ID, STAFF_TASKS_CHANNEL_ID, STAFF_LOG_CHANNEL_ID, ROLE_STAFF_ID, ROLE_ADMIN_ID
+from config import TOKEN, GUILD_ID, STAFF_TASKS_CHANNEL_ID, STAFF_LOG_CHANNEL_ID, ROLE_STAFF_ID, ROLE_ADMIN_ID, DASHBOARD_URL
 from database import get_assignments_by_status, setup_database
 from panels.admin_panel import AdminPanelView, upsert_admin_panel
 from panels.staff_panel import StaffPanelView, upsert_staff_panel
@@ -17,6 +17,7 @@ from views.ticket_views import (
 )
 from views.select_views import ReviewSelectView, SubmitSelectView, ConfirmPayView
 from views.raw_views import RawSearchView, create_filebin_download
+from views.scout_views import ScoutResultView
 from modals.assign_modal import AssignModal
 from modals.revisi_modal import RevisiModal
 from modals.rekap_modal import RekapModal
@@ -499,8 +500,11 @@ async def menu_command(interaction: discord.Interaction):
     # acknowledgement window, so acknowledge before doing any I/O.
     await interaction.response.defer(ephemeral=False)
 
-    if is_admin(interaction.user) and interaction.channel_id == STAFF_LOG_CHANNEL_ID:
-        old_panel, _ = await upsert_admin_panel(interaction.channel)
+    if is_admin(interaction.user):
+        admin_channel = interaction.guild.get_channel(STAFF_LOG_CHANNEL_ID)
+        if not isinstance(admin_channel, discord.TextChannel):
+            return await interaction.followup.send("Channel staff-mod tidak ditemukan.", ephemeral=False)
+        old_panel, _ = await upsert_admin_panel(admin_channel)
         try:
             await old_panel.delete()
         except (discord.Forbidden, discord.HTTPException):
@@ -508,8 +512,10 @@ async def menu_command(interaction: discord.Interaction):
                 "Panel tidak dapat dipindahkan. Pastikan bot memiliki izin **Manage Messages**; panel lama tetap tersedia melalui pesan pin.",
                 ephemeral=False,
             )
-        await interaction.followup.send("Panel administrator dipindahkan ke bawah.", ephemeral=False)
-        await upsert_admin_panel(interaction.channel)
+        new_panel, _ = await upsert_admin_panel(admin_channel)
+        await interaction.followup.send(
+            f"Panel administrator dipindahkan ke bawah: {new_panel.jump_url}", ephemeral=False
+        )
         return
 
     if not isinstance(interaction.user, discord.Member) or not is_staff(interaction.user):
@@ -681,12 +687,11 @@ async def scout_project_command(
         inline=False,
     )
     embed.set_footer(text="Rekomendasi harus dikonfirmasi Administrator sebelum project diambil.")
-    view = discord.ui.View()
-    view.add_item(discord.ui.Button(
-        label="Buka Project Scout", style=discord.ButtonStyle.link,
-        url=f"{DASHBOARD_URL}/?page=scout",
-    ))
-    await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+    await interaction.followup.send(
+        embed=embed,
+        view=ScoutResultView(result["canonical_title"], DASHBOARD_URL),
+        ephemeral=True,
+    )
 
 
 @bot.tree.command(name="raw-search", description="Cari komik RAW dari semua sumber")
