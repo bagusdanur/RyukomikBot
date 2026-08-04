@@ -38,6 +38,7 @@ from config import (
 )
 import database as staff_db
 import payment_service as payout_service
+import performance_bonus as bonus_service
 import operations
 import pair_workflow as pair_service
 import project_scout as scout_service
@@ -293,6 +294,7 @@ async def setup_dashboard_tables():
 async def lifespan(_app: FastAPI):
     await setup_database()
     await setup_dashboard_tables()
+    await bonus_service.setup_tables()
     await payout_service.setup_payment_tables()
     yield
 
@@ -501,6 +503,28 @@ class PayoutRejectRequest(BaseModel):
 class PayoutPayConfirmRequest(BaseModel):
     amount: int = Field(gt=0)
     destination_last4: str = Field(pattern=r"^[0-9A-Za-z]{4}$")
+
+
+class BonusSettingsUpdate(BaseModel):
+    quality_weight: int = Field(ge=0, le=100)
+    speed_weight: int = Field(ge=0, le=100)
+    consistency_weight: int = Field(ge=0, le=100)
+    min_chapters: int = Field(ge=1, le=100)
+    tier_1_score: int = Field(ge=0, le=100)
+    tier_1_percent: int = Field(ge=0, le=100)
+    tier_2_score: int = Field(ge=0, le=100)
+    tier_2_percent: int = Field(ge=0, le=100)
+    tier_3_score: int = Field(ge=0, le=100)
+    tier_3_percent: int = Field(ge=0, le=100)
+    max_amount: int = Field(ge=0, le=10_000_000)
+
+
+class BonusRunRequest(BaseModel):
+    period: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}$")
+
+
+class BonusRejectRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
 
 
 class OperationAction(BaseModel):
@@ -2512,6 +2536,7 @@ async def invoice_detail(invoice_id: int, _user=Depends(admin_user)):
                    chapter_count,rate_per_chapter
             FROM dashboard_invoice_items WHERE invoice_id=? ORDER BY assignment_id
         """, (invoice_id,))).fetchall()
+        bonus_items = await bonus_service.invoice_bonus_items(connection, invoice_id)
         if not items:
             status_clause = "paid_period=?" if invoice["status"] == "paid" else "status='approved' AND approved_at LIKE ?"
             items = await (await connection.execute(f"""
@@ -2520,7 +2545,12 @@ async def invoice_detail(invoice_id: int, _user=Depends(admin_user)):
                 FROM assignments WHERE staff_id=? AND {status_clause} ORDER BY id
             """, (invoice["staff_id"], invoice["period"] if invoice["status"] == "paid" else f"{invoice['period']}%"))).fetchall()
         result = (await enrich_staff([invoice]))[0]
-        result["items"] = [dict(item) for item in items]
+        result["items"] = [dict(item) for item in items] + [{
+            "assignment_id": None, "item_type": "performance_bonus", "manga": "Bonus Performa",
+            "chapter": item["period"], "role": "BONUS", "amount": item["amount"],
+            "chapter_count": 0, "rate_per_chapter": item["amount"], "assigned_at": None,
+            "approved_at": None, "score": item["total_score"], "percentage": item["percentage"],
+        } for item in bonus_items]
         dates = [item["assigned_at"] for item in items if item["assigned_at"]]
         approved = [item["approved_at"] for item in items if item["approved_at"]]
         result["work_started_at"] = min(dates) if dates else None
@@ -2541,7 +2571,10 @@ async def create_invoice(payload: InvoiceCreate, user=Depends(admin_user)):
               AND NOT EXISTS (SELECT 1 FROM dashboard_assignment_billing b WHERE b.assignment_id=a.id)
             ORDER BY id
         """, (payload.staff_id, f"{payload.period}%"))).fetchall()
-        if not items:
+        bonus_rows = await (await connection.execute("""SELECT id FROM performance_bonuses
+            WHERE staff_id=? AND status='approved' AND invoice_id IS NULL AND proposed_amount>0""",
+            (str(payload.staff_id),))).fetchall()
+        if not items and not bonus_rows:
             raise HTTPException(status_code=422, detail="Tidak ada tugas approved yang belum dibayar pada periode ini.")
         chapter_count = sum(item["chapter_count"] or 1 for item in items)
         total_amount = sum(item["final_rate"] for item in items)
@@ -2566,6 +2599,10 @@ async def create_invoice(payload: InvoiceCreate, user=Depends(admin_user)):
                 "INSERT INTO dashboard_assignment_billing(assignment_id,invoice_id) VALUES(?,?)",
                 [(item["id"], invoice_id) for item in items],
             )
+            bonus_total = await bonus_service.attach_approved_to_invoice(connection, invoice_id, payload.staff_id)
+            if bonus_total:
+                total_amount += bonus_total
+                await connection.execute("UPDATE dashboard_invoices SET total_amount=? WHERE id=?", (total_amount, invoice_id))
             await connection.commit()
         except aiosqlite.IntegrityError:
             await connection.rollback()
@@ -2579,7 +2616,10 @@ async def create_invoice(payload: InvoiceCreate, user=Depends(admin_user)):
 async def _replace_invoice_items(connection, invoice, items, actor_id: int):
     if invoice["status"] != "issued":
         raise HTTPException(status_code=409, detail="Hanya invoice berstatus issued yang dapat direvisi.")
-    if not items:
+    bonus_total = int((await (await connection.execute(
+        "SELECT COALESCE(SUM(amount),0) total FROM dashboard_invoice_bonus_items WHERE invoice_id=?",
+        (invoice["id"],))).fetchone())["total"])
+    if not items and not bonus_total:
         raise HTTPException(status_code=422, detail="Tidak ada tugas approved yang dapat dimasukkan ke invoice.")
     old_ids = [row["assignment_id"] for row in await (await connection.execute(
         "SELECT assignment_id FROM dashboard_invoice_items WHERE invoice_id=?", (invoice["id"],)
@@ -2598,7 +2638,7 @@ async def _replace_invoice_items(connection, invoice, items, actor_id: int):
         raise HTTPException(status_code=409, detail="Salah satu tugas sudah ditagihkan pada invoice lain.")
     await connection.execute("""UPDATE dashboard_invoices SET chapter_count=?,total_amount=?,
         revised_at=CURRENT_TIMESTAMP,revised_by=? WHERE id=?""",
-        (sum(item["chapter_count"] or 1 for item in items), sum(item["final_rate"] for item in items), actor_id, invoice["id"]))
+        (sum(item["chapter_count"] or 1 for item in items), sum(item["final_rate"] for item in items) + bonus_total, actor_id, invoice["id"]))
     return old_ids
 
 
@@ -2700,6 +2740,7 @@ async def delete_invoice(invoice_id: int, user=Depends(admin_user)):
         if invoice["status"] == "void":
             raise HTTPException(status_code=409, detail="Invoice sudah dibatalkan.")
         await connection.execute("DELETE FROM dashboard_assignment_billing WHERE invoice_id=?", (invoice_id,))
+        await bonus_service.release_invoice(connection, invoice_id)
         await connection.execute("UPDATE dashboard_invoices SET status='void',voided_at=CURRENT_TIMESTAMP,voided_by=? WHERE id=?", (user["id"], invoice_id))
         await connection.commit()
     finally:
@@ -2820,6 +2861,96 @@ async def submission_download(submission_id: int, user=Depends(current_user)):
         "Bucket": R2_BUCKET_NAME, "Key": row["object_key"], "ResponseContentDisposition": f'attachment; filename="{row["original_name"]}"',
     }, ExpiresIn=900)
     return {"download_url": url, "expires_in": 900}
+
+
+async def send_bonus_ticket_notice(bonus: dict) -> bool:
+    if DEV_BYPASS:
+        return True
+    connection = await dashboard_db()
+    try:
+        row = await (await connection.execute("""SELECT ticket_channel_id FROM assignments
+            WHERE CAST(staff_id AS TEXT)=? AND ticket_channel_id IS NOT NULL
+            ORDER BY id DESC LIMIT 1""", (str(bonus["staff_id"]),))).fetchone()
+    finally:
+        await connection.close()
+    if not row or not row["ticket_channel_id"]:
+        return False
+    payload = {
+        "content": f"<@{bonus['staff_id']}>",
+        "allowed_mentions": {"users": [str(bonus["staff_id"])]},
+        "embeds": [{
+            "title": "Bonus Performa Disetujui",
+            "description": "Terima kasih atas kontribusi dan konsistensi kamu bulan ini.",
+            "color": 3196747,
+            "fields": [
+                {"name": "Periode", "value": bonus["period"], "inline": True},
+                {"name": "Skor", "value": f"{bonus['total_score']:.1f}/100", "inline": True},
+                {"name": "Pencapaian", "value": bonus.get("tier") or "-", "inline": True},
+                {"name": "Bonus", "value": f"Rp {int(bonus['proposed_amount']):,.0f}".replace(",", "."), "inline": True},
+                {"name": "Pembayaran", "value": "Masuk ke invoice gajian berikutnya.", "inline": False},
+            ],
+            "footer": {"text": "Rincian performa ini bersifat privat."},
+        }],
+    }
+    return bool(await discord_api("POST", f"/channels/{row['ticket_channel_id']}/messages", payload))
+
+
+@app.get("/api/performance-bonuses/settings")
+async def performance_bonus_settings(_user=Depends(admin_user)):
+    return await bonus_service.get_settings()
+
+
+@app.put("/api/performance-bonuses/settings")
+async def update_performance_bonus_settings(payload: BonusSettingsUpdate, user=Depends(admin_user)):
+    before = await bonus_service.get_settings()
+    try:
+        result = await bonus_service.update_settings(payload.model_dump(), user["id"])
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    await audit(user["id"], "performance_bonus.settings", "performance_bonus_settings", "1", before, result)
+    return result
+
+
+@app.get("/api/performance-bonuses")
+async def performance_bonus_list(
+    period: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
+    status: str | None = Query(default=None), _user=Depends(admin_user),
+):
+    return await enrich_staff(await bonus_service.list_bonuses(period, status))
+
+
+@app.post("/api/performance-bonuses/run")
+async def run_performance_bonus(payload: BonusRunRequest, user=Depends(admin_user)):
+    try:
+        rows = await bonus_service.evaluate_period(payload.period)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Periode tidak valid.") from exc
+    await audit(user["id"], "performance_bonus.evaluate", "performance_bonus", payload.period or bonus_service.previous_period(),
+                None, {"count": len(rows)})
+    return {"count": len(rows), "period": payload.period or bonus_service.previous_period()}
+
+
+@app.post("/api/performance-bonuses/{bonus_id}/approve")
+async def approve_performance_bonus(bonus_id: int, user=Depends(admin_user)):
+    try:
+        result = await bonus_service.review_bonus(bonus_id, "approve", user["id"])
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    notified = await send_bonus_ticket_notice(result)
+    await audit(user["id"], "performance_bonus.approve", "performance_bonus", bonus_id,
+                {"status": "pending"}, {"status": "approved", "amount": result["proposed_amount"], "notified": notified})
+    return {**result, "notified": notified}
+
+
+@app.post("/api/performance-bonuses/{bonus_id}/reject")
+async def reject_performance_bonus(bonus_id: int, payload: BonusRejectRequest, user=Depends(admin_user)):
+    try:
+        result = await bonus_service.review_bonus(bonus_id, "reject", user["id"], payload.reason)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await audit(user["id"], "performance_bonus.reject", "performance_bonus", bonus_id,
+                {"status": "pending"}, {"status": "rejected", "reason": payload.reason})
+    return result
 
 
 @app.get("/api/audit")

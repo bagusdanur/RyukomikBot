@@ -33,6 +33,7 @@ from helpers.utils import find_or_create_staff_ticket, is_admin, is_staff
 from helpers.panel_content import build_admin_panel_embed, build_guide_embed, build_staff_panel_embed
 from helpers.payrate_content import broadcast_payrate_update, upsert_payrate_panel
 import payment_service as payments
+import performance_bonus as performance_bonuses
 import operations
 from project_sync import setup_project_sync, sync_project_events
 from views.payment_views import (
@@ -294,6 +295,8 @@ bot = RyukomikBot()
 @tasks.loop(hours=1)
 async def scheduled_payout_loop():
     """Create idempotent 4/19 payout batches and notify private/admin channels."""
+    # Safe to run hourly: the unique staff/period key makes monthly evaluation idempotent.
+    await performance_bonuses.evaluate_period(performance_bonuses.previous_period())
     created = await payments.create_due_scheduled_payouts()
     guild = bot.get_guild(GUILD_ID)
     if not guild:

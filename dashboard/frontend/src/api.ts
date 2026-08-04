@@ -218,6 +218,23 @@ export type Paged<T> = {
   total: number;
   total_pages: number;
 };
+export type PerformanceBonus = {
+  id: number; staff_id: string; staff_name?: string; staff_avatar?: string | null;
+  period: string; approved_chapters: number; eligible_earnings: number;
+  revision_chapters: number; deadline_chapters: number; on_time_chapters: number;
+  overdue_chapters: number; quality_score: number; speed_score: number | null;
+  consistency_score: number; total_score: number; tier: string | null;
+  percentage: number; proposed_amount: number;
+  status: "ineligible" | "pending" | "approved" | "rejected" | "invoiced" | "paid";
+  rejection_reason?: string | null;
+  metrics: { no_deadline_redistribution?: boolean; assignments?: Array<Record<string, unknown>> };
+};
+export type PerformanceBonusSettings = {
+  quality_weight: number; speed_weight: number; consistency_weight: number;
+  min_chapters: number; tier_1_score: number; tier_1_percent: number;
+  tier_2_score: number; tier_2_percent: number; tier_3_score: number;
+  tier_3_percent: number; max_amount: number;
+};
 
 let csrfToken = "";
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -365,6 +382,18 @@ const liveApi = {
     }),
   rejectPayout: (id: number, reason: string) =>
     request(`/api/payouts/${id}/reject`, { method: "POST", body: JSON.stringify({ reason }) }),
+  performanceBonuses: (period = "", status = "") =>
+    request<PerformanceBonus[]>(`/api/performance-bonuses?period=${encodeURIComponent(period)}&status=${encodeURIComponent(status)}`),
+  performanceBonusSettings: () => request<PerformanceBonusSettings>("/api/performance-bonuses/settings"),
+  runPerformanceBonuses: (period: string) => request<{ count: number; period: string }>("/api/performance-bonuses/run", {
+    method: "POST", body: JSON.stringify({ period }),
+  }),
+  updatePerformanceBonusSettings: (payload: PerformanceBonusSettings) =>
+    request<PerformanceBonusSettings>("/api/performance-bonuses/settings", { method: "PUT", body: JSON.stringify(payload) }),
+  approvePerformanceBonus: (id: number) => request(`/api/performance-bonuses/${id}/approve`, { method: "POST" }),
+  rejectPerformanceBonus: (id: number, reason: string) => request(`/api/performance-bonuses/${id}/reject`, {
+    method: "POST", body: JSON.stringify({ reason }),
+  }),
   submissions: (assignmentId?: number) =>
     request<Submission[]>(
       `/api/submissions${assignmentId ? `?assignment_id=${assignmentId}` : ""}`,
@@ -643,6 +672,16 @@ const demoApi = {
   resendPayoutInvoice: async () => ({ ok: true }),
   payPayout: async () => ({ ok: true }),
   rejectPayout: async () => ({ ok: true }),
+  performanceBonuses: async () => [] as PerformanceBonus[],
+  performanceBonusSettings: async (): Promise<PerformanceBonusSettings> => ({
+    quality_weight: 50, speed_weight: 30, consistency_weight: 20, min_chapters: 3,
+    tier_1_score: 70, tier_1_percent: 5, tier_2_score: 80, tier_2_percent: 10,
+    tier_3_score: 90, tier_3_percent: 15, max_amount: 30000,
+  }),
+  runPerformanceBonuses: async (period: string) => ({ count: 0, period }),
+  updatePerformanceBonusSettings: async (payload: PerformanceBonusSettings) => payload,
+  approvePerformanceBonus: async () => ({ ok: true }),
+  rejectPerformanceBonus: async () => ({ ok: true }),
   submissions: async () => [],
   downloadSubmission: async () => ({ download_url: "#" }),
   audit: async () => [

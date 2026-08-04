@@ -15,6 +15,7 @@ except ImportError:
 from cryptography.fernet import Fernet, InvalidToken
 
 from database import DB_PATH
+import performance_bonus as bonus_service
 
 R2_ACCOUNT_ID = os.getenv("R2_ACCOUNT_ID", "")
 R2_ENDPOINT = os.getenv("R2_ENDPOINT", f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com" if R2_ACCOUNT_ID else "")
@@ -145,6 +146,7 @@ async def setup_payment_tables():
         ):
             if name not in payout_columns:
                 await connection.execute(f"ALTER TABLE payout_requests ADD COLUMN {name} {definition}")
+        await bonus_service.setup_tables(connection)
         await connection.commit()
     finally:
         await connection.close()
@@ -377,14 +379,18 @@ async def create_payout(staff_id, method_id=None, payout_type="instant", cutoff_
             params.extend([str(cutoff_start), str(cutoff_end)])
         items = await (await connection.execute(f"""SELECT a.* FROM assignments a
             WHERE {' AND '.join(clauses)} ORDER BY a.id""", params)).fetchall()
-        if not items:
+        bonus_rows = await (await connection.execute("""SELECT * FROM performance_bonuses
+            WHERE staff_id=? AND status='approved' AND invoice_id IS NULL AND proposed_amount>0""",
+            (str(staff_id),))).fetchall()
+        if not items and not bonus_rows:
             raise ValueError("Tidak ada saldo approved yang tersedia untuk dicairkan.")
         snapshot = _method_snapshot(method)
         payout_status = "issued" if method else "awaiting_method"
         period = (cutoff_end or datetime.now(ZoneInfo("Asia/Jakarta")).date()).strftime("%Y-%m")
         number = f"RYU-{period.replace('-', '')}-{staff_id}-{secrets.token_hex(2).upper()}"
         chapter_count = sum(item["chapter_count"] or 1 for item in items)
-        total = sum(item["final_rate"] for item in items)
+        assignment_total = sum(item["final_rate"] for item in items)
+        total = assignment_total + sum(int(item["proposed_amount"]) for item in bonus_rows)
         invoice = await connection.execute("""INSERT INTO dashboard_invoices
             (invoice_number,staff_id,period,chapter_count,total_amount,status,issued_by,invoice_type)
             VALUES(?,?,?,?,?,'issued',?,?)""",
@@ -401,6 +407,7 @@ async def create_payout(staff_id, method_id=None, payout_type="instant", cutoff_
             "INSERT INTO dashboard_assignment_billing(assignment_id,invoice_id) VALUES(?,?)",
             [(item["id"], invoice_id) for item in items],
         )
+        await bonus_service.attach_approved_to_invoice(connection, invoice_id, staff_id)
         cursor = await connection.execute("""INSERT INTO payout_requests
             (staff_id,payout_type,cycle_key,cutoff_start,cutoff_end,invoice_id,payment_method_id,
              method_snapshot_encrypted,chapter_count,total_amount,status)
@@ -434,6 +441,12 @@ async def ensure_payout_for_invoice(invoice_id):
         )).fetchone()
         if not invoice:
             raise ValueError("Invoice tidak ditemukan atau sudah diproses.")
+        await connection.execute("BEGIN IMMEDIATE")
+        bonus_total = await bonus_service.attach_approved_to_invoice(connection, invoice_id, invoice["staff_id"])
+        if bonus_total:
+            await connection.execute("UPDATE dashboard_invoices SET total_amount=total_amount+? WHERE id=?",
+                                     (bonus_total, invoice_id))
+            invoice = await (await connection.execute("SELECT * FROM dashboard_invoices WHERE id=?", (invoice_id,))).fetchone()
         method = await (await connection.execute("""SELECT * FROM staff_payment_methods
             WHERE staff_id=? AND is_active=1 AND is_default=1 ORDER BY id LIMIT 1""",
             (invoice["staff_id"],))).fetchone()
@@ -504,11 +517,15 @@ async def _wrap_existing_invoice(staff_id, method, cycle_key, start, end):
                 "INSERT INTO dashboard_assignment_billing(assignment_id,invoice_id) VALUES(?,?)",
                 [(item["id"], invoice["id"]) for item in additions],
             )
-        totals = await (await connection.execute("""SELECT SUM(chapter_count) chapters,SUM(amount) total
+        await bonus_service.attach_approved_to_invoice(connection, invoice["id"], staff_id)
+        totals = await (await connection.execute("""SELECT COALESCE(SUM(chapter_count),0) chapters,COALESCE(SUM(amount),0) total
             FROM dashboard_invoice_items WHERE invoice_id=?""", (invoice["id"],))).fetchone()
+        bonus_total = int((await (await connection.execute(
+            "SELECT COALESCE(SUM(amount),0) total FROM dashboard_invoice_bonus_items WHERE invoice_id=?",
+            (invoice["id"],))).fetchone())["total"])
         await connection.execute(
             "UPDATE dashboard_invoices SET chapter_count=?,total_amount=?,invoice_type='scheduled' WHERE id=?",
-            (totals["chapters"], totals["total"], invoice["id"]))
+            (totals["chapters"], totals["total"] + bonus_total, invoice["id"]))
         snapshot = _method_snapshot(method)
         status = "issued" if method else "awaiting_method"
         cursor = await connection.execute("""INSERT INTO payout_requests
@@ -516,11 +533,11 @@ async def _wrap_existing_invoice(staff_id, method, cycle_key, start, end):
              method_snapshot_encrypted,chapter_count,total_amount,status)
             VALUES(?,'scheduled',?,?,?,?,?,?,?,?,?)""", (
                 staff_id, cycle_key, str(start), str(end), invoice["id"], method["id"] if method else None,
-                encrypt_value(json.dumps(snapshot)), totals["chapters"], totals["total"], status,
+                encrypt_value(json.dumps(snapshot)), totals["chapters"], totals["total"] + bonus_total, status,
             ))
         await connection.commit()
         return {"id": cursor.lastrowid, "invoice_id": invoice["id"], "invoice_number": invoice["invoice_number"],
-                "chapter_count": totals["chapters"], "total_amount": totals["total"], "staff_id": staff_id,
+                "chapter_count": totals["chapters"], "total_amount": totals["total"] + bonus_total, "staff_id": staff_id,
                 "cycle_key": cycle_key, "status": status}
     except Exception:
         await connection.rollback()
@@ -534,9 +551,13 @@ async def create_due_scheduled_payouts(today=None):
     for cycle_key, start, end in scheduled_cycles(today):
         connection = await _db()
         try:
-            staff_rows = await (await connection.execute("""SELECT DISTINCT a.staff_id
-                FROM assignments a WHERE a.status='approved' AND date(a.approved_at) BETWEEN ? AND ?""",
-                (str(start), str(end)))).fetchall()
+            staff_rows = await (await connection.execute("""SELECT DISTINCT staff_id FROM (
+                SELECT CAST(a.staff_id AS TEXT) staff_id FROM assignments a
+                    WHERE a.status='approved' AND date(a.approved_at) BETWEEN ? AND ?
+                UNION SELECT staff_id FROM performance_bonuses
+                    WHERE status='approved' AND invoice_id IS NULL AND period<=substr(?,1,7)
+            )""",
+                (str(start), str(end), str(end)))).fetchall()
         finally:
             await connection.close()
         for row in staff_rows:
@@ -600,6 +621,7 @@ async def payout_detail(payout_id, include_sensitive=False):
             return None
         items = await (await connection.execute("""SELECT * FROM dashboard_invoice_items
             WHERE invoice_id=? ORDER BY assignment_id""", (row["invoice_id"],))).fetchall()
+        bonus_items = await bonus_service.invoice_bonus_items(connection, row["invoice_id"])
     finally:
         await connection.close()
     result = dict(row)
@@ -607,7 +629,12 @@ async def payout_detail(payout_id, include_sensitive=False):
     if not include_sensitive and snapshot.get("account_number"):
         snapshot["account_number"] = mask_account(snapshot["account_number"])
     result["method"] = snapshot
-    result["items"] = [dict(item) for item in items]
+    result["items"] = [dict(item) for item in items] + [{
+        "assignment_id": None, "item_type": "performance_bonus", "manga": "Bonus Performa",
+        "chapter": item["period"], "role": "BONUS", "amount": item["amount"],
+        "rate_per_chapter": item["amount"], "chapter_count": 0,
+        "approved_at": None, "score": item["total_score"], "percentage": item["percentage"],
+    } for item in bonus_items]
     return result
 
 
@@ -637,15 +664,17 @@ async def pay_payout(payout_id, actor_id):
         period = (await (await connection.execute(
             "SELECT period FROM dashboard_invoices WHERE id=?", (payout["invoice_id"],)
         )).fetchone())["period"]
-        await connection.execute(
-            f"UPDATE assignments SET status='paid',paid_period=? WHERE status='approved' AND id IN ({placeholders})",
-            [period, *ids],
-        )
+        if ids:
+            await connection.execute(
+                f"UPDATE assignments SET status='paid',paid_period=? WHERE status='approved' AND id IN ({placeholders})",
+                [period, *ids],
+            )
         await connection.executemany(
             """INSERT INTO assignment_events (assignment_id,event_type,actor_id,detail)
                VALUES (?,'paid',?,?)""",
             [(assignment_id, str(actor_id), f"Pembayaran periode {period}.") for assignment_id in ids],
         )
+        await bonus_service.mark_invoice_paid(connection, payout["invoice_id"])
         await connection.execute(
             "UPDATE dashboard_invoices SET status='paid',paid_at=CURRENT_TIMESTAMP WHERE id=?",
             (payout["invoice_id"],),
@@ -690,6 +719,7 @@ async def reject_payout(payout_id, actor_id, reason):
         if not payout:
             raise ValueError("Permintaan tidak ditemukan atau sudah diproses.")
         await connection.execute("DELETE FROM dashboard_assignment_billing WHERE invoice_id=?", (payout["invoice_id"],))
+        await bonus_service.release_invoice(connection, payout["invoice_id"])
         await connection.execute("""UPDATE dashboard_invoices SET status='void',voided_at=CURRENT_TIMESTAMP,
             voided_by=? WHERE id=?""", (actor_id, payout["invoice_id"]))
         await connection.execute("""UPDATE payout_requests SET status='rejected',rejection_reason=?,

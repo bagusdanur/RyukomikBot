@@ -325,14 +325,15 @@ def render_paid_invoice(detail, staff_name=None, admin_name=None):
         Paragraph("<b>JUMLAH</b>", styles["SlipRight"]),
     ]]
     for index, item in enumerate(detail.get("items") or [], 1):
+        is_bonus = item.get("item_type") == "performance_bonus" or item.get("role") == "BONUS"
         title = str(item.get("manga") or "-")
         chapter = str(item.get("chapter") or "-")
         rows.append([
             Paragraph(str(index), styles["SlipCenter"]),
-            Paragraph(f"<b>{title}</b><br/><font color='#68748A'>Chapter {chapter}</font>", styles["SlipTable"]),
-            Paragraph(str(item.get("role") or "-"), styles["SlipCenter"]),
-            Paragraph(currency(item.get("rate_per_chapter") or item.get("amount")), styles["SlipRight"]),
-            Paragraph(str(int(item.get("chapter_count") or 1)), styles["SlipCenter"]),
+            Paragraph(f"<b>{title}</b><br/><font color='#68748A'>{'Periode' if is_bonus else 'Chapter'} {chapter}</font>", styles["SlipTable"]),
+            Paragraph("BONUS" if is_bonus else str(item.get("role") or "-"), styles["SlipCenter"]),
+            Paragraph("-" if is_bonus else currency(item.get("rate_per_chapter") or item.get("amount")), styles["SlipRight"]),
+            Paragraph("-" if is_bonus else str(int(item.get("chapter_count") or 1)), styles["SlipCenter"]),
             Paragraph(f"<b>{currency(item.get('amount'))}</b>", styles["SlipRight"]),
         ])
 
