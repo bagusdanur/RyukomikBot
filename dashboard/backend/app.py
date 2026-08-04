@@ -601,7 +601,7 @@ async def create_pair_workspace(project_id: int) -> tuple[str, str]:
     if channel:
         slug = re.sub(r"[^a-z0-9]+", "-", project["manga"].casefold()).strip("-")[:70] or "project"
         await discord_api("PATCH", f"/channels/{channel['id']}", {
-            "name": f"project-{slug}",
+            "name": f"🔒・project-{slug}",
             "topic": f"Ruang permanen {project['manga']} | Pair aktif #{project_id} | TL:{project['tl_staff_id']} | TS:{project['ts_staff_id']}",
         })
         staff_allow = str((1 << 10) | (1 << 11) | (1 << 14) | (1 << 15) | (1 << 16))
@@ -609,6 +609,14 @@ async def create_pair_workspace(project_id: int) -> tuple[str, str]:
             await discord_api("PUT", f"/channels/{channel['id']}/permissions/{staff_id}", {
                 "type": 1, "allow": staff_allow, "deny": "0",
             })
+        current_staff = {str(project["tl_staff_id"]), str(project["ts_staff_id"])}
+        for overwrite in channel.get("permission_overwrites", []):
+            overwrite_id = str(overwrite.get("id") or "")
+            if int(overwrite.get("type", 0)) == 1 and overwrite_id not in current_staff:
+                await discord_api("DELETE", f"/channels/{channel['id']}/permissions/{overwrite_id}")
+        await discord_api("PUT", f"/channels/{channel['id']}/permissions/{ROLE_STAFF_ID}", {
+            "type": 0, "allow": "0", "deny": str(1 << 10),
+        })
         if reusable.get("panel_message_id"):
             await discord_api("DELETE", f"/channels/{channel['id']}/pins/{reusable['panel_message_id']}")
     else:
@@ -616,12 +624,13 @@ async def create_pair_workspace(project_id: int) -> tuple[str, str]:
         staff_allow = str((1 << 10) | (1 << 11) | (1 << 14) | (1 << 15) | (1 << 16))
         admin_allow = str(int(staff_allow) | (1 << 4) | (1 << 13))
         channel = await discord_api("POST", f"/guilds/{GUILD_ID}/channels", {
-        "name": f"project-{slug}",
+        "name": f"🔒・project-{slug}",
         "type": 0,
         "parent_id": str(REKRUT_CAT_ID),
         "topic": f"Ruang permanen {project['manga']} | Pair aktif #{project_id} | TL:{project['tl_staff_id']} | TS:{project['ts_staff_id']}",
         "permission_overwrites": [
             {"id": str(GUILD_ID), "type": 0, "deny": str(1 << 10), "allow": "0"},
+            {"id": str(ROLE_STAFF_ID), "type": 0, "deny": str(1 << 10), "allow": "0"},
             {"id": str(project["tl_staff_id"]), "type": 1, "allow": staff_allow, "deny": "0"},
             {"id": str(project["ts_staff_id"]), "type": 1, "allow": staff_allow, "deny": "0"},
             {"id": str(ROLE_ADMIN_ID), "type": 0, "allow": admin_allow, "deny": "0"},

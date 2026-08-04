@@ -227,11 +227,53 @@ class RyukomikBot(commands.Bot):
                         if project.get("channel_id") and int(project["channel_id"]) not in renamed_channels:
                             project_channel = target_guild.get_channel(int(project["channel_id"]))
                             slug = re.sub(r"[^a-z0-9]+", "-", project["manga"].casefold()).strip("-")[:70] or "project"
-                            expected_name = f"project-{slug}"
+                            expected_name = f"🔒・project-{slug}"
                             if isinstance(project_channel, discord.TextChannel) and project_channel.name != expected_name:
                                 await project_channel.edit(
                                     name=expected_name,
                                     reason="Ruang pair permanen berdasarkan judul manga",
+                                )
+                            if isinstance(project_channel, discord.TextChannel):
+                                current_members = {
+                                    int(project["tl_staff_id"]), int(project["ts_staff_id"]),
+                                    int(target_guild.me.id),
+                                }
+                                for target in list(project_channel.overwrites):
+                                    if isinstance(target, discord.Member) and target.id not in current_members:
+                                        await project_channel.set_permissions(
+                                            target, overwrite=None,
+                                            reason="Akses ruang pair hanya untuk TL/TS aktif",
+                                        )
+                                private_access = discord.PermissionOverwrite(
+                                    view_channel=True, send_messages=True, read_message_history=True,
+                                    attach_files=True, embed_links=True,
+                                )
+                                await project_channel.set_permissions(
+                                    target_guild.default_role, view_channel=False,
+                                    reason="Ruang pair privat",
+                                )
+                                staff_role = target_guild.get_role(ROLE_STAFF_ID)
+                                if staff_role:
+                                    await project_channel.set_permissions(
+                                        staff_role, view_channel=False,
+                                        reason="Staff lain tidak dapat melihat ruang pair",
+                                    )
+                                admin_role = target_guild.get_role(ROLE_ADMIN_ID)
+                                if admin_role:
+                                    await project_channel.set_permissions(
+                                        admin_role, overwrite=private_access,
+                                        reason="Administrator dapat mengelola ruang pair",
+                                    )
+                                for member_id in (int(project["tl_staff_id"]), int(project["ts_staff_id"])):
+                                    member = target_guild.get_member(member_id)
+                                    if member:
+                                        await project_channel.set_permissions(
+                                            member, overwrite=private_access,
+                                            reason="TL/TS aktif ruang pair",
+                                        )
+                                await project_channel.set_permissions(
+                                    target_guild.me, overwrite=private_access,
+                                    reason="Bot mengelola ruang pair",
                                 )
                             renamed_channels.add(int(project["channel_id"]))
                         if project.get("channel_id") and project.get("panel_message_id"):
