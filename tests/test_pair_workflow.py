@@ -6,6 +6,7 @@ import unittest
 
 import database
 import pair_workflow
+from pathlib import Path
 
 
 class PairWorkflowTests(unittest.TestCase):
@@ -77,6 +78,14 @@ class PairWorkflowTests(unittest.TestCase):
             connection.execute("SELECT COUNT(*) FROM assignments WHERE status='approved'").fetchone()[0], 0
         )
         connection.close()
+
+    def test_pair_raw_result_is_visible_in_private_project_channel(self):
+        source = (Path(__file__).parents[1] / "views" / "pair_views.py").read_text(encoding="utf-8")
+        start = source.index("async def open_project_raw")
+        end = source.index("class PairTlDynamic", start)
+        handler = source[start:end]
+        self.assertIn("defer(ephemeral=False, thinking=True)", handler)
+        self.assertNotIn("defer(ephemeral=True, thinking=True)", handler)
 
     def test_one_chapter_can_complete_without_waiting_for_rest(self):
         project = self.create_pair(["1", "2"])

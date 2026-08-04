@@ -347,7 +347,10 @@ async def open_project_raw(interaction: discord.Interaction, project_id: int):
     if interaction.user.id not in participants and not is_admin(interaction.user):
         return await interaction.response.send_message("RAW ini hanya untuk TL, TS, dan Administrator proyek.", ephemeral=True)
     allowed = [str(item["chapter"]) for item in project["chapters"]]
-    await interaction.response.defer(ephemeral=True, thinking=True)
+    # The collaboration channel is already private to TL, TS, admin, and bot.
+    # Keep RAW progress/result visible so both assigned staff can use the same
+    # resolved chapter card and Filebin link without repeating the download.
+    await interaction.response.defer(ephemeral=False, thinking=True)
 
     async def progress(message: str):
         await interaction.edit_original_response(
