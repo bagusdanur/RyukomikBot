@@ -12,10 +12,10 @@
   "categories": ["business", "productivity"],
   "icons": [
     {
-      "src": "/icons/ryukomik-staff-20260804.png",
+      "src": "/icons/ryukomik-staff-20260804.png?v=staff-2",
       "sizes": "1536x1536",
       "type": "image/png",
-      "purpose": "any"
+      "purpose": "any maskable"
     }
   ]
 }

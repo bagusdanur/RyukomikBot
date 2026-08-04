@@ -16,5 +16,5 @@ createApp(App)
   .mount('#app')
 
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
-  window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js'))
+  window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js?v=staff-shell-v5'))
 }
