@@ -45,6 +45,29 @@ POSITION_INSTRUCTIONS = {
     ),
 }
 
+TS_CLEANING_FONT_GUIDE = (
+    "**1. Cleaning & redraw**\n"
+    "Hapus teks asli sampai bersih. Pulihkan garis, pola, dan latar yang tertutup teks; jangan "
+    "meninggalkan bekas blur, kotak putih, atau tekstur yang putus.\n\n"
+    "**2. Rekomendasi font**\n"
+    "• Dialog normal: **CC Wild Words / Anime Ace**.\n"
+    "• Teriakan atau emosi kuat: **Komika Axis / BadaBoom**.\n"
+    "• Pikiran/bisikan: gunakan varian *Italic* dari font dialog.\n"
+    "• Narasi: font yang lebih rapi/tegas, konsisten pada semua kotak narasi.\n"
+    "• SFX: pilih font yang mengikuti bentuk dan energi SFX asli; jangan memakai satu font untuk semua konteks.\n"
+    "Jika font tersebut tidak tersedia, gunakan font komik sejenis yang mudah dibaca dan konsisten."
+)
+
+TS_TYPESETTING_OUTPUT_GUIDE = (
+    "**3. Typesetting**\n"
+    "Teks diratakan tengah, ukuran mengikuti luas bubble, jarak baris rapat tetapi tetap terbaca, "
+    "dan menyisakan ruang aman dari tepi. Jangan gepengkan atau tarik font. Gunakan stroke hanya "
+    "ketika teks berada di luar bubble atau latarnya ramai.\n\n"
+    "**4. Output**\n"
+    "Pertahankan resolusi dan urutan halaman asli. Simpan halaman final berurutan (`001`, `002`, dst.) "
+    "dengan kualitas tinggi, lalu unggah semuanya ke satu folder Google Drive."
+)
+
 
 def material_status(now: datetime | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
@@ -130,6 +153,8 @@ def build_test_embed(position: str) -> discord.Embed:
         "Teks mudah dibaca, rapi, dan tidak menyentuh tepi bubble.",
     ]
     if position in {"TS", "TL+TS"}:
+        embed.add_field(name="Panduan TS • Cleaning & Font", value=TS_CLEANING_FONT_GUIDE, inline=False)
+        embed.add_field(name="Panduan TS • Penempatan & Output", value=TS_TYPESETTING_OUTPUT_GUIDE, inline=False)
         checklist.extend((
             "Cleaning/redraw bersih dan font sesuai konteks.",
             "Banner, cover, dan watermark Ryukomik sudah dipasang.",
@@ -317,14 +342,19 @@ def is_recruitment_test_card(message: discord.Message) -> bool:
 
 
 async def reconcile_recruitment_test_cards(guild: discord.Guild) -> int:
-    """Replace the latest test card in active tickets and disable stale material buttons."""
+    """Refresh test cards only for applicants who have not become Staff."""
     category = guild.get_channel(REKRUT_CAT_ID)
     if not isinstance(category, discord.CategoryChannel):
         return 0
     updated = 0
     for channel in category.text_channels:
         position = get_topic_position(channel)
-        if position not in POSITIONS or not get_ticket_owner(channel):
+        owner = get_ticket_owner(channel)
+        if (
+            position not in POSITIONS
+            or not owner
+            or discord.utils.get(owner.roles, id=ROLE_STAFF_ID)
+        ):
             continue
         cards = [message async for message in channel.history(limit=100) if is_recruitment_test_card(message)]
         if cards:
@@ -769,6 +799,10 @@ class RecruitmentBot:
             position = get_topic_position(interaction.channel)
             if interaction.channel.category_id != REKRUT_CAT_ID or not owner:
                 return await interaction.response.send_message("Command ini hanya tersedia di tiket rekrutmen.", ephemeral=False)
+            if discord.utils.get(owner.roles, id=ROLE_STAFF_ID):
+                return await interaction.response.send_message(
+                    "Tes rekrutmen hanya tersedia untuk pelamar yang belum menjadi Staff.", ephemeral=False
+                )
             if interaction.user.id != owner.id and not is_admin(interaction.user):
                 return await interaction.response.send_message(
                     "Hanya pemilik tiket atau administrator yang dapat mengambil tes.", ephemeral=False

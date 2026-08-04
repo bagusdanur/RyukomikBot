@@ -134,8 +134,15 @@ class RecruitmentSubmissionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("aku/kamu", tl.description)
         self.assertIn("cleaning, redraw, dan typesetting", ts.description)
         self.assertIn("Asset TS", ts.description)
+        ts_guide = next(field.value for field in ts.fields if field.name == "Panduan TS • Cleaning & Font")
+        self.assertIn("CC Wild Words", ts_guide)
+        self.assertIn("Cleaning & redraw", ts_guide)
+        output_guide = next(field.value for field in ts.fields if field.name == "Panduan TS • Penempatan & Output")
+        self.assertIn("Pertahankan resolusi", output_guide)
+        self.assertFalse(any(field.name.startswith("Panduan TS") for field in tl.fields))
         self.assertIn("Terjemahkan", both.description)
         self.assertIn("typesetting", both.description)
+        self.assertTrue(any(field.name.startswith("Panduan TS") for field in both.fields))
 
     async def test_material_expiry_status(self):
         self.assertEqual(material_status(datetime(2026, 8, 10, 13, 0, tzinfo=timezone.utc))["status"], "expiring")
