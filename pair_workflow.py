@@ -61,6 +61,11 @@ async def setup_pair_tables() -> None:
                 FOREIGN KEY(ts_assignment_id) REFERENCES assignments(id)
             )
         """)
+        chapter_columns = {
+            row[1] for row in await (await db.execute("PRAGMA table_info(pair_chapters)")).fetchall()
+        }
+        if "ts_handoff_message_id" not in chapter_columns:
+            await db.execute("ALTER TABLE pair_chapters ADD COLUMN ts_handoff_message_id INTEGER")
         await db.execute("""
             CREATE TABLE IF NOT EXISTS pair_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -235,6 +240,18 @@ async def get_chapter(chapter_id: int) -> Optional[dict[str, Any]]:
             (chapter_id,),
         )).fetchone()
         return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def set_ts_handoff_message(chapter_id: int, message_id: Optional[int]) -> None:
+    db = await db_module.get_db()
+    try:
+        await db.execute(
+            "UPDATE pair_chapters SET ts_handoff_message_id=? WHERE id=?",
+            (message_id, chapter_id),
+        )
+        await db.commit()
     finally:
         await db.close()
 

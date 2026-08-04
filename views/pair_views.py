@@ -122,6 +122,63 @@ async def remove_final_review(guild: discord.Guild, chapter: dict) -> None:
     await pairs.set_review_message(int(chapter["id"]), None)
 
 
+def build_ts_handoff_embed(chapter: dict, *, completed: bool = False) -> discord.Embed:
+    embed = discord.Embed(
+        title=(
+            f"Hasil Final TS Dikirim • {chapter['manga']} Chapter {chapter['chapter']}"
+            if completed else f"Siap Dikerjakan TS • {chapter['manga']} Chapter {chapter['chapter']}"
+        ),
+        description=(
+            "Hasil final sudah dikirim dan sekarang menunggu review Administrator."
+            if completed else
+            f"<@{chapter['ts_staff_id']}>, hasil terjemahan TL sudah tersedia. "
+            "Silakan kerjakan typesetting, lalu kirim hasil final melalui tombol di bawah."
+        ),
+        color=discord.Color.green() if completed else discord.Color.blurple(),
+    )
+    embed.add_field(name="Translator", value=f"<@{chapter['tl_staff_id']}>", inline=True)
+    embed.add_field(name="Typesetter", value=f"<@{chapter['ts_staff_id']}>", inline=True)
+    embed.add_field(name="Chapter", value=str(chapter["chapter"]), inline=True)
+    embed.add_field(name="Hasil TL", value=f"[Buka Google Drive]({chapter['tl_link']})", inline=False)
+    if completed and chapter.get("final_link"):
+        embed.add_field(name="Hasil Final TS", value=f"[Buka Google Drive]({chapter['final_link']})", inline=False)
+    if chapter.get("notes"):
+        embed.add_field(
+            name="Catatan Terakhir" if completed else "Catatan TL",
+            value=str(chapter["notes"])[:1024], inline=False,
+        )
+    embed.set_footer(text=f"Pair Chapter #{chapter['id']} • Handoff TL ke TS")
+    return embed
+
+
+async def publish_ts_handoff(guild: discord.Guild, chapter_id: int, *, completed: bool = False) -> None:
+    chapter = await pairs.get_chapter(chapter_id)
+    if not chapter or not chapter.get("channel_id") or not chapter.get("tl_link"):
+        return
+    channel = guild.get_channel(int(chapter["channel_id"]))
+    if not isinstance(channel, discord.TextChannel):
+        return
+    message = None
+    if chapter.get("ts_handoff_message_id"):
+        try:
+            message = await channel.fetch_message(int(chapter["ts_handoff_message_id"]))
+            await message.edit(
+                content=None if completed else f"<@{chapter['ts_staff_id']}>",
+                embed=build_ts_handoff_embed(chapter, completed=completed),
+                view=None if completed else PairTsHandoffView(chapter_id),
+            )
+        except discord.HTTPException:
+            message = None
+    if message is None:
+        message = await channel.send(
+            content=None if completed else f"<@{chapter['ts_staff_id']}>",
+            embed=build_ts_handoff_embed(chapter, completed=completed),
+            view=None if completed else PairTsHandoffView(chapter_id),
+            allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
+        )
+        await pairs.set_ts_handoff_message(chapter_id, message.id)
+
+
 class PairLinkModal(discord.ui.Modal):
     link = discord.ui.TextInput(label="Link Google Drive", placeholder="https://drive.google.com/...", required=True)
     notes = discord.ui.TextInput(label="Catatan (Opsional)", style=discord.TextStyle.paragraph, required=False, max_length=1000)
@@ -145,7 +202,10 @@ class PairLinkModal(discord.ui.Modal):
         )
         if interaction.guild and chapter:
             await refresh_project_panel(interaction.guild, int(chapter["project_id"]))
-            if self.action == "final":
+            if self.action == "tl":
+                await publish_ts_handoff(interaction.guild, self.chapter_id)
+            else:
+                await publish_ts_handoff(interaction.guild, self.chapter_id, completed=True)
                 await publish_final_review(interaction.guild, self.chapter_id)
 
 
@@ -294,6 +354,44 @@ class PairTsDynamic(discord.ui.DynamicItem[discord.ui.Button], template=r"pair:t
     async def callback(self, interaction): await open_project_action(interaction, self.project_id, "final")
 
 
+class PairTsChapterDynamic(discord.ui.DynamicItem[discord.ui.Button], template=r"pair:ts-chapter:(?P<chapter_id>\d+):v2"):
+    def __init__(self, chapter_id: int):
+        self.chapter_id = chapter_id
+        super().__init__(discord.ui.Button(
+            label="Submit Hasil Final TS", style=discord.ButtonStyle.success,
+            custom_id=f"pair:ts-chapter:{chapter_id}:v2",
+        ))
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match): return cls(int(match["chapter_id"]))
+    async def callback(self, interaction: discord.Interaction):
+        chapter = await pairs.get_chapter(self.chapter_id)
+        if not chapter:
+            return await interaction.response.send_message("Chapter pair tidak ditemukan.", ephemeral=True)
+        if interaction.user.id != int(chapter["ts_staff_id"]) and not is_admin(interaction.user):
+            return await interaction.response.send_message("Tombol ini hanya untuk TS yang ditugaskan.", ephemeral=True)
+        if chapter["status"] not in {"ready_for_ts", "ts_revision"}:
+            return await interaction.response.send_message("Chapter ini tidak sedang menunggu hasil TS.", ephemeral=True)
+        await interaction.response.send_modal(PairLinkModal(self.chapter_id, "final"))
+
+
+class PairTlRevisionChapterDynamic(discord.ui.DynamicItem[discord.ui.Button], template=r"pair:tl-revision-chapter:(?P<chapter_id>\d+):v2"):
+    def __init__(self, chapter_id: int):
+        self.chapter_id = chapter_id
+        super().__init__(discord.ui.Button(
+            label="Minta Perbaikan TL", style=discord.ButtonStyle.danger,
+            custom_id=f"pair:tl-revision-chapter:{chapter_id}:v2",
+        ))
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match): return cls(int(match["chapter_id"]))
+    async def callback(self, interaction: discord.Interaction):
+        chapter = await pairs.get_chapter(self.chapter_id)
+        if not chapter:
+            return await interaction.response.send_message("Chapter pair tidak ditemukan.", ephemeral=True)
+        if interaction.user.id != int(chapter["ts_staff_id"]) and not is_admin(interaction.user):
+            return await interaction.response.send_message("Tombol ini hanya untuk TS yang ditugaskan.", ephemeral=True)
+        await interaction.response.send_modal(PairRevisionModal(self.chapter_id, "tl", False))
+
+
 class PairTlRevisionDynamic(discord.ui.DynamicItem[discord.ui.Button], template=r"pair:tl-revision:(?P<project_id>\d+):v2"):
     def __init__(self, project_id: int):
         self.project_id = project_id
@@ -390,6 +488,13 @@ class PairProjectView(discord.ui.View):
         self.add_item(PairTsDynamic(project_id))
         self.add_item(PairTlRevisionDynamic(project_id))
         self.add_item(PairStatusDynamic(project_id))
+
+
+class PairTsHandoffView(discord.ui.View):
+    def __init__(self, chapter_id: int):
+        super().__init__(timeout=None)
+        self.add_item(PairTsChapterDynamic(chapter_id))
+        self.add_item(PairTlRevisionChapterDynamic(chapter_id))
 
 
 class PairAdminReviewView(discord.ui.View):

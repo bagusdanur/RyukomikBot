@@ -115,6 +115,13 @@ class PairWorkflowTests(unittest.TestCase):
         asyncio.run(pair_workflow.set_workspace(project["id"], 12345, 67890))
         self.assertIsNone(asyncio.run(pair_workflow.find_reusable_workspace(100, 200)))
 
+    def test_ts_handoff_message_is_stored_per_chapter(self):
+        project = self.create_pair(["1"])
+        chapter_id = project["chapters"][0]["id"]
+        asyncio.run(pair_workflow.set_ts_handoff_message(chapter_id, 987654321))
+        chapter = asyncio.run(pair_workflow.get_chapter(chapter_id))
+        self.assertEqual(chapter["ts_handoff_message_id"], 987654321)
+
 
 if __name__ == "__main__":
     unittest.main()
