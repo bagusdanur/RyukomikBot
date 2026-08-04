@@ -1284,6 +1284,27 @@ onMounted(async () => {
         </div></template
       >
       <template v-if="page === 'recruitment'">
+        <section
+          v-if="recruitment.test_material"
+          class="panel recruitment-summary"
+          :class="{ 'material-warning': recruitment.test_material.status !== 'active' }"
+        >
+          <div>
+            <p class="eyebrow">BAHAN TES AKTIF</p>
+            <h3>{{ recruitment.test_material.status === 'expired' ? 'Bahan perlu diperbarui' : recruitment.test_material.status === 'expiring' ? 'Bahan segera kedaluwarsa' : 'Chapter 2 • 12 halaman' }}</h3>
+            <p>
+              Satu bahan untuk TL, TS, dan TL+TS.
+              <a :href="recruitment.test_material.url" target="_blank">Buka Filebin</a>
+              <span v-if="recruitment.test_material.hours_remaining !== null">
+                • {{ recruitment.test_material.hours_remaining > 0 ? `${Math.ceil(recruitment.test_material.hours_remaining / 24)} hari tersisa` : 'sudah kedaluwarsa' }}
+              </span>
+            </p>
+          </div>
+          <Tag
+            :value="recruitment.test_material.status === 'active' ? 'Aktif' : recruitment.test_material.status === 'expiring' ? 'Segera habis' : 'Perbarui'"
+            :severity="recruitment.test_material.status === 'active' ? 'success' : recruitment.test_material.status === 'expiring' ? 'warn' : 'danger'"
+          />
+        </section>
         <section class="panel recruitment-summary">
           <div>
             <p class="eyebrow">RECRUITMENT CONTROL</p>

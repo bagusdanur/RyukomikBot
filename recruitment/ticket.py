@@ -1,12 +1,16 @@
 import asyncio
 import re
+from datetime import datetime, timezone
 from typing import Optional
 
 import discord
 from discord.ext import commands
 
 import database as db
-from config import REKRUT_CAT_ID, ROLE_STAFF_ID, STAFF_LOG_CHANNEL_ID
+from config import (
+    REKRUT_CAT_ID, ROLE_STAFF_ID, STAFF_LOG_CHANNEL_ID,
+    RECRUITMENT_TEST_EXPIRES_AT, RECRUITMENT_TEST_URL, RECRUITMENT_TS_ASSETS_URL,
+)
 from helpers.utils import (
     build_private_ticket_name,
     build_private_ticket_overwrites,
@@ -18,30 +22,43 @@ from panels.staff_panel import upsert_staff_panel
 
 POSITIONS = ("TL", "TS", "TL+TS")
 POSITION_IDS = {"TL": "tl", "TS": "ts", "TL+TS": "tl_ts"}
-TEST_MATERIALS = {
-    "TL": "Unduh paket **Tes TL** dan instruksinya dari website Ryukomik, lalu terjemahkan sesuai petunjuk.",
-    "TS": "Unduh paket **Tes TS**, instruksi, dan referensi terjemahan dari website Ryukomik, lalu kerjakan sesuai petunjuk.",
-    "TL+TS": "Kerjakan kedua paket **Tes TL** dan **Tes TS** dari website Ryukomik sesuai instruksi masing-masing.",
-}
-RECRUITMENT_FILES_URL = "https://ryukomik.web.id/files/rekrutmen"
 TEST_LINKS = {
+    "TL": (("Download Bahan Tes", RECRUITMENT_TEST_URL, "📦"),),
+    "TS": (("Download Bahan Tes", RECRUITMENT_TEST_URL, "📦"), ("Asset TS", RECRUITMENT_TS_ASSETS_URL, "🎨")),
+    "TL+TS": (("Download Bahan Tes", RECRUITMENT_TEST_URL, "📦"), ("Asset TS", RECRUITMENT_TS_ASSETS_URL, "🎨")),
+}
+
+POSITION_INSTRUCTIONS = {
     "TL": (
-        ("Download Tes TL", f"{RECRUITMENT_FILES_URL}/TL_Test.zip", "📦"),
-        ("Instruksi TL", f"{RECRUITMENT_FILES_URL}/instruksi_tl.txt", "📄"),
+        "Terjemahkan seluruh **12 halaman** ke Bahasa Indonesia yang natural. Gunakan gaya "
+        "**aku/kamu**, susun teks berdasarkan nomor halaman dan panel, lalu simpan sebagai TXT atau DOCX."
     ),
     "TS": (
-        ("Download Tes TS", f"{RECRUITMENT_FILES_URL}/TS_Test.zip", "📦"),
-        ("Instruksi TS", f"{RECRUITMENT_FILES_URL}/instruksi_ts.txt", "📄"),
-        ("Referensi Terjemahan", f"{RECRUITMENT_FILES_URL}/terjemahan_ts.txt", "📝"),
+        "Kerjakan **cleaning, redraw, dan typesetting** seluruh 12 halaman. Teks Inggris asli boleh "
+        "diketik ulang. Bedakan font dialog normal, teriakan, pikiran, narasi, dan SFX. Gunakan "
+        "banner, cover, dan watermark dari tombol **Asset TS**."
     ),
     "TL+TS": (
-        ("Download Tes TL", f"{RECRUITMENT_FILES_URL}/TL_Test.zip", "📦"),
-        ("Instruksi TL", f"{RECRUITMENT_FILES_URL}/instruksi_tl.txt", "📄"),
-        ("Download Tes TS", f"{RECRUITMENT_FILES_URL}/TS_Test.zip", "📦"),
-        ("Instruksi TS", f"{RECRUITMENT_FILES_URL}/instruksi_ts.txt", "📄"),
-        ("Referensi TS", f"{RECRUITMENT_FILES_URL}/terjemahan_ts.txt", "📝"),
+        "Terjemahkan seluruh 12 halaman ke Bahasa Indonesia natural dengan gaya **aku/kamu**, lalu "
+        "kerjakan cleaning, redraw, dan typesetting lengkap. Gunakan banner, cover, dan watermark "
+        "dari tombol **Asset TS**."
     ),
 }
+
+
+def material_status(now: datetime | None = None) -> dict:
+    now = now or datetime.now(timezone.utc)
+    try:
+        expires = datetime.fromisoformat(RECRUITMENT_TEST_EXPIRES_AT.replace("Z", "+00:00"))
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return {"status": "unknown", "expires_at": RECRUITMENT_TEST_EXPIRES_AT, "hours_remaining": None}
+    hours = (expires.astimezone(timezone.utc) - now.astimezone(timezone.utc)).total_seconds() / 3600
+    return {
+        "status": "expired" if hours <= 0 else "expiring" if hours <= 24 else "active",
+        "expires_at": expires.isoformat(), "hours_remaining": round(hours, 1),
+    }
 
 
 def build_review_embed(submission: dict, applicant: discord.Member | None = None) -> discord.Embed:
@@ -92,22 +109,41 @@ async def publish_recruitment_review(
 
 
 def build_test_embed(position: str) -> discord.Embed:
+    status = material_status()
     embed = discord.Embed(
-        title=f"Bahan Tes {position}",
-        description=TEST_MATERIALS[position],
-        color=discord.Color.blue(),
+        title=f"Tes Rekrutmen {position} | Chapter 2",
+        description=POSITION_INSTRUCTIONS[position],
+        color=discord.Color.orange() if status["status"] == "expired" else discord.Color.blue(),
     )
     embed.add_field(
-        name="Cara Mengerjakan",
+        name="Alur Pengerjaan",
         value=(
-            "1. Tekan tombol download di bawah.\n"
-            "2. Baca file instruksi sampai selesai.\n"
-            "3. Kerjakan bahan tes sesuai posisi yang dipilih.\n"
-            "4. Unggah hasil ke Google Drive, lalu tekan **Submit Hasil Tes**."
+            "1. Download bahan tes dari tombol di bawah.\n"
+            "2. Kerjakan seluruh 12 halaman sesuai instruksi posisi.\n"
+            "3. Unggah hasil ke **satu folder Google Drive** dan aktifkan akses link.\n"
+            "4. Tekan **Submit Hasil Tes** dan kirim link folder tersebut."
         ),
         inline=False,
     )
-    embed.set_footer(text="Bahan resmi berasal dari website Ryukomik")
+    checklist = [
+        "Urutan halaman benar dan tidak ada bubble terlewat.",
+        "Teks mudah dibaca, rapi, dan tidak menyentuh tepi bubble.",
+    ]
+    if position in {"TS", "TL+TS"}:
+        checklist.extend((
+            "Cleaning/redraw bersih dan font sesuai konteks.",
+            "Banner, cover, dan watermark Ryukomik sudah dipasang.",
+        ))
+    embed.add_field(name="Checklist Sebelum Submit", value="\n".join(f"✅ {item}" for item in checklist), inline=False)
+    if status["status"] == "expired":
+        embed.add_field(
+            name="⚠️ Bahan perlu diperbarui",
+            value="Link Filebin telah melewati masa berlaku. Hubungi Administrator sebelum mulai mengerjakan.",
+            inline=False,
+        )
+    elif status["status"] == "expiring":
+        embed.add_field(name="Masa Berlaku Bahan", value="Link Filebin akan segera kedaluwarsa. Download bahan sekarang.", inline=False)
+    embed.set_footer(text="Ryukomik Recruitment • Satu bahan resmi untuk seluruh posisi")
     return embed
 
 
@@ -271,6 +307,57 @@ async def reconcile_legacy_recruitment_reviews(guild: discord.Guild) -> int:
             await message.edit(view=None)
             moved += 1
     return moved
+
+
+def is_recruitment_test_card(message: discord.Message) -> bool:
+    if not message.embeds or not message.guild or not message.guild.me or message.author.id != message.guild.me.id:
+        return False
+    title = (message.embeds[0].title or "").casefold()
+    return title.startswith("bahan tes ") or title.startswith("tes rekrutmen ")
+
+
+async def reconcile_recruitment_test_cards(guild: discord.Guild) -> int:
+    """Replace the latest test card in active tickets and disable stale material buttons."""
+    category = guild.get_channel(REKRUT_CAT_ID)
+    if not isinstance(category, discord.CategoryChannel):
+        return 0
+    updated = 0
+    for channel in category.text_channels:
+        position = get_topic_position(channel)
+        if position not in POSITIONS or not get_ticket_owner(channel):
+            continue
+        cards = [message async for message in channel.history(limit=100) if is_recruitment_test_card(message)]
+        if cards:
+            await cards[0].edit(embed=build_test_embed(position), view=RecruitmentSubmitView(position))
+            for stale in cards[1:]:
+                if stale.components:
+                    await stale.edit(view=None)
+        else:
+            await channel.send(embed=build_test_embed(position), view=RecruitmentSubmitView(position))
+        updated += 1
+    return updated
+
+
+async def notify_material_expiry(guild: discord.Guild) -> bool:
+    """Send each actionable material expiry warning once to administrators."""
+    status = material_status()
+    if status["status"] not in {"expiring", "expired"}:
+        return False
+    alert_key = f"recruitment-material:{status['status']}:{status['expires_at']}"
+    if not await db.claim_reminder(alert_key, None, "admin"):
+        return False
+    channel = guild.get_channel(STAFF_LOG_CHANNEL_ID)
+    if not isinstance(channel, discord.TextChannel):
+        return False
+    title = "Bahan Tes Rekrutmen Kedaluwarsa" if status["status"] == "expired" else "Bahan Tes Segera Kedaluwarsa"
+    description = (
+        "Link Filebin bahan tes sudah melewati masa berlaku. Ganti `RECRUITMENT_TEST_URL` dan "
+        "`RECRUITMENT_TEST_EXPIRES_AT`, lalu restart bot."
+        if status["status"] == "expired"
+        else "Link Filebin bahan tes akan habis kurang dari 24 jam. Siapkan link pengganti agar pelamar tidak terhambat."
+    )
+    await channel.send(embed=discord.Embed(title=title, description=description, color=discord.Color.orange()))
+    return True
 
 
 class RecruitmentBaseView(discord.ui.View):
@@ -640,7 +727,10 @@ class RecruitmentBot:
             self.bot.add_view(LegacyRecruitmentReviewView(position))
 
     async def reconcile_legacy_reviews(self, guild: discord.Guild) -> int:
-        return await reconcile_legacy_recruitment_reviews(guild)
+        moved = await reconcile_legacy_recruitment_reviews(guild)
+        await reconcile_recruitment_test_cards(guild)
+        await notify_material_expiry(guild)
+        return moved
 
     def setup(self):
         @self.bot.command(name="rekrut")

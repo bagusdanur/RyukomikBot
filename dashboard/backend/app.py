@@ -7,6 +7,7 @@ import re
 from io import BytesIO
 from contextlib import asynccontextmanager
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Literal
 import secrets
 import time
@@ -35,6 +36,9 @@ from config import (
     STAFF_LOG_CHANNEL_ID,
     STAFF_PAYRATE_CHANNEL_ID,
     TOKEN,
+    RECRUITMENT_TEST_EXPIRES_AT,
+    RECRUITMENT_TEST_URL,
+    RECRUITMENT_TS_ASSETS_URL,
 )
 import database as staff_db
 import payment_service as payout_service
@@ -2198,6 +2202,12 @@ async def recruitment_settings(_user=Depends(admin_user)):
         await connection.close()
     count_map = {row["position"]: int(row["active_count"]) for row in counts}
     row_map = {row["position"]: row for row in rows}
+    try:
+        material_expiry = datetime.fromisoformat(RECRUITMENT_TEST_EXPIRES_AT.replace("Z", "+00:00"))
+        material_hours = (material_expiry.replace(tzinfo=material_expiry.tzinfo or ZoneInfo("UTC")) - datetime.now(ZoneInfo("UTC"))).total_seconds() / 3600
+        material_status = "expired" if material_hours <= 0 else "expiring" if material_hours <= 24 else "active"
+    except ValueError:
+        material_hours, material_status = None, "unknown"
     return {
         "positions": [
             {
@@ -2213,6 +2223,13 @@ async def recruitment_settings(_user=Depends(admin_user)):
             bool(row_map[position]["enabled"]) if position in row_map else True
             for position in ("TL", "TS", "TL+TS")
         ),
+        "test_material": {
+            "url": RECRUITMENT_TEST_URL,
+            "ts_assets_url": RECRUITMENT_TS_ASSETS_URL,
+            "expires_at": RECRUITMENT_TEST_EXPIRES_AT,
+            "hours_remaining": round(material_hours, 1) if material_hours is not None else None,
+            "status": material_status,
+        },
     }
 
 @app.get("/api/recruitment/submissions")

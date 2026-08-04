@@ -25,6 +25,7 @@ from modals.rekap_modal import RekapModal
 from recruitment.ticket import (
     RecruitmentApproveDynamic,
     RecruitmentView,
+    notify_material_expiry,
     setup_recruitment,
     upsert_recruitment_panel,
 )
@@ -343,6 +344,7 @@ async def workflow_reminder_loop():
     guild = bot.get_guild(GUILD_ID)
     if not guild:
         return
+    await notify_material_expiry(guild)
     admin_channel = guild.get_channel(STAFF_LOG_CHANNEL_ID)
     from helpers.utils import find_ticket
     for item in await db.get_reminder_candidates():

@@ -1,14 +1,18 @@
 import os
 import tempfile
 import unittest
+from datetime import datetime, timezone
 
 import database
 from recruitment.ticket import (
     RecruitmentApproveDynamic,
     RecruitmentPositionView,
     RecruitmentView,
+    RecruitmentSubmitView,
+    build_test_embed,
     build_recruitment_panel_embed,
     build_review_embed,
+    material_status,
 )
 
 
@@ -107,6 +111,35 @@ class RecruitmentSubmissionTests(unittest.IsolatedAsyncioTestCase):
 
         closed_view = RecruitmentView([])
         self.assertTrue(closed_view.children[0].disabled)
+
+    async def test_unified_test_card_has_only_current_material_actions(self):
+        expected_links = {
+            "TL": ["Download Bahan Tes"],
+            "TS": ["Download Bahan Tes", "Asset TS"],
+            "TL+TS": ["Download Bahan Tes", "Asset TS"],
+        }
+        for position, labels in expected_links.items():
+            view = RecruitmentSubmitView(position)
+            link_labels = [item.label for item in view.children if getattr(item, "url", None)]
+            self.assertEqual(link_labels, labels)
+            self.assertNotIn("Instruksi TL", link_labels)
+            self.assertNotIn("Instruksi TS", link_labels)
+            self.assertNotIn("Referensi Terjemahan", link_labels)
+            self.assertIn("12 halaman", build_test_embed(position).description)
+
+    async def test_position_instructions_are_specific_and_complete(self):
+        tl = build_test_embed("TL")
+        ts = build_test_embed("TS")
+        both = build_test_embed("TL+TS")
+        self.assertIn("aku/kamu", tl.description)
+        self.assertIn("cleaning, redraw, dan typesetting", ts.description)
+        self.assertIn("Asset TS", ts.description)
+        self.assertIn("Terjemahkan", both.description)
+        self.assertIn("typesetting", both.description)
+
+    async def test_material_expiry_status(self):
+        self.assertEqual(material_status(datetime(2026, 8, 10, 13, 0, tzinfo=timezone.utc))["status"], "expiring")
+        self.assertEqual(material_status(datetime(2026, 8, 12, tzinfo=timezone.utc))["status"], "expired")
 
 
 if __name__ == "__main__":

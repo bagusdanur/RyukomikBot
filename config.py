@@ -34,3 +34,12 @@ EVASCAN_API = os.getenv("EVASCAN_API", "https://api.ryukomik.web.id/evascan")
 THUNDER_API = os.getenv("THUNDER_API", "https://api.ryukomik.web.id/thunder")
 DASHBOARD_URL = os.getenv("DASHBOARD_URL", "https://staff.ryukomik.web.id")
 
+# Recruitment test materials. Keep these configurable because Filebin links
+# are temporary and must be replaceable without changing the workflow code.
+RECRUITMENT_TEST_URL = os.getenv("RECRUITMENT_TEST_URL", "https://filebin.net/9bxr0sxjfgnxehc")
+RECRUITMENT_TS_ASSETS_URL = os.getenv(
+    "RECRUITMENT_TS_ASSETS_URL",
+    "https://drive.google.com/drive/folders/1SDLA-6M42CUfkeqSaXOF1KibE_0y9PfO?usp=sharing",
+)
+RECRUITMENT_TEST_EXPIRES_AT = os.getenv("RECRUITMENT_TEST_EXPIRES_AT", "2026-08-11T12:56:30+00:00")
+

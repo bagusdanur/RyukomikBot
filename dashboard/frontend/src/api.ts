@@ -188,6 +188,13 @@ export type OperationSnapshot = {
 };
 export type RecruitmentSettings = {
   open: boolean;
+  test_material?: {
+    url: string;
+    ts_assets_url: string;
+    expires_at: string;
+    hours_remaining: number | null;
+    status: "active" | "expiring" | "expired" | "unknown";
+  };
   positions: Array<{
     position: "TL" | "TS" | "TL+TS";
     enabled: boolean;
@@ -561,6 +568,13 @@ const demoApi = {
   }),
   recruitmentSettings: async (): Promise<RecruitmentSettings> => ({
     open: true,
+    test_material: {
+      url: "https://filebin.net/9bxr0sxjfgnxehc",
+      ts_assets_url: "https://drive.google.com/drive/folders/1SDLA-6M42CUfkeqSaXOF1KibE_0y9PfO?usp=sharing",
+      expires_at: "2026-08-11T12:56:30+00:00",
+      hours_remaining: 144,
+      status: "active",
+    },
     positions: [
       { position: "TL", enabled: true, active_count: 1, updated_at: "2026-07-26", updated_by: "1" },
       { position: "TS", enabled: true, active_count: 0, updated_at: "2026-07-26", updated_by: "1" },
