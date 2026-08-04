@@ -11,8 +11,8 @@ const rejectTarget = ref<PerformanceBonus | null>(null), rejectionReason = ref("
 const settingsOpen = ref(false);
 const settings = ref<PerformanceBonusSettings>({
   quality_weight: 50, speed_weight: 30, consistency_weight: 20, min_chapters: 3,
-  tier_1_score: 70, tier_1_percent: 3, tier_2_score: 80, tier_2_percent: 5,
-  tier_3_score: 90, tier_3_percent: 8, max_amount: 20000,
+  tier_1_score: 70, tier_1_percent: 4, tier_2_score: 80, tier_2_percent: 6,
+  tier_3_score: 90, tier_3_percent: 10, max_amount: 25000,
 });
 const money = (value: number) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(value || 0);
 const pending = computed(() => items.value.filter((item) => item.status === "pending").length);
