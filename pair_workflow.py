@@ -163,6 +163,19 @@ async def set_workspace(project_id: int, channel_id: int, panel_message_id: int)
         await db.close()
 
 
+async def get_latest_project_by_channel(channel_id: int) -> Optional[dict[str, Any]]:
+    """Return the newest task batch shown inside one permanent title workspace."""
+    db = await db_module.get_db()
+    try:
+        row = await (await db.execute(
+            "SELECT id FROM pair_projects WHERE channel_id=? ORDER BY id DESC LIMIT 1",
+            (channel_id,),
+        )).fetchone()
+    finally:
+        await db.close()
+    return await get_project(int(row["id"])) if row else None
+
+
 async def find_reusable_workspace(manga: str) -> Optional[dict[str, Any]]:
     """Return the permanent Discord workspace for this manga title."""
     db = await db_module.get_db()

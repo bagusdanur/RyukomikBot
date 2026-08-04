@@ -112,6 +112,15 @@ class PairWorkflowTests(unittest.TestCase):
         asyncio.run(pair_workflow.set_workspace(project["id"], 12345, 67890))
         self.assertEqual(asyncio.run(pair_workflow.find_reusable_workspace("Pair Project"))["channel_id"], 12345)
 
+    def test_latest_batch_is_selected_for_workspace_menu(self):
+        first = self.create_pair(["1"])
+        asyncio.run(pair_workflow.set_workspace(first["id"], 12345, 111))
+        second = self.create_pair(["2"])
+        asyncio.run(pair_workflow.set_workspace(second["id"], 12345, 222))
+        latest = asyncio.run(pair_workflow.get_latest_project_by_channel(12345))
+        self.assertEqual(latest["id"], second["id"])
+        self.assertEqual(latest["panel_message_id"], 222)
+
     def test_ts_handoff_message_is_stored_per_chapter(self):
         project = self.create_pair(["1"])
         chapter_id = project["chapters"][0]["id"]

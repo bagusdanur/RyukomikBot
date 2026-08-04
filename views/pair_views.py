@@ -8,6 +8,9 @@ import discord
 import pair_workflow as pairs
 from config import STAFF_LOG_CHANNEL_ID
 from helpers.utils import find_ticket, format_currency, is_admin
+from raw_downloader import get_downloader
+from raw_downloader.resolver import SOURCE_ORDER, resolve_assignment_raw
+from views.raw_views import RawChapterView, RawSearchView
 
 logger = logging.getLogger(__name__)
 DRIVE_PREFIXES = ("https://drive.google.com/", "http://drive.google.com/")
@@ -336,6 +339,63 @@ async def show_project_status(interaction: discord.Interaction, project_id: int)
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
+async def open_project_raw(interaction: discord.Interaction, project_id: int):
+    project = await pairs.get_project(project_id)
+    if not project:
+        return await interaction.response.send_message("Proyek pair tidak ditemukan.", ephemeral=True)
+    participants = {int(project["tl_staff_id"]), int(project["ts_staff_id"])}
+    if interaction.user.id not in participants and not is_admin(interaction.user):
+        return await interaction.response.send_message("RAW ini hanya untuk TL, TS, dan Administrator proyek.", ephemeral=True)
+    allowed = [str(item["chapter"]) for item in project["chapters"]]
+    await interaction.response.defer(ephemeral=True, thinking=True)
+
+    async def progress(message: str):
+        await interaction.edit_original_response(
+            embed=discord.Embed(
+                title="Mendeteksi RAW Proyek…",
+                description=f"**{project['manga']}**\nChapter tugas: **{', '.join(allowed)}**\n\n{message}",
+                color=discord.Color.gold(),
+            ),
+            view=None,
+        )
+
+    result = await resolve_assignment_raw(
+        project["manga"], allowed,
+        {source: get_downloader(source) for source in SOURCE_ORDER},
+        progress=progress,
+    )
+    if result["status"] == "resolved":
+        source = result["source"]
+        return await interaction.edit_original_response(
+            embed=discord.Embed(
+                title="RAW Pair Ditemukan",
+                description=(
+                    f"**{result['manga'].get('title')}** • **{source.title()}**\n"
+                    f"Pilih atau download seluruh chapter batch: **{', '.join(allowed)}**."
+                ),
+                color=discord.Color.green(),
+            ),
+            view=RawChapterView(
+                source, str(result["manga"]["id"]), result["chapters"], restricted=True,
+                fallbacks=[{"source": item["source"], "manga_id": str(item["manga"]["id"])} for item in result.get("fallbacks", [])],
+            ),
+        )
+    if result["status"] == "ambiguous":
+        return await interaction.edit_original_response(
+            embed=discord.Embed(title="Pilih Judul RAW", description="Ada beberapa judul mirip. Pilih manga yang benar.", color=discord.Color.blue()),
+            view=RawSearchView("auto", result["combined"], allowed_chapters=allowed),
+        )
+    messages = {
+        "timeout": "API RAW belum merespons dalam batas waktu. Bot sudah mencoba ulang otomatis.",
+        "chapters_missing": f"Judul ditemukan, tetapi chapter **{', '.join(allowed)}** belum tersedia.",
+        "not_found": f"RAW untuk **{project['manga']}** belum ditemukan di seluruh sumber.",
+    }
+    await interaction.edit_original_response(
+        embed=discord.Embed(title="RAW Belum Tersedia", description=messages.get(result["status"], "Pencarian RAW gagal."), color=discord.Color.orange()),
+        view=None,
+    )
+
+
 class PairTlDynamic(discord.ui.DynamicItem[discord.ui.Button], template=r"pair:tl:(?P<project_id>\d+):v2"):
     def __init__(self, project_id: int):
         self.project_id = project_id
@@ -413,6 +473,18 @@ class PairStatusDynamic(discord.ui.DynamicItem[discord.ui.Button], template=r"pa
     async def callback(self, interaction): await show_project_status(interaction, self.project_id)
 
 
+class PairRawDynamic(discord.ui.DynamicItem[discord.ui.Button], template=r"pair:raw:(?P<project_id>\d+):v2"):
+    def __init__(self, project_id: int):
+        self.project_id = project_id
+        super().__init__(discord.ui.Button(
+            label="Download RAW", style=discord.ButtonStyle.secondary,
+            custom_id=f"pair:raw:{project_id}:v2",
+        ))
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match): return cls(int(match["project_id"]))
+    async def callback(self, interaction): await open_project_raw(interaction, self.project_id)
+
+
 class PairApproveDynamic(discord.ui.DynamicItem[discord.ui.Button], template=r"pair:approve:(?P<chapter_id>\d+):v2"):
     def __init__(self, chapter_id: int):
         self.chapter_id = chapter_id
@@ -488,6 +560,7 @@ class PairProjectView(discord.ui.View):
         self.add_item(PairTsDynamic(project_id))
         self.add_item(PairTlRevisionDynamic(project_id))
         self.add_item(PairStatusDynamic(project_id))
+        self.add_item(PairRawDynamic(project_id))
 
 
 class PairTsHandoffView(discord.ui.View):

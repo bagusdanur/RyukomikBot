@@ -43,7 +43,8 @@ from views.role_views import ZodiacRoleView
 from views.pair_views import (
     PairApproveDynamic, PairReviseDynamic, PairTlDynamic,
     PairStatusDynamic, PairTlRevisionChapterDynamic, PairTlRevisionDynamic,
-    PairTsChapterDynamic, PairTsDynamic, publish_ts_handoff, refresh_project_panel,
+    PairTsChapterDynamic, PairTsDynamic, PairRawDynamic, PairProjectView,
+    build_project_embed, publish_ts_handoff, refresh_project_panel,
 )
 import pair_workflow as pair_service
 import project_scout as scout_service
@@ -100,7 +101,7 @@ class RyukomikBot(commands.Bot):
         self.add_dynamic_items(
             PairTlDynamic, PairTsDynamic, PairTlRevisionDynamic,
             PairTsChapterDynamic, PairTlRevisionChapterDynamic,
-            PairStatusDynamic, PairApproveDynamic, PairReviseDynamic,
+            PairStatusDynamic, PairRawDynamic, PairApproveDynamic, PairReviseDynamic,
         )
         self.add_dynamic_items(RecruitmentApproveDynamic)
         self.add_dynamic_items(
@@ -523,6 +524,34 @@ async def menu_command(interaction: discord.Interaction):
     # Channel scans and panel updates can exceed Discord's three-second
     # acknowledgement window, so acknowledge before doing any I/O.
     await interaction.response.defer(ephemeral=False)
+
+    pair_project = await pair_service.get_latest_project_by_channel(interaction.channel_id)
+    if pair_project:
+        participants = {int(pair_project["tl_staff_id"]), int(pair_project["ts_staff_id"])}
+        if interaction.user.id not in participants and not is_admin(interaction.user):
+            return await interaction.followup.send(
+                "Hanya TL, TS, atau Administrator proyek yang dapat memindahkan panel ini.", ephemeral=False
+            )
+        old_message = None
+        if pair_project.get("panel_message_id"):
+            try:
+                old_message = await interaction.channel.fetch_message(int(pair_project["panel_message_id"]))
+                if old_message.pinned:
+                    await old_message.unpin(reason="Panel pair dipindahkan ke pesan terbaru")
+                await old_message.delete()
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                old_message = None
+        await interaction.followup.send("Panel kolaborasi dipindahkan ke pesan terbaru.", ephemeral=False)
+        new_panel = await interaction.channel.send(
+            embed=build_project_embed(pair_project),
+            view=PairProjectView(int(pair_project["id"])),
+        )
+        try:
+            await new_panel.pin(reason="Panel aktif ruang kolaborasi")
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+        await pair_service.set_workspace(int(pair_project["id"]), interaction.channel_id, new_panel.id)
+        return
 
     if is_admin(interaction.user):
         admin_channel = interaction.guild.get_channel(STAFF_LOG_CHANNEL_ID)

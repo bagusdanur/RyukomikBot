@@ -375,8 +375,8 @@ class RawMangaSelect(discord.ui.Select):
         super().__init__(placeholder="Pilih komik", options=options)
 
     async def callback(self, interaction):
-        if not is_staff(interaction.user):
-            return await interaction.response.send_message("Hanya staff yang dapat memakai RAW navigator.")
+        if not (is_staff(interaction.user) or is_admin(interaction.user)):
+            return await interaction.response.send_message("Hanya staff atau administrator yang dapat memakai RAW navigator.")
         manga = self.results[int(self.values[0])]
         source, manga_id = manga["_source"], str(manga["id"])
         await interaction.response.edit_message(embed=discord.Embed(title="Mengambil Daftar Chapterâ€¦", description=f"**{manga.get('title')}** dari sumber terbaik", color=discord.Color.gold()), view=None)
@@ -490,8 +490,8 @@ class RawChapterSelect(discord.ui.Select):
 
 
 async def download_chapters(interaction, source, manga_id, chapter_ids, fallbacks=None):
-    if not is_staff(interaction.user):
-        return await interaction.response.send_message("Hanya staff yang dapat download RAW.")
+    if not (is_staff(interaction.user) or is_admin(interaction.user)):
+        return await interaction.response.send_message("Hanya staff atau administrator yang dapat download RAW.")
     await interaction.response.edit_message(
         embed=discord.Embed(
             title="Menyiapkan RAW...",
