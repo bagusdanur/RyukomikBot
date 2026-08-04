@@ -44,6 +44,7 @@ from views.pair_views import (
     PairTsChapterDynamic, PairTsDynamic, publish_ts_handoff, refresh_project_panel,
 )
 import pair_workflow as pair_service
+import project_scout as scout_service
 import database as db
 from server_management import apply_server_housekeeping, send_goodbye, send_welcome
 
@@ -81,6 +82,7 @@ class RyukomikBot(commands.Bot):
         await setup_database()
         await payments.setup_payment_tables()
         await operations.setup_operations()
+        await scout_service.setup_scout_tables()
         await setup_project_sync()
         await operations.recover_outbox()
         
@@ -631,6 +633,60 @@ async def download_raw_command(interaction: discord.Interaction, manga_id: str, 
     embed.add_field(name="Link Download", value=f"[Buka Filebin]({filebin_url})", inline=False)
     embed.set_footer(text="File lokal VPS sudah dihapus setelah upload.")
     await interaction.followup.send(embed=embed, ephemeral=False)
+
+
+@bot.tree.command(name="cari-project", description="Bandingkan judul RAW dengan katalog Indonesia")
+@discord.app_commands.describe(judul="Judul komik RAW", sumber="Batasi sumber RAW atau cari di semua sumber")
+async def scout_project_command(
+    interaction: discord.Interaction,
+    judul: str,
+    sumber: Literal["all", "asura", "omega", "doujiva", "evascan", "thunder"] = "all",
+):
+    if not is_admin(interaction.user):
+        return await interaction.response.send_message(
+            "Project Scout hanya dapat digunakan Administrator.", ephemeral=True,
+        )
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    try:
+        result = await scout_service.scan_title(judul, sumber)
+    except ValueError as error:
+        return await interaction.followup.send(str(error), ephemeral=True)
+    except Exception:
+        return await interaction.followup.send(
+            "Project Scout gagal menghubungi salah satu layanan. Coba lagi melalui dashboard.", ephemeral=True,
+        )
+    labels = {
+        "untranslated": "Belum ditemukan di Indonesia", "lagging": "Versi Indonesia tertinggal",
+        "available": "Sudah tersedia di Indonesia", "ambiguous": "Perlu diperiksa manual",
+        "ryukomik_project": "Sudah menjadi project Ryukomik", "candidate": "Kandidat",
+        "adopted": "Sudah diambil", "ignored": "Diabaikan",
+    }
+    embed = discord.Embed(
+        title=f"Project Scout • {result['canonical_title']}",
+        description=labels.get(result["scout_status"], result["scout_status"]),
+        color=discord.Color.green() if result["scout_status"] == "untranslated" else discord.Color.gold(),
+    )
+    embed.add_field(name="Chapter RAW", value=str(result.get("raw_latest_chapter") or "—"), inline=True)
+    embed.add_field(name="Chapter Indonesia", value=str(result.get("indonesia_latest_chapter") or "—"), inline=True)
+    embed.add_field(name="Confidence", value=f"{result.get('confidence', 0)}%", inline=True)
+    matches = [
+        source for source in result.get("sources", [])
+        if source.get("source_group") != "raw" and int(source.get("match_score") or 0) >= 55
+    ][:6]
+    embed.add_field(
+        name="Hasil Pembanding",
+        value="\n".join(
+            f"• **{item['source'].title()}** — {item['title']} ({item['match_score']}%)" for item in matches
+        ) or "Tidak ditemukan hasil yang cukup mirip.",
+        inline=False,
+    )
+    embed.set_footer(text="Rekomendasi harus dikonfirmasi Administrator sebelum project diambil.")
+    view = discord.ui.View()
+    view.add_item(discord.ui.Button(
+        label="Buka Project Scout", style=discord.ButtonStyle.link,
+        url=f"{DASHBOARD_URL}/?page=scout",
+    ))
+    await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
 
 @bot.tree.command(name="raw-search", description="Cari komik RAW dari semua sumber")

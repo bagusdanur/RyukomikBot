@@ -26,9 +26,10 @@ import {
 } from "./api";
 
 type Page =
-  "overview" | "actions" | "tasks" | "staff" | "payrates" | "recruitment" | "deadlines" | "recap" | "payouts" | "operations" | "audit";
+  "overview" | "actions" | "tasks" | "staff" | "payrates" | "recruitment" | "scout" | "deadlines" | "recap" | "payouts" | "operations" | "audit";
 const OperationsPage = defineAsyncComponent(() => import("./pages/OperationsPage.vue"));
 const ActionCenterPage = defineAsyncComponent(() => import("./pages/ActionCenterPage.vue"));
+const ScoutPage = defineAsyncComponent(() => import("./pages/ScoutPage.vue"));
 const user = ref<User | null>(null),
   authChecked = ref(false),
   loading = ref(false),
@@ -103,6 +104,7 @@ const navItems = computed(() => [
         { id: "staff", label: "Tim Staff", icon: "pi pi-users" },
         { id: "payrates", label: "Payrate", icon: "pi pi-wallet" },
         { id: "recruitment", label: "Rekrutmen", icon: "pi pi-user-plus" },
+        { id: "scout", label: "Project Scout", icon: "pi pi-compass" },
         { id: "recap", label: "Gaji & Invoice", icon: "pi pi-receipt" },
         { id: "payouts", label: "Permintaan Gaji", icon: "pi pi-money-bill" },
         { id: "operations", label: "Operasional", icon: "pi pi-heart-fill" },
@@ -1022,6 +1024,10 @@ onMounted(async () => {
       </Suspense>
       <Suspense v-if="page === 'operations'">
         <OperationsPage />
+        <template #fallback><div class="operations-skeleton"><span v-for="n in 4" :key="n"></span></div></template>
+      </Suspense>
+      <Suspense v-if="page === 'scout'">
+        <ScoutPage />
         <template #fallback><div class="operations-skeleton"><span v-for="n in 4" :key="n"></span></div></template>
       </Suspense>
       <template v-if="page === 'tasks'"

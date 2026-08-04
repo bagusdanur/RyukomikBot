@@ -197,6 +197,20 @@ export type RecruitmentSettings = {
   }>;
 };
 export type RecruitmentSubmission = { id:number; applicant_id:string; applicant_name:string; ticket_name:string; position:string; ticket_channel_id:string; status:string; submitted_at:string };
+export type ScoutSource = {
+  id: number; source_group: "raw" | "indonesia" | "internal"; source: string;
+  source_id: string | null; title: string; cover_url: string | null; synopsis: string;
+  genres: string[]; latest_chapter: number | null; chapter_count: number | null;
+  match_score: number; detail_url: string | null;
+};
+export type ScoutTitle = {
+  id: number; canonical_title: string; cover_url: string | null; synopsis: string;
+  genres: string[]; content_type: string | null; publication_status: string | null;
+  scout_status: string; confidence: number; raw_latest_chapter: number | null;
+  indonesia_latest_chapter: number | null; chapter_gap: number | null;
+  first_seen_at: string; last_scanned_at: string; ignore_reason?: string | null;
+  sources?: ScoutSource[]; cached?: boolean;
+};
 export type Paged<T> = {
   items: T[];
   page: number;
@@ -306,6 +320,13 @@ const liveApi = {
     }),
   recruitmentSubmissions: () => request<RecruitmentSubmission[]>("/api/recruitment/submissions"),
   closeRecruitmentSubmission: (id:number, reason:string) => request(`/api/recruitment/submissions/${id}/close`, {method:"POST",body:JSON.stringify({reason})}),
+  scoutTitles: (status = "", search = "", page = 1, pageSize = 20) =>
+    request<Paged<ScoutTitle>>(`/api/scout?status=${encodeURIComponent(status)}&search=${encodeURIComponent(search)}&page=${page}&page_size=${pageSize}`),
+  scoutSearch: (title: string, raw_source = "all", force = false) =>
+    request<ScoutTitle>("/api/scout/search", { method: "POST", body: JSON.stringify({ title, raw_source, force }) }),
+  scoutDetail: (id: number) => request<ScoutTitle>(`/api/scout/${id}`),
+  scoutDecision: (id: number, action: string, notes = "") =>
+    request<ScoutTitle>(`/api/scout/${id}/decision`, { method: "POST", body: JSON.stringify({ action, notes }) }),
   deadlines: () => request<Assignment[]>("/api/deadlines"),
   recap: (period: string) => request<Recap[]>(`/api/recap?period=${period}`),
   recapSummary: () => request<RecapSummary>("/api/recap-summary"),
@@ -520,6 +541,21 @@ const demoApi = {
   updateRecruitmentSettings: async () => ({ ok: true, discord_synced: true }),
   recruitmentSubmissions: async () => [] as RecruitmentSubmission[],
   closeRecruitmentSubmission: async () => ({ ok: true }),
+  scoutTitles: async (_status = "", _search = "", page = 1, pageSize = 20): Promise<Paged<ScoutTitle>> => ({
+    items: [], page, page_size: pageSize, total: 0, total_pages: 1,
+  }),
+  scoutSearch: async (title: string): Promise<ScoutTitle> => ({
+    id: 1, canonical_title: title, cover_url: null, synopsis: "", genres: [], content_type: null,
+    publication_status: "Ongoing", scout_status: "untranslated", confidence: 0,
+    raw_latest_chapter: 5, indonesia_latest_chapter: null, chapter_gap: null,
+    first_seen_at: new Date().toISOString(), last_scanned_at: new Date().toISOString(), sources: [],
+  }),
+  scoutDetail: async (id: number): Promise<ScoutTitle> => ({
+    ...(await demoApi.scoutSearch("Contoh Project")), id,
+  }),
+  scoutDecision: async (id: number, action: string): Promise<ScoutTitle> => ({
+    ...(await demoApi.scoutDetail(id)), scout_status: action === "adopt" ? "adopted" : action,
+  }),
   deadlines: async () =>
     sampleAssignments.filter(
       (item) =>
