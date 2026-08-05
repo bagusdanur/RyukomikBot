@@ -163,6 +163,41 @@ async def set_workspace(project_id: int, channel_id: int, panel_message_id: int)
         await db.close()
 
 
+async def close_workspace(project_id: int, channel_id: int, actor_id: int) -> int:
+    """Detach every batch sharing a Discord workspace without deleting work or pay data."""
+    db = await db_module.get_db()
+    try:
+        await db.execute("BEGIN IMMEDIATE")
+        selected = await (await db.execute(
+            "SELECT id FROM pair_projects WHERE id=? AND channel_id=?",
+            (project_id, channel_id),
+        )).fetchone()
+        if not selected:
+            await db.rollback()
+            return 0
+        rows = await (await db.execute(
+            "SELECT id FROM pair_projects WHERE channel_id=? ORDER BY id",
+            (channel_id,),
+        )).fetchall()
+        for row in rows:
+            await db.execute(
+                "INSERT INTO pair_events(project_id,event_type,actor_id,detail) VALUES(?,?,?,?)",
+                (int(row["id"]), "workspace_closed", str(actor_id),
+                 f"Channel kolaborasi {channel_id} ditutup oleh Administrator."),
+            )
+        await db.execute(
+            "UPDATE pair_projects SET channel_id=NULL,panel_message_id=NULL WHERE channel_id=?",
+            (channel_id,),
+        )
+        await db.commit()
+        return len(rows)
+    except Exception:
+        await db.rollback()
+        raise
+    finally:
+        await db.close()
+
+
 async def get_latest_project_by_channel(channel_id: int) -> Optional[dict[str, Any]]:
     """Return the newest task batch shown inside one permanent title workspace."""
     db = await db_module.get_db()

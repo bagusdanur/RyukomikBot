@@ -130,6 +130,23 @@ class PairWorkflowTests(unittest.TestCase):
         self.assertEqual(latest["id"], second["id"])
         self.assertEqual(latest["panel_message_id"], 222)
 
+    def test_close_workspace_detaches_all_batches_without_deleting_work(self):
+        first = self.create_pair(["1"])
+        second = self.create_pair(["2"])
+        asyncio.run(pair_workflow.set_workspace(first["id"], 12345, 111))
+        asyncio.run(pair_workflow.set_workspace(second["id"], 12345, 222))
+        detached = asyncio.run(pair_workflow.close_workspace(second["id"], 12345, 999))
+        self.assertEqual(detached, 2)
+        self.assertIsNone(asyncio.run(pair_workflow.get_latest_project_by_channel(12345)))
+        self.assertIsNone(asyncio.run(pair_workflow.find_reusable_workspace("Pair Project")))
+        connection = sqlite3.connect(database.DB_PATH)
+        self.assertEqual(connection.execute("SELECT COUNT(*) FROM pair_projects").fetchone()[0], 2)
+        self.assertEqual(connection.execute("SELECT COUNT(*) FROM assignments").fetchone()[0], 4)
+        self.assertEqual(connection.execute(
+            "SELECT COUNT(*) FROM pair_events WHERE event_type='workspace_closed'"
+        ).fetchone()[0], 2)
+        connection.close()
+
     def test_ts_handoff_message_is_stored_per_chapter(self):
         project = self.create_pair(["1"])
         chapter_id = project["chapters"][0]["id"]

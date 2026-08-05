@@ -488,6 +488,76 @@ class PairRawDynamic(discord.ui.DynamicItem[discord.ui.Button], template=r"pair:
     async def callback(self, interaction): await open_project_raw(interaction, self.project_id)
 
 
+class PairCloseConfirmView(discord.ui.View):
+    def __init__(self, project_id: int, channel_id: int):
+        super().__init__(timeout=120)
+        self.project_id = project_id
+        self.channel_id = channel_id
+
+    @discord.ui.button(label="Ya, Hapus Channel", style=discord.ButtonStyle.danger)
+    async def confirm(self, interaction: discord.Interaction, _button: discord.ui.Button):
+        if not is_admin(interaction.user):
+            return await interaction.response.send_message("Hanya Administrator yang dapat menutup project.", ephemeral=True)
+        if not isinstance(interaction.channel, discord.TextChannel) or interaction.channel.id != self.channel_id:
+            return await interaction.response.send_message("Channel project sudah berubah atau tidak ditemukan.", ephemeral=True)
+        bot_member = interaction.guild.me if interaction.guild else None
+        if not bot_member or not interaction.channel.permissions_for(bot_member).manage_channels:
+            return await interaction.response.send_message(
+                "Bot belum memiliki izin **Manage Channels**, jadi channel belum dapat dihapus.", ephemeral=True
+            )
+        project = await pairs.get_project(self.project_id)
+        if not project or int(project.get("channel_id") or 0) != self.channel_id:
+            return await interaction.response.send_message("Workspace project ini sudah ditutup.", ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+        detached = await pairs.close_workspace(self.project_id, self.channel_id, interaction.user.id)
+        if not detached:
+            return await interaction.followup.send("Workspace project sudah ditutup.", ephemeral=True)
+        await interaction.edit_original_response(content="Channel project sedang dihapus…", embed=None, view=None)
+        try:
+            await interaction.channel.delete(reason=f"Project pair #{self.project_id} ditutup oleh {interaction.user}")
+        except (discord.Forbidden, discord.HTTPException):
+            logger.exception("Failed to delete pair workspace channel %s", self.channel_id)
+            return await interaction.followup.send(
+                "Data workspace sudah ditutup, tetapi channel gagal dihapus. Periksa izin **Manage Channels** bot.",
+                ephemeral=True,
+            )
+
+
+class PairCloseDynamic(discord.ui.DynamicItem[discord.ui.Button], template=r"pair:close:(?P<project_id>\d+):v2"):
+    def __init__(self, project_id: int):
+        self.project_id = project_id
+        super().__init__(discord.ui.Button(
+            label="Tutup Project", style=discord.ButtonStyle.danger,
+            custom_id=f"pair:close:{project_id}:v2",
+        ))
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match): return cls(int(match["project_id"]))
+    async def callback(self, interaction: discord.Interaction):
+        if not is_admin(interaction.user):
+            return await interaction.response.send_message("Hanya Administrator yang dapat menutup project.", ephemeral=True)
+        project = await pairs.get_project(self.project_id)
+        if not project or not project.get("channel_id") or int(project["channel_id"]) != interaction.channel_id:
+            return await interaction.response.send_message("Workspace project tidak ditemukan atau sudah ditutup.", ephemeral=True)
+        unfinished = sum(item["status"] != "completed" for item in project["chapters"])
+        warning = (
+            f"Masih ada **{unfinished} chapter belum selesai**. " if unfinished else "Seluruh chapter pada batch terbaru sudah selesai. "
+        )
+        embed = discord.Embed(
+            title="Konfirmasi Tutup Project",
+            description=(
+                warning + "Channel kolaborasi ini akan **dihapus permanen**. "
+                "Histori tugas, link hasil, gaji, dan invoice tetap tersimpan di dashboard. "
+                "Tugas pair berikutnya untuk judul ini akan membuat channel baru."
+            ),
+            color=discord.Color.red(),
+        )
+        await interaction.response.send_message(
+            embed=embed,
+            view=PairCloseConfirmView(self.project_id, interaction.channel_id),
+            ephemeral=True,
+        )
+
+
 class PairApproveDynamic(discord.ui.DynamicItem[discord.ui.Button], template=r"pair:approve:(?P<chapter_id>\d+):v2"):
     def __init__(self, chapter_id: int):
         self.chapter_id = chapter_id
@@ -564,6 +634,7 @@ class PairProjectView(discord.ui.View):
         self.add_item(PairTlRevisionDynamic(project_id))
         self.add_item(PairStatusDynamic(project_id))
         self.add_item(PairRawDynamic(project_id))
+        self.add_item(PairCloseDynamic(project_id))
 
 
 class PairTsHandoffView(discord.ui.View):

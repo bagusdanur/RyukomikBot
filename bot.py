@@ -45,7 +45,7 @@ from views.role_views import ZodiacRoleView
 from views.pair_views import (
     PairApproveDynamic, PairReviseDynamic, PairTlDynamic,
     PairStatusDynamic, PairTlRevisionChapterDynamic, PairTlRevisionDynamic,
-    PairTsChapterDynamic, PairTsDynamic, PairRawDynamic, PairProjectView,
+    PairTsChapterDynamic, PairTsDynamic, PairRawDynamic, PairCloseDynamic, PairProjectView,
     build_project_embed, publish_ts_handoff, refresh_project_panel,
 )
 import pair_workflow as pair_service
@@ -103,7 +103,7 @@ class RyukomikBot(commands.Bot):
         self.add_dynamic_items(
             PairTlDynamic, PairTsDynamic, PairTlRevisionDynamic,
             PairTsChapterDynamic, PairTlRevisionChapterDynamic,
-            PairStatusDynamic, PairRawDynamic, PairApproveDynamic, PairReviseDynamic,
+            PairStatusDynamic, PairRawDynamic, PairCloseDynamic, PairApproveDynamic, PairReviseDynamic,
         )
         self.add_dynamic_items(RecruitmentApproveDynamic)
         self.add_dynamic_items(
