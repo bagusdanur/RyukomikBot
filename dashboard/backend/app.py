@@ -538,12 +538,6 @@ class ManualBonusCreateRequest(BaseModel):
     reason: str = Field(min_length=1, max_length=200)
     period: str | None = Field(default=None)
 
-    @field_validator("period", mode="before")
-    @classmethod
-    def clean_period(cls, v):
-        if not v or not str(v).strip():
-            return None
-        return str(v).strip()
 
 
 class OperationAction(BaseModel):
@@ -3002,13 +2996,16 @@ async def list_manual_bonuses_route(
 
 @app.post("/api/manual-bonuses")
 async def create_manual_bonus_route(payload: ManualBonusCreateRequest, user=Depends(admin_user)):
+    clean_period = payload.period.strip() if payload.period and payload.period.strip() else None
+    if clean_period and not re.match(r"^\d{4}-\d{2}$", clean_period):
+        clean_period = None
     try:
         result = await bonus_service.create_manual_bonus(
-            staff_id=payload.staff_id,
+            staff_id=payload.staff_id.strip(),
             amount=payload.amount,
-            reason=payload.reason,
+            reason=payload.reason.strip(),
             created_by=user["id"],
-            period=payload.period,
+            period=clean_period,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -3017,6 +3014,7 @@ async def create_manual_bonus_route(payload: ManualBonusCreateRequest, user=Depe
         None, result
     )
     return result
+
 
 
 @app.post("/api/manual-bonuses/{bonus_id}/cancel")
