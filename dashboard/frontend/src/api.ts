@@ -415,8 +415,15 @@ const liveApi = {
   rejectPerformanceBonus: (id: number, reason: string) => request(`/api/performance-bonuses/${id}/reject`, {
     method: "POST", body: JSON.stringify({ reason }),
   }),
-  manualBonuses: (staffId = "", period = "", status = "") =>
-    request<ManualBonus[]>(`/api/manual-bonuses?staff_id=${encodeURIComponent(staffId)}&period=${encodeURIComponent(period)}&status=${encodeURIComponent(status)}`),
+  manualBonuses: (staffId = "", period = "", status = "") => {
+    const params = new URLSearchParams();
+    if (staffId && staffId.trim()) params.append("staff_id", staffId.trim());
+    if (period && period.trim()) params.append("period", period.trim());
+    if (status && status.trim()) params.append("status", status.trim());
+    const query = params.toString();
+    return request<ManualBonus[]>(`/api/manual-bonuses${query ? `?${query}` : ""}`);
+  },
+
   createManualBonus: (payload: { staff_id: string; amount: number; reason: string; period?: string }) =>
     request<ManualBonus>("/api/manual-bonuses", { method: "POST", body: JSON.stringify(payload) }),
   cancelManualBonus: (id: number) =>

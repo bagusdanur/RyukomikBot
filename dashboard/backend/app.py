@@ -536,7 +536,14 @@ class ManualBonusCreateRequest(BaseModel):
     staff_id: str = Field(min_length=1)
     amount: int = Field(gt=0)
     reason: str = Field(min_length=1, max_length=200)
-    period: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}$")
+    period: str | None = Field(default=None)
+
+    @field_validator("period", mode="before")
+    @classmethod
+    def clean_period(cls, v):
+        if not v or not str(v).strip():
+            return None
+        return str(v).strip()
 
 
 class OperationAction(BaseModel):
@@ -2982,11 +2989,15 @@ async def reject_performance_bonus(bonus_id: int, payload: BonusRejectRequest, u
 @app.get("/api/manual-bonuses")
 async def list_manual_bonuses_route(
     staff_id: str | None = Query(default=None),
-    period: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
+    period: str | None = Query(default=None),
     status: str | None = Query(default=None),
     _user=Depends(admin_user),
 ):
-    return await enrich_staff(await bonus_service.list_manual_bonuses(staff_id, period, status))
+    clean_staff = staff_id.strip() if staff_id and staff_id.strip() else None
+    clean_period = period.strip() if period and re.match(r"^\d{4}-\d{2}$", period.strip()) else None
+    clean_status = status.strip() if status and status.strip() else None
+    return await enrich_staff(await bonus_service.list_manual_bonuses(clean_staff, clean_period, clean_status))
+
 
 
 @app.post("/api/manual-bonuses")
