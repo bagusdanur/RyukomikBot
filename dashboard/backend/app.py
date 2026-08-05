@@ -22,6 +22,7 @@ except ImportError:  # Legacy R2 downloads are optional in local/test environmen
     boto3 = None
 from authlib.integrations.starlette_client import OAuth
 from dotenv import load_dotenv
+from fastapi.exceptions import RequestValidationError
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, Response
@@ -304,7 +305,17 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="Ryukomik Staff Dashboard API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Ryukomik Staff Dashboard API", version="1.0.0", lifespan=lifespan)
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    import sys
+    print("--- VALIDATION ERROR ---", file=sys.stderr)
+    print("BODY:", exc.body, file=sys.stderr)
+    print("ERRORS:", exc.errors(), file=sys.stderr)
+    print("------------------------", file=sys.stderr)
+    return JSONResponse(status_code=422, content={"detail": exc.errors(), "body": exc.body})
+
 app.add_middleware(
     SessionMiddleware,
     secret_key=SESSION_SECRET or "development-only-change-me",
