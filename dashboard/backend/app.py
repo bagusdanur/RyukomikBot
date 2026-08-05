@@ -38,6 +38,7 @@ from config import (
     TOKEN,
     RECRUITMENT_TEST_EXPIRES_AT,
     RECRUITMENT_TEST_URL,
+    RECRUITMENT_TL_EXAMPLE_URL,
     RECRUITMENT_TS_ASSETS_URL,
 )
 import database as staff_db
@@ -2225,6 +2226,7 @@ async def recruitment_settings(_user=Depends(admin_user)):
         ),
         "test_material": {
             "url": RECRUITMENT_TEST_URL,
+            "tl_example_url": RECRUITMENT_TL_EXAMPLE_URL,
             "ts_assets_url": RECRUITMENT_TS_ASSETS_URL,
             "expires_at": RECRUITMENT_TEST_EXPIRES_AT,
             "hours_remaining": round(material_hours, 1) if material_hours is not None else None,

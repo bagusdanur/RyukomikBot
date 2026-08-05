@@ -114,9 +114,9 @@ class RecruitmentSubmissionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_unified_test_card_has_only_current_material_actions(self):
         expected_links = {
-            "TL": ["Download Bahan Tes"],
+            "TL": ["Download Bahan Tes", "Contoh TL"],
             "TS": ["Download Bahan Tes", "Asset TS"],
-            "TL+TS": ["Download Bahan Tes", "Asset TS"],
+            "TL+TS": ["Download Bahan Tes", "Contoh TL", "Asset TS"],
         }
         for position, labels in expected_links.items():
             view = RecruitmentSubmitView(position)
@@ -125,7 +125,7 @@ class RecruitmentSubmissionTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("Instruksi TL", link_labels)
             self.assertNotIn("Instruksi TS", link_labels)
             self.assertNotIn("Referensi Terjemahan", link_labels)
-            self.assertIn("12 halaman", build_test_embed(position).description)
+            self.assertIn("20 halaman", build_test_embed(position).description)
 
     async def test_position_instructions_are_specific_and_complete(self):
         tl = build_test_embed("TL")
@@ -148,8 +148,8 @@ class RecruitmentSubmissionTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(field.name.startswith("Panduan TS") for field in both.fields))
 
     async def test_material_expiry_status(self):
-        self.assertEqual(material_status(datetime(2026, 8, 10, 13, 0, tzinfo=timezone.utc))["status"], "expiring")
-        self.assertEqual(material_status(datetime(2026, 8, 12, tzinfo=timezone.utc))["status"], "expired")
+        self.assertEqual(material_status(datetime(2026, 8, 11, 13, 0, tzinfo=timezone.utc))["status"], "expiring")
+        self.assertEqual(material_status(datetime(2026, 8, 13, tzinfo=timezone.utc))["status"], "expired")
 
 
 if __name__ == "__main__":

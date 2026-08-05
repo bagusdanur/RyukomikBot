@@ -1291,10 +1291,12 @@ onMounted(async () => {
         >
           <div>
             <p class="eyebrow">BAHAN TES AKTIF</p>
-            <h3>{{ recruitment.test_material.status === 'expired' ? 'Bahan perlu diperbarui' : recruitment.test_material.status === 'expiring' ? 'Bahan segera kedaluwarsa' : 'Chapter 2 • 12 halaman' }}</h3>
+            <h3>{{ recruitment.test_material.status === 'expired' ? 'Bahan perlu diperbarui' : recruitment.test_material.status === 'expiring' ? 'Bahan segera kedaluwarsa' : 'Bahan terbaru • 20 halaman' }}</h3>
             <p>
               Satu bahan untuk TL, TS, dan TL+TS.
               <a :href="recruitment.test_material.url" target="_blank">Buka Filebin</a>
+              • <a :href="recruitment.test_material.tl_example_url" target="_blank">Contoh TL</a>
+              • <a :href="recruitment.test_material.ts_assets_url" target="_blank">Asset TS</a>
               <span v-if="recruitment.test_material.hours_remaining !== null">
                 • {{ recruitment.test_material.hours_remaining > 0 ? `${Math.ceil(recruitment.test_material.hours_remaining / 24)} hari tersisa` : 'sudah kedaluwarsa' }}
               </span>

@@ -9,7 +9,8 @@ from discord.ext import commands
 import database as db
 from config import (
     REKRUT_CAT_ID, ROLE_STAFF_ID, STAFF_LOG_CHANNEL_ID,
-    RECRUITMENT_TEST_EXPIRES_AT, RECRUITMENT_TEST_URL, RECRUITMENT_TS_ASSETS_URL,
+    RECRUITMENT_TEST_EXPIRES_AT, RECRUITMENT_TEST_URL,
+    RECRUITMENT_TL_EXAMPLE_URL, RECRUITMENT_TS_ASSETS_URL,
 )
 from helpers.utils import (
     build_private_ticket_name,
@@ -23,27 +24,32 @@ from panels.staff_panel import upsert_staff_panel
 POSITIONS = ("TL", "TS", "TL+TS")
 POSITION_IDS = {"TL": "tl", "TS": "ts", "TL+TS": "tl_ts"}
 TEST_LINKS = {
-    "TL": (("Download Bahan Tes", RECRUITMENT_TEST_URL, "📦"),),
+    "TL": (("Download Bahan Tes", RECRUITMENT_TEST_URL, "📦"), ("Contoh TL", RECRUITMENT_TL_EXAMPLE_URL, "📝")),
     "TS": (("Download Bahan Tes", RECRUITMENT_TEST_URL, "📦"), ("Asset TS", RECRUITMENT_TS_ASSETS_URL, "🎨")),
-    "TL+TS": (("Download Bahan Tes", RECRUITMENT_TEST_URL, "📦"), ("Asset TS", RECRUITMENT_TS_ASSETS_URL, "🎨")),
+    "TL+TS": (
+        ("Download Bahan Tes", RECRUITMENT_TEST_URL, "📦"),
+        ("Contoh TL", RECRUITMENT_TL_EXAMPLE_URL, "📝"),
+        ("Asset TS", RECRUITMENT_TS_ASSETS_URL, "🎨"),
+    ),
 }
 
 POSITION_INSTRUCTIONS = {
     "TL": (
-        "Terjemahkan seluruh **12 halaman** ke Bahasa Indonesia yang natural. Gunakan gaya "
-        "**aku/kamu**, susun teks berdasarkan nomor halaman dan panel, lalu simpan sebagai TXT atau DOCX."
+        "Terjemahkan seluruh **20 halaman** ke Bahasa Indonesia yang natural. Gunakan gaya "
+        "**aku/kamu**, susun teks berdasarkan nomor halaman dan panel, lalu simpan sebagai TXT atau DOCX. "
+        "Tombol **Contoh TL** hanya menjadi acuan format dan gaya penulisan—jangan menyalin isinya."
     ),
     "TS": (
-        "Kerjakan **cleaning, redraw, dan typesetting** seluruh 12 halaman. Teks Inggris asli boleh "
+        "Kerjakan **cleaning, redraw, dan typesetting** seluruh 20 halaman. Teks Inggris asli boleh "
         "diketik ulang. Bedakan font dialog normal, teriakan, pikiran, narasi, dan SFX. Gunakan "
         "banner, cover, dan watermark dari tombol **Asset TS**."
     ),
     "TL+TS": (
         "**Bagian TL (Translator)**\n"
-        "Terjemahkan sendiri seluruh **12 halaman** ke Bahasa Indonesia natural dengan gaya "
+        "Terjemahkan sendiri seluruh **20 halaman** ke Bahasa Indonesia natural dengan gaya "
         "**aku/kamu**. Periksa konteks panel, hubungan antarkalimat, nama tokoh, dan jangan "
         "menerjemahkan kata per kata secara kaku. Pastikan tidak ada dialog, narasi, atau SFX "
-        "penting yang terlewat.\n\n"
+        "penting yang terlewat. Gunakan **Contoh TL** hanya sebagai acuan format dan gaya.\n\n"
         "**Bagian TS (Typesetter / Editor)**\n"
         "Gunakan hasil terjemahanmu untuk melakukan **cleaning, redraw, dan typesetting** pada "
         "seluruh halaman. Bedakan font dialog, teriakan, pikiran, narasi, serta SFX; rapikan "
@@ -141,7 +147,7 @@ async def publish_recruitment_review(
 def build_test_embed(position: str) -> discord.Embed:
     status = material_status()
     embed = discord.Embed(
-        title=f"Tes Rekrutmen {position} | Chapter 2",
+        title=f"Tes Rekrutmen {position} | 20 Halaman",
         description=POSITION_INSTRUCTIONS[position],
         color=discord.Color.orange() if status["status"] == "expired" else discord.Color.blue(),
     )
@@ -149,7 +155,7 @@ def build_test_embed(position: str) -> discord.Embed:
         name="Alur Pengerjaan",
         value=(
             "1. Download bahan tes dari tombol di bawah.\n"
-            "2. Kerjakan seluruh 12 halaman sesuai instruksi posisi.\n"
+            "2. Kerjakan seluruh 20 halaman sesuai instruksi posisi.\n"
             "3. Unggah hasil ke **satu folder Google Drive** dan aktifkan akses link.\n"
             "4. Tekan **Submit Hasil Tes** dan kirim link folder tersebut."
         ),

@@ -190,6 +190,7 @@ export type RecruitmentSettings = {
   open: boolean;
   test_material?: {
     url: string;
+    tl_example_url: string;
     ts_assets_url: string;
     expires_at: string;
     hours_remaining: number | null;
@@ -569,9 +570,10 @@ const demoApi = {
   recruitmentSettings: async (): Promise<RecruitmentSettings> => ({
     open: true,
     test_material: {
-      url: "https://filebin.net/9bxr0sxjfgnxehc",
+      url: "https://filebin.net/foqyxmztslglks1h",
+      tl_example_url: "https://drive.google.com/drive/folders/1QxunNgc8gQldtOmuDeIB7GPLfIOIa8fi",
       ts_assets_url: "https://drive.google.com/drive/folders/1SDLA-6M42CUfkeqSaXOF1KibE_0y9PfO?usp=sharing",
-      expires_at: "2026-08-11T12:56:30+00:00",
+      expires_at: "2026-08-12T11:04:50+00:00",
       hours_remaining: 144,
       status: "active",
     },
