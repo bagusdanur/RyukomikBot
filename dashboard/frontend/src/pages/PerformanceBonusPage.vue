@@ -132,7 +132,7 @@ onMounted(load);
       </div>
       <div class="hero-actions">
         <button class="primary" @click="manualBonusOpen=true; newManual.period = period">
-          <i class="pi pi-plus"></i> Bonus Manual
+          <i class="pi pi-gift"></i> Bonus Manual
         </button>
         <button class="secondary" @click="settingsOpen=true">
           <i class="pi pi-cog"></i> Atur skema
@@ -156,7 +156,7 @@ onMounted(load);
     <section class="bonus-list" v-if="manualBonuses.length">
       <div class="section-title">
         <div>
-          <h4>🎁 Bonus Manual ({{ period }})</h4>
+          <h4><i class="pi pi-gift"></i> Bonus Manual ({{ period }})</h4>
           <p>Bonus yang diberikan admin secara langsung tanpa batas tier.</p>
         </div>
         <span>{{ manualBonuses.length }} bonus</span>
@@ -192,59 +192,72 @@ onMounted(load);
     </section>
 
     <!-- Modal Detail Performance Bonus -->
-    <div v-if="detail" class="bonus-modal" @click.self="detail=null"><section class="bonus-sheet">
-      <header><div><span class="kicker">BUKTI PERHITUNGAN</span><h3>{{ detail.staff_name || "Nama Discord belum tersinkron" }}</h3><p>Periode {{ detail.period }}</p></div><button @click="detail=null">×</button></header>
-      <div class="score-ring"><strong>{{ detail.total_score.toFixed(1) }}</strong><span>Skor total</span></div>
-      <div class="metric-grid"><article><span>Kualitas</span><b>{{ detail.quality_score.toFixed(1) }}</b><small>{{ detail.revision_chapters }} chapter terdampak revisi</small></article><article><span>Kecepatan</span><b>{{ detail.speed_score === null ? 'Dialihkan' : detail.speed_score.toFixed(1) }}</b><small>{{ detail.on_time_chapters }}/{{ detail.deadline_chapters }} tepat waktu</small></article><article><span>Konsistensi</span><b>{{ detail.consistency_score.toFixed(1) }}</b><small>{{ detail.overdue_chapters }} chapter terlambat</small></article></div>
-      <div class="bonus-total"><span>Usulan {{ detail.percentage }}%</span><strong>{{ money(detail.proposed_amount) }}</strong><small>Dari {{ money(detail.eligible_earnings) }}, dibatasi {{ money(settings.max_amount) }}</small></div>
-      <div class="evidence"><h4>Riwayat tugas</h4><article v-for="task in detail.metrics.assignments || []" :key="String(task.assignment_id)"><div><b>{{ task.manga }}</b><span>Ch {{ task.chapter }} · {{ task.role }}</span></div><span>{{ Number(task.revision_count) ? `${task.revision_count} revisi` : 'Tanpa revisi' }}</span></article></div>
-      <footer v-if="detail.status==='pending'"><button class="danger" @click="rejectTarget=detail;detail=null">Tolak</button><button class="primary" :disabled="saving" @click="approve(detail)"><i class="pi pi-check"></i> Setujui Bonus</button></footer>
-    </section></div>
+    <div v-if="detail" class="modal-backdrop" @click.self="detail=null">
+      <section class="bonus-sheet">
+        <header><div><span class="kicker">BUKTI PERHITUNGAN</span><h3>{{ detail.staff_name || "Nama Discord belum tersinkron" }}</h3><p>Periode {{ detail.period }}</p></div><button @click="detail=null">×</button></header>
+        <div class="score-ring"><strong>{{ detail.total_score.toFixed(1) }}</strong><span>Skor total</span></div>
+        <div class="metric-grid"><article><span>Kualitas</span><b>{{ detail.quality_score.toFixed(1) }}</b><small>{{ detail.revision_chapters }} chapter terdampak revisi</small></article><article><span>Kecepatan</span><b>{{ detail.speed_score === null ? 'Dialihkan' : detail.speed_score.toFixed(1) }}</b><small>{{ detail.on_time_chapters }}/{{ detail.deadline_chapters }} tepat waktu</small></article><article><span>Konsistensi</span><b>{{ detail.consistency_score.toFixed(1) }}</b><small>{{ detail.overdue_chapters }} chapter terlambat</small></article></div>
+        <div class="bonus-total"><span>Usulan {{ detail.percentage }}%</span><strong>{{ money(detail.proposed_amount) }}</strong><small>Dari {{ money(detail.eligible_earnings) }}, dibatasi {{ money(settings.max_amount) }}</small></div>
+        <div class="evidence"><h4>Riwayat tugas</h4><article v-for="task in detail.metrics.assignments || []" :key="String(task.assignment_id)"><div><b>{{ task.manga }}</b><span>Ch {{ task.chapter }} · {{ task.role }}</span></div><span>{{ Number(task.revision_count) ? `${task.revision_count} revisi` : 'Tanpa revisi' }}</span></article></div>
+        <footer v-if="detail.status==='pending'"><button class="danger" @click="rejectTarget=detail;detail=null">Tolak</button><button class="primary" :disabled="saving" @click="approve(detail)"><i class="pi pi-check"></i> Setujui Bonus</button></footer>
+      </section>
+    </div>
 
     <!-- Modal Reject -->
-    <div v-if="rejectTarget" class="bonus-modal" @click.self="rejectTarget=null"><section class="small-sheet"><h3>Tolak bonus</h3><p>Alasan tercatat di audit dan tidak ditampilkan publik.</p><textarea v-model="rejectionReason" rows="4" placeholder="Contoh: data deadline perlu diperiksa ulang"></textarea><div><button class="secondary" @click="rejectTarget=null">Batal</button><button class="danger" :disabled="saving" @click="reject">Konfirmasi Tolak</button></div></section></div>
+    <div v-if="rejectTarget" class="modal-backdrop" @click.self="rejectTarget=null">
+      <section class="modal-card" style="width:min(440px,100%)">
+        <div class="modal-head"><h3>Tolak bonus</h3><button @click="rejectTarget=null">×</button></div>
+        <p style="color:var(--muted);margin-bottom:14px">Alasan tercatat di audit dan tidak ditampilkan publik.</p>
+        <textarea v-model="rejectionReason" rows="4" placeholder="Contoh: data deadline perlu diperiksa ulang" style="width:100%;box-sizing:border-box;padding:12px;background:#0b0f17;border:1px solid #293244;color:#fff;border-radius:10px"></textarea>
+        <div class="modal-actions"><button class="secondary" @click="rejectTarget=null">Batal</button><button class="danger" :disabled="saving" @click="reject">Konfirmasi Tolak</button></div>
+      </section>
+    </div>
 
     <!-- Modal Settings -->
-    <div v-if="settingsOpen" class="bonus-modal" @click.self="settingsOpen=false"><section class="bonus-sheet settings-sheet"><header><div><span class="kicker">BONUS RULES</span><h3>Atur skema bonus</h3><p>Perubahan hanya memengaruhi evaluasi yang dihitung ulang.</p></div><button @click="settingsOpen=false">×</button></header><h4>Bobot skor (total 100%)</h4><div class="form-grid"><label>Kualitas (%)<input v-model.number="settings.quality_weight" type="number" /></label><label>Kecepatan (%)<input v-model.number="settings.speed_weight" type="number" /></label><label>Konsistensi (%)<input v-model.number="settings.consistency_weight" type="number" /></label><label>Minimal chapter<input v-model.number="settings.min_chapters" type="number" /></label></div><h4>Tier dan persentase</h4><div class="tier-settings"><label>Baik<input v-model.number="settings.tier_1_score" type="number" /><input v-model.number="settings.tier_1_percent" type="number" /><span>%</span></label><label>Sangat Baik<input v-model.number="settings.tier_2_score" type="number" /><input v-model.number="settings.tier_2_percent" type="number" /><span>%</span></label><label>Istimewa<input v-model.number="settings.tier_3_score" type="number" /><input v-model.number="settings.tier_3_percent" type="number" /><span>%</span></label></div><label class="cap">Batas bonus per staff<input v-model.number="settings.max_amount" type="number" /></label><footer><button class="secondary" @click="settingsOpen=false">Batal</button><button class="primary" :disabled="saving" @click="saveSettings">Simpan aturan</button></footer></section></div>
+    <div v-if="settingsOpen" class="modal-backdrop" @click.self="settingsOpen=false">
+      <section class="bonus-sheet settings-sheet"><header><div><span class="kicker">BONUS RULES</span><h3>Atur skema bonus</h3><p>Perubahan hanya memengaruhi evaluasi yang dihitung ulang.</p></div><button @click="settingsOpen=false">×</button></header><h4>Bobot skor (total 100%)</h4><div class="form-grid"><label>Kualitas (%)<input v-model.number="settings.quality_weight" type="number" /></label><label>Kecepatan (%)<input v-model.number="settings.speed_weight" type="number" /></label><label>Konsistensi (%)<input v-model.number="settings.consistency_weight" type="number" /></label><label>Minimal chapter<input v-model.number="settings.min_chapters" type="number" /></label></div><h4>Tier dan persentase</h4><div class="tier-settings"><label>Baik<input v-model.number="settings.tier_1_score" type="number" /><input v-model.number="settings.tier_1_percent" type="number" /><span>%</span></label><label>Sangat Baik<input v-model.number="settings.tier_2_score" type="number" /><input v-model.number="settings.tier_2_percent" type="number" /><span>%</span></label><label>Istimewa<input v-model.number="settings.tier_3_score" type="number" /><input v-model.number="settings.tier_3_percent" type="number" /><span>%</span></label></div><label class="cap">Batas bonus per staff<input v-model.number="settings.max_amount" type="number" /></label><footer><button class="secondary" @click="settingsOpen=false">Batal</button><button class="primary" :disabled="saving" @click="saveSettings">Simpan aturan</button></footer></section>
+    </div>
 
-    <!-- Modal Create Manual Bonus (Sleek Modern Form) -->
-    <div v-if="manualBonusOpen" class="bonus-modal" @click.self="manualBonusOpen=false">
-      <section class="small-sheet modal-card">
-        <header class="modal-header">
+    <!-- Modal Create Manual Bonus (Using System Standard Modal & Form Grid) -->
+    <div v-if="manualBonusOpen" class="modal-backdrop" @click.self="manualBonusOpen=false">
+      <section class="modal-card">
+        <div class="modal-head">
           <div>
             <span class="kicker">MANUAL REWARD</span>
-            <h3 class="modal-title">🎁 Bonus Manual Staff</h3>
+            <h3 style="display:flex;align-items:center;gap:8px">
+              <i class="pi pi-gift" style="color:#45d7a1"></i> Bonus Manual Staff
+            </h3>
           </div>
-          <button class="close-btn" @click="manualBonusOpen=false">×</button>
-        </header>
-        <p class="modal-sub">Beri bonus manual jumlah berapa pun ke staff untuk mengapresiasi kontribusi ekstra.</p>
+          <button @click="manualBonusOpen=false">×</button>
+        </div>
 
-        <div class="form-container">
-          <div class="form-field">
-            <label>Pilih Staff</label>
-            <select v-model="newManual.staff_id" class="custom-select">
+        <p class="muted" style="margin-bottom:16px">Beri bonus manual jumlah berapa pun ke staff untuk mengapresiasi kontribusi ekstra.</p>
+
+        <div class="form-grid">
+          <label class="wide">
+            Pilih Staff
+            <select v-model="newManual.staff_id">
               <option value="" disabled>-- Pilih Staff Penerima --</option>
               <option v-for="s in staffList" :key="s.staff_id" :value="s.staff_id">
                 {{ s.username }} (ID: {{ s.staff_id }})
               </option>
             </select>
-          </div>
+          </label>
 
-          <div class="form-grid-2">
-            <div class="form-field">
-              <label>Jumlah Bonus (Rp)</label>
-              <input v-model.number="newManual.amount" type="number" step="1000" placeholder="15000" class="custom-input" />
-            </div>
-            <div class="form-field">
-              <label>Periode</label>
-              <input v-model="newManual.period" type="month" class="custom-input" />
-            </div>
-          </div>
+          <label>
+            Jumlah Bonus (Rp)
+            <input v-model.number="newManual.amount" type="number" step="1000" placeholder="15000" />
+          </label>
 
-          <div class="form-field">
-            <label>Alasan Bonus</label>
-            <input v-model="newManual.reason" type="text" placeholder="Contoh: Lembur deadline ketat / QC extra" class="custom-input" />
-          </div>
+          <label>
+            Periode
+            <input v-model="newManual.period" type="month" />
+          </label>
+
+          <label class="wide">
+            Alasan Bonus
+            <input v-model="newManual.reason" type="text" placeholder="Contoh: Lembur deadline ketat / QC extra" />
+          </label>
         </div>
 
         <div class="modal-actions">
@@ -258,23 +271,7 @@ onMounted(load);
 
 <style scoped>
 .staff img.avatar{object-fit:cover;background:#20283a}
-.bonus-page{display:grid;gap:18px;color:#eef2ff}.bonus-hero,.bonus-toolbar,.bonus-list,.bonus-summary article{border:1px solid #263044;background:#101722;border-radius:18px}.bonus-hero{padding:24px;display:flex;align-items:center;justify-content:space-between;gap:20px}.kicker{color:#8e9dff;font-size:11px;font-weight:800;letter-spacing:.18em}.bonus-hero h3,.bonus-sheet h3{font-size:26px;margin:7px 0}.bonus-hero p,.bonus-sheet p,.section-title p{color:#91a0b9;margin:0}.bonus-toolbar{padding:14px;display:flex;align-items:end;gap:12px}.bonus-toolbar label,.form-grid label,.cap{display:grid;gap:7px;color:#9eabc1;font-size:12px}.bonus-toolbar input,.bonus-toolbar select,input,textarea{min-height:43px;border:1px solid #303b51;border-radius:11px;background:#0b111b;color:#fff;padding:0 12px}.primary,.secondary,.danger{border:0;border-radius:11px;padding:12px 18px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:8px}.primary{background:#31d3a0;color:#06150f}.secondary{background:#202838;color:#dce4f5}.danger{background:#ef5262;color:#fff}.bonus-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.bonus-summary article{padding:18px;display:grid;gap:5px}.bonus-summary span,.bonus-summary small{color:#91a0b9}.bonus-summary strong{font-size:23px}.bonus-list{padding:20px}.section-title{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}.section-title h4,.evidence h4,.settings-sheet h4{margin:0 0 5px}.bonus-card{width:100%;display:grid;grid-template-columns:minmax(180px,1.6fr) 80px 130px 120px 20px;align-items:center;gap:16px;text-align:left;color:#eaf0ff;background:#0c131e;border:1px solid #222e42;border-radius:14px;padding:14px;margin-top:9px;cursor:pointer}.manual-card{width:100%;display:grid;grid-template-columns:minmax(180px,1.6fr) 130px 120px 80px;align-items:center;gap:16px;text-align:left;color:#eaf0ff;background:#0c131e;border:1px solid #222e42;border-radius:14px;padding:14px;margin-top:9px}.danger-btn{border:0;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;background:#ef5262;color:#fff;cursor:pointer}.staff{display:flex;align-items:center;gap:11px}.staff .avatar{width:39px;height:39px;border-radius:12px;background:#6978ed;display:grid;place-items:center;font-weight:800}.staff div:last-child{display:grid;gap:4px}.staff span,.score span{color:#8c9ab1;font-size:12px}.score strong{font-size:22px}.bonus-card>div:nth-child(3){display:grid;gap:4px}.tier{font-size:11px;color:#8fa1ff}.state{border-radius:99px;padding:6px 9px;text-align:center;font-size:11px;font-weight:700;background:#273044}.state.pending{color:#ffc96b;background:#332817}.state.approved,.state.invoiced,.state.paid{color:#63e1ae;background:#15382e}.state.rejected,.state.cancelled{color:#ff8994;background:#3d1d25}.empty{min-height:190px;border:1px dashed #2b374c;border-radius:14px;display:grid;place-content:center;text-align:center;gap:8px;color:#8796ae}.bonus-modal{position:fixed;inset:0;background:#050810d9;z-index:1000;display:grid;place-items:center;padding:18px}.bonus-sheet,.small-sheet{width:min(720px,100%);max-height:min(90vh,850px);overflow:auto;background:#111925;border:1px solid #303c53;border-radius:20px;padding:24px}.small-sheet{width:min(480px,100%)}.bonus-sheet header{display:flex;justify-content:space-between}.bonus-sheet header>button{border:0;background:transparent;color:#9dabc0;font-size:28px}.hero-actions{display:flex;gap:10px;align-items:center}
-
-/* Modern Form & Modal Styling */
-.modal-card{padding:24px;border-radius:20px;background:#111925;border:1px solid #2d3950;box-shadow:0 25px 60px rgba(0,0,0,0.6)}
-.modal-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px}
-.modal-title{margin:4px 0 0;font-size:22px;font-weight:700;color:#fff}
-.modal-sub{color:#94a2b8;font-size:13px;margin:0 0 20px;line-height:1.5}
-.close-btn{border:0;background:transparent;color:#9dabc0;font-size:26px;line-height:1;cursor:pointer;padding:0 4px}
-.close-btn:hover{color:#fff}
-.form-container{display:grid;gap:16px}
-.form-grid-2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-.form-field{display:flex;flex-direction:column;gap:6px;text-align:left}
-.form-field label{font-size:12px;font-weight:700;color:#9eabc1;text-transform:uppercase;letter-spacing:.05em}
-.custom-input,.custom-select{width:100%;box-sizing:border-box;min-height:44px;border:1px solid #2e3b52;border-radius:11px;background:#0b111b;color:#fff;padding:0 14px;font-size:14px;outline:0;transition:border-color .2s}
-.custom-input:focus,.custom-select:focus{border-color:#31d3a0}
-.modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:24px}
-
-.score-ring{width:120px;height:120px;border-radius:50%;margin:20px auto;display:grid;place-content:center;text-align:center;background:radial-gradient(circle,#111925 59%,transparent 61%),conic-gradient(#48d7ad 0 82%,#293246 82%)}.score-ring strong{font-size:29px}.score-ring span{font-size:11px;color:#97a5bb}.metric-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.metric-grid article,.bonus-total{padding:15px;border-radius:13px;border:1px solid #29364a;background:#0b121d;display:grid;gap:5px}.metric-grid span,.metric-grid small,.bonus-total span,.bonus-total small{color:#91a0b8;font-size:12px}.metric-grid b{font-size:21px}.bonus-total{margin-top:10px}.bonus-total strong{font-size:25px;color:#4bdcaf}.evidence{margin-top:20px}.evidence article{display:flex;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px solid #253047}.evidence article div{display:grid;gap:3px}.evidence span{color:#91a0b8;font-size:12px}.bonus-sheet footer,.small-sheet>div{display:flex;justify-content:flex-end;gap:9px;margin-top:20px}.form-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.tier-settings{display:grid;gap:8px}.tier-settings label{display:grid;grid-template-columns:1fr 90px 90px 20px;align-items:center;gap:8px}.cap{margin-top:15px}.bonus-alert{padding:12px 14px;border-radius:11px;display:flex;justify-content:space-between}.bonus-alert.error{background:#3a1e28;color:#ff9ba6}.bonus-alert.success{background:#17392f;color:#79e4bc}.bonus-alert button{border:0;background:none;color:inherit}.small-sheet textarea{width:100%;box-sizing:border-box;padding:12px}.small-sheet p{color:#94a2b8}
-@media(max-width:700px){.bonus-page{gap:12px}.bonus-hero{padding:18px;align-items:flex-start;flex-direction:column}.bonus-hero h3{font-size:22px}.bonus-hero p{font-size:13px}.bonus-toolbar{display:grid;grid-template-columns:1fr 1fr}.bonus-toolbar .primary{grid-column:1/-1}.bonus-summary{grid-template-columns:1fr 1fr}.bonus-summary article:last-child{grid-column:1/-1}.bonus-list{padding:14px}.bonus-card,.manual-card{grid-template-columns:1fr auto;padding:14px}.bonus-card>.staff,.manual-card>.staff{grid-column:1/-1}.bonus-card>.score{grid-column:1}.bonus-card>div:nth-child(3){grid-column:2;text-align:right}.bonus-card>.state{grid-column:1}.bonus-card>i{grid-column:2;grid-row:3}.bonus-sheet{padding:18px;border-radius:18px 18px 0 0;max-height:92vh}.bonus-modal{align-items:end;padding:0}.metric-grid{grid-template-columns:1fr}.form-grid{grid-template-columns:1fr 1fr}.tier-settings label{grid-template-columns:1fr 60px 60px 15px}.section-title{align-items:flex-start}.form-grid-2{grid-template-columns:1fr}}
+.bonus-page{display:grid;gap:18px;color:#eef2ff}.bonus-hero,.bonus-toolbar,.bonus-list,.bonus-summary article{border:1px solid #263044;background:#101722;border-radius:18px}.bonus-hero{padding:24px;display:flex;align-items:center;justify-content:space-between;gap:20px}.kicker{color:#8e9dff;font-size:11px;font-weight:800;letter-spacing:.18em}.bonus-hero h3,.bonus-sheet h3{font-size:26px;margin:7px 0}.bonus-hero p,.bonus-sheet p,.section-title p{color:#91a0b9;margin:0}.bonus-toolbar{padding:14px;display:flex;align-items:end;gap:12px}.bonus-toolbar label,.form-grid label,.cap{display:grid;gap:7px;color:#9eabc1;font-size:12px}.bonus-toolbar input,.bonus-toolbar select,input,textarea{min-height:43px;border:1px solid #303b51;border-radius:11px;background:#0b111b;color:#fff;padding:0 12px;outline:none}.primary,.secondary,.danger{border:0;border-radius:11px;padding:12px 18px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:8px}.primary{background:#31d3a0;color:#06150f}.secondary{background:#202838;color:#dce4f5}.danger{background:#ef5262;color:#fff}.bonus-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.bonus-summary article{padding:18px;display:grid;gap:5px}.bonus-summary span,.bonus-summary small{color:#91a0b9}.bonus-summary strong{font-size:23px}.bonus-list{padding:20px}.section-title{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}.section-title h4,.evidence h4,.settings-sheet h4{margin:0 0 5px}.bonus-card{width:100%;display:grid;grid-template-columns:minmax(180px,1.6fr) 80px 130px 120px 20px;align-items:center;gap:16px;text-align:left;color:#eaf0ff;background:#0c131e;border:1px solid #222e42;border-radius:14px;padding:14px;margin-top:9px;cursor:pointer}.manual-card{width:100%;display:grid;grid-template-columns:minmax(180px,1.6fr) 130px 120px 80px;align-items:center;gap:16px;text-align:left;color:#eaf0ff;background:#0c131e;border:1px solid #222e42;border-radius:14px;padding:14px;margin-top:9px}.danger-btn{border:0;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;background:#ef5262;color:#fff;cursor:pointer}.staff{display:flex;align-items:center;gap:11px}.staff .avatar{width:39px;height:39px;border-radius:12px;background:#6978ed;display:grid;place-items:center;font-weight:800}.staff div:last-child{display:grid;gap:4px}.staff span,.score span{color:#8c9ab1;font-size:12px}.score strong{font-size:22px}.bonus-card>div:nth-child(3){display:grid;gap:4px}.tier{font-size:11px;color:#8fa1ff}.state{border-radius:99px;padding:6px 9px;text-align:center;font-size:11px;font-weight:700;background:#273044}.state.pending{color:#ffc96b;background:#332817}.state.approved,.state.invoiced,.state.paid{color:#63e1ae;background:#15382e}.state.rejected,.state.cancelled{color:#ff8994;background:#3d1d25}.empty{min-height:190px;border:1px dashed #2b374c;border-radius:14px;display:grid;place-content:center;text-align:center;gap:8px;color:#8796ae}.hero-actions{display:flex;gap:10px;align-items:center}
+.score-ring{width:120px;height:120px;border-radius:50%;margin:20px auto;display:grid;place-content:center;text-align:center;background:radial-gradient(circle,#111925 59%,transparent 61%),conic-gradient(#48d7ad 0 82%,#293246 82%)}.score-ring strong{font-size:29px}.score-ring span{font-size:11px;color:#97a5bb}.metric-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.metric-grid article,.bonus-total{padding:15px;border-radius:13px;border:1px solid #29364a;background:#0b121d;display:grid;gap:5px}.metric-grid span,.metric-grid small,.bonus-total span,.bonus-total small{color:#91a0b8;font-size:12px}.metric-grid b{font-size:21px}.bonus-total{margin-top:10px}.bonus-total strong{font-size:25px;color:#4bdcaf}.evidence{margin-top:20px}.evidence article{display:flex;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px solid #253047}.evidence article div{display:grid;gap:3px}.evidence span{color:#91a0b8;font-size:12px}.form-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}.tier-settings{display:grid;gap:8px}.tier-settings label{display:grid;grid-template-columns:1fr 90px 90px 20px;align-items:center;gap:8px}.cap{margin-top:15px}.bonus-alert{padding:12px 14px;border-radius:11px;display:flex;justify-content:space-between}.bonus-alert.error{background:#3a1e28;color:#ff9ba6}.bonus-alert.success{background:#17392f;color:#79e4bc}.bonus-alert button{border:0;background:none;color:inherit}
+@media(max-width:700px){.bonus-page{gap:12px}.bonus-hero{padding:18px;align-items:flex-start;flex-direction:column}.bonus-hero h3{font-size:22px}.bonus-hero p{font-size:13px}.bonus-toolbar{display:grid;grid-template-columns:1fr 1fr}.bonus-toolbar .primary{grid-column:1/-1}.bonus-summary{grid-template-columns:1fr 1fr}.bonus-summary article:last-child{grid-column:1/-1}.bonus-list{padding:14px}.bonus-card,.manual-card{grid-template-columns:1fr auto;padding:14px}.bonus-card>.staff,.manual-card>.staff{grid-column:1/-1}.bonus-card>.score{grid-column:1}.bonus-card>div:nth-child(3){grid-column:2;text-align:right}.bonus-card>.state{grid-column:1}.bonus-card>i{grid-column:2;grid-row:3}.metric-grid{grid-template-columns:1fr}.form-grid{grid-template-columns:1fr}.tier-settings label{grid-template-columns:1fr 60px 60px 15px}.section-title{align-items:flex-start}}
 </style>
