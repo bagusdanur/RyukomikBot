@@ -1,4 +1,4 @@
-﻿import discord
+import discord
 
 import asyncio
 
@@ -75,10 +75,17 @@ class StaffPanelView(discord.ui.View):
     async def income_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=False)
         period = get_current_period()
-        period_stats, lifetime_stats = await asyncio.gather(
+        import performance_bonus as bonus_service
+        period_stats, lifetime_stats, manual_bonuses = await asyncio.gather(
             db.get_staff_stats(interaction.user.id, period),
             db.get_staff_stats(interaction.user.id),
+            bonus_service.list_manual_bonuses(staff_id=interaction.user.id),
         )
+        pending_manual = [b for b in manual_bonuses if b["status"] == "approved"]
+        paid_manual = [b for b in manual_bonuses if b["status"] in ("invoiced", "paid")]
+        pending_manual_total = sum(b["amount"] for b in pending_manual)
+        paid_manual_total = sum(b["amount"] for b in paid_manual)
+
         embed = discord.Embed(
             title="Penghasilan Saya",
             description=(
@@ -113,6 +120,21 @@ class StaffPanelView(discord.ui.View):
             ),
             inline=False,
         )
+        # Manual bonus section
+        if pending_manual or paid_manual:
+            bonus_lines = []
+            if pending_manual:
+                bonus_lines.append(f"🎁 Menunggu cair: **{format_currency(pending_manual_total)}** ({len(pending_manual)} bonus)")
+                for b in pending_manual[:3]:
+                    bonus_lines.append(f"  └ {format_currency(b['amount'])} — {b['reason']}")
+            if paid_manual:
+                bonus_lines.append(f"✅ Sudah dibayar: **{format_currency(paid_manual_total)}**")
+            embed.add_field(
+                name="🎁 Bonus Manual",
+                value="\n".join(bonus_lines),
+                inline=False,
+            )
+
         methods = await payments.list_methods(interaction.user.id)
         default = next((item for item in methods if item["is_default"]), None)
         payouts = await payments.list_staff_payouts(interaction.user.id)

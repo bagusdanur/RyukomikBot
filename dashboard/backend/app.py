@@ -532,6 +532,13 @@ class BonusRejectRequest(BaseModel):
     reason: str = Field(min_length=3, max_length=500)
 
 
+class ManualBonusCreateRequest(BaseModel):
+    staff_id: str = Field(min_length=1)
+    amount: int = Field(gt=0)
+    reason: str = Field(min_length=1, max_length=200)
+    period: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}$")
+
+
 class OperationAction(BaseModel):
     id: int = Field(gt=0)
 
@@ -2970,6 +2977,49 @@ async def reject_performance_bonus(bonus_id: int, payload: BonusRejectRequest, u
     await audit(user["id"], "performance_bonus.reject", "performance_bonus", bonus_id,
                 {"status": "pending"}, {"status": "rejected", "reason": payload.reason})
     return result
+
+
+@app.get("/api/manual-bonuses")
+async def list_manual_bonuses_route(
+    staff_id: str | None = Query(default=None),
+    period: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
+    status: str | None = Query(default=None),
+    _user=Depends(admin_user),
+):
+    return await enrich_staff(await bonus_service.list_manual_bonuses(staff_id, period, status))
+
+
+@app.post("/api/manual-bonuses")
+async def create_manual_bonus_route(payload: ManualBonusCreateRequest, user=Depends(admin_user)):
+    try:
+        result = await bonus_service.create_manual_bonus(
+            staff_id=payload.staff_id,
+            amount=payload.amount,
+            reason=payload.reason,
+            created_by=user["id"],
+            period=payload.period,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    await audit(
+        user["id"], "manual_bonus.create", "manual_bonus", str(result["id"]),
+        None, result
+    )
+    return result
+
+
+@app.post("/api/manual-bonuses/{bonus_id}/cancel")
+async def cancel_manual_bonus_route(bonus_id: int, user=Depends(admin_user)):
+    try:
+        result = await bonus_service.cancel_manual_bonus(bonus_id, user["id"])
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await audit(
+        user["id"], "manual_bonus.cancel", "manual_bonus", str(bonus_id),
+        {"status": "approved"}, {"status": "cancelled"}
+    )
+    return result
+
 
 
 @app.get("/api/audit")

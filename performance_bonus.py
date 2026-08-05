@@ -90,6 +90,30 @@ async def setup_tables(connection=None):
             );
             CREATE INDEX IF NOT EXISTS idx_invoice_bonus_invoice
                 ON dashboard_invoice_bonus_items(invoice_id);
+            CREATE TABLE IF NOT EXISTS manual_bonuses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                staff_id TEXT NOT NULL,
+                amount INTEGER NOT NULL CHECK(amount > 0),
+                reason TEXT NOT NULL,
+                period TEXT,
+                status TEXT NOT NULL DEFAULT 'approved',
+                invoice_id INTEGER,
+                created_by TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                cancelled_at DATETIME,
+                cancelled_by TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_manual_bonus_staff_status
+                ON manual_bonuses(staff_id,status);
+            CREATE TABLE IF NOT EXISTS dashboard_invoice_manual_bonus_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                invoice_id INTEGER NOT NULL,
+                manual_bonus_id INTEGER NOT NULL UNIQUE,
+                description TEXT NOT NULL,
+                amount INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_invoice_manual_bonus_invoice
+                ON dashboard_invoice_manual_bonus_items(invoice_id);
         """)
         # One-time safe rebalance: only replace known untouched defaults.
         # Any configuration already customized by an administrator is preserved.
@@ -368,3 +392,158 @@ async def release_invoice(connection, invoice_id):
     await connection.execute("""UPDATE performance_bonuses SET status='approved',invoice_id=NULL
         WHERE invoice_id=? AND status='invoiced'""", (invoice_id,))
     await connection.execute("DELETE FROM dashboard_invoice_bonus_items WHERE invoice_id=?", (invoice_id,))
+
+
+# ==================== MANUAL BONUS ====================
+
+
+async def create_manual_bonus(staff_id, amount, reason, created_by, period=None):
+    """Admin gives a manual bonus to a staff member — any amount, any time."""
+    if not reason or not str(reason).strip():
+        raise ValueError("Alasan bonus wajib diisi.")
+    if int(amount) <= 0:
+        raise ValueError("Jumlah bonus harus lebih dari 0.")
+    period = period or datetime.now(JAKARTA).strftime("%Y-%m")
+    connection = await _db()
+    try:
+        cursor = await connection.execute(
+            """INSERT INTO manual_bonuses
+               (staff_id,amount,reason,period,status,created_by)
+               VALUES(?,?,?,?,'approved',?)""",
+            (str(staff_id), int(amount), str(reason).strip(), period, str(created_by)),
+        )
+        bonus_id = cursor.lastrowid
+        await connection.execute(
+            """INSERT INTO performance_bonus_events
+               (bonus_id,event_type,actor_id,before_json,after_json)
+               VALUES(?,'manual_bonus_created',?,NULL,?)""",
+            (bonus_id, str(created_by), json.dumps({
+                "staff_id": str(staff_id), "amount": int(amount),
+                "reason": str(reason).strip(), "period": period,
+            })),
+        )
+        await connection.commit()
+        return {"id": bonus_id, "staff_id": str(staff_id), "amount": int(amount),
+                "reason": str(reason).strip(), "period": period, "status": "approved",
+                "created_by": str(created_by)}
+    finally:
+        await connection.close()
+
+
+async def list_manual_bonuses(staff_id=None, period=None, status=None):
+    """List manual bonuses with optional filters."""
+    connection = await _db()
+    try:
+        clauses, params = [], []
+        if staff_id:
+            clauses.append("staff_id=?"); params.append(str(staff_id))
+        if period:
+            clauses.append("period=?"); params.append(period)
+        if status:
+            clauses.append("status=?"); params.append(status)
+        rows = await (await connection.execute(f"""SELECT * FROM manual_bonuses
+            {'WHERE ' + ' AND '.join(clauses) if clauses else ''}
+            ORDER BY created_at DESC""", params)).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        await connection.close()
+
+
+async def get_manual_bonus(bonus_id):
+    """Get a single manual bonus by ID."""
+    connection = await _db()
+    try:
+        row = await (await connection.execute(
+            "SELECT * FROM manual_bonuses WHERE id=?", (bonus_id,)
+        )).fetchone()
+        return dict(row) if row else None
+    finally:
+        await connection.close()
+
+
+async def cancel_manual_bonus(bonus_id, actor_id):
+    """Cancel a manual bonus — only if not yet invoiced."""
+    connection = await _db()
+    try:
+        await connection.execute("BEGIN IMMEDIATE")
+        row = await (await connection.execute(
+            "SELECT * FROM manual_bonuses WHERE id=?", (bonus_id,)
+        )).fetchone()
+        if not row:
+            raise ValueError("Bonus manual tidak ditemukan.")
+        if row["status"] not in {"approved"}:
+            raise ValueError("Bonus manual sudah diproses dan tidak dapat dibatalkan.")
+        await connection.execute(
+            """UPDATE manual_bonuses SET status='cancelled',
+               cancelled_at=CURRENT_TIMESTAMP,cancelled_by=? WHERE id=?""",
+            (str(actor_id), bonus_id),
+        )
+        await connection.execute(
+            """INSERT INTO performance_bonus_events
+               (bonus_id,event_type,actor_id,before_json,after_json)
+               VALUES(?,'manual_bonus_cancelled',?,?,?)""",
+            (bonus_id, str(actor_id), json.dumps(dict(row)),
+             json.dumps({"status": "cancelled"})),
+        )
+        await connection.commit()
+        result = dict(row)
+        result["status"] = "cancelled"
+        return result
+    except Exception:
+        await connection.rollback()
+        raise
+    finally:
+        await connection.close()
+
+
+async def attach_manual_to_invoice(connection, invoice_id, staff_id):
+    """Attach approved manual bonuses to an invoice."""
+    rows = await (await connection.execute(
+        """SELECT * FROM manual_bonuses
+           WHERE staff_id=? AND status='approved' AND invoice_id IS NULL AND amount>0
+           ORDER BY created_at,id""", (str(staff_id),)
+    )).fetchall()
+    for row in rows:
+        await connection.execute(
+            """INSERT OR IGNORE INTO dashboard_invoice_manual_bonus_items
+               (invoice_id,manual_bonus_id,description,amount)
+               VALUES(?,?,?,?)""",
+            (invoice_id, row["id"], f"Bonus Manual: {row['reason']}", row["amount"]),
+        )
+        await connection.execute(
+            """UPDATE manual_bonuses SET status='invoiced',invoice_id=?
+               WHERE id=? AND status='approved' AND invoice_id IS NULL""",
+            (invoice_id, row["id"]),
+        )
+    return sum(int(row["amount"]) for row in rows)
+
+
+async def invoice_manual_bonus_items(connection, invoice_id):
+    """Return manual bonus line items for an invoice."""
+    rows = await (await connection.execute(
+        """SELECT b.*,m.reason,m.period,m.created_by
+           FROM dashboard_invoice_manual_bonus_items b
+           JOIN manual_bonuses m ON m.id=b.manual_bonus_id
+           WHERE b.invoice_id=? ORDER BY b.id""", (invoice_id,)
+    )).fetchall()
+    return [dict(row) for row in rows]
+
+
+async def mark_manual_invoice_paid(connection, invoice_id):
+    """Mark manual bonuses as paid when invoice is paid."""
+    await connection.execute(
+        """UPDATE manual_bonuses SET status='paid'
+           WHERE invoice_id=? AND status='invoiced'""", (invoice_id,)
+    )
+
+
+async def release_manual_invoice(connection, invoice_id):
+    """Release manual bonuses back to approved when invoice is rejected."""
+    await connection.execute(
+        """UPDATE manual_bonuses SET status='approved',invoice_id=NULL
+           WHERE invoice_id=? AND status='invoiced'""", (invoice_id,)
+    )
+    await connection.execute(
+        "DELETE FROM dashboard_invoice_manual_bonus_items WHERE invoice_id=?",
+        (invoice_id,),
+    )

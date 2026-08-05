@@ -243,6 +243,19 @@ export type PerformanceBonusSettings = {
   tier_2_score: number; tier_2_percent: number; tier_3_score: number;
   tier_3_percent: number; max_amount: number;
 };
+export type ManualBonus = {
+  id: number;
+  staff_id: string;
+  staff_name?: string;
+  staff_avatar?: string | null;
+  amount: number;
+  reason: string;
+  period: string | null;
+  status: "approved" | "invoiced" | "paid" | "cancelled";
+  created_by: string;
+  created_at: string;
+};
+
 
 let csrfToken = "";
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -402,6 +415,13 @@ const liveApi = {
   rejectPerformanceBonus: (id: number, reason: string) => request(`/api/performance-bonuses/${id}/reject`, {
     method: "POST", body: JSON.stringify({ reason }),
   }),
+  manualBonuses: (staffId = "", period = "", status = "") =>
+    request<ManualBonus[]>(`/api/manual-bonuses?staff_id=${encodeURIComponent(staffId)}&period=${encodeURIComponent(period)}&status=${encodeURIComponent(status)}`),
+  createManualBonus: (payload: { staff_id: string; amount: number; reason: string; period?: string }) =>
+    request<ManualBonus>("/api/manual-bonuses", { method: "POST", body: JSON.stringify(payload) }),
+  cancelManualBonus: (id: number) =>
+    request<ManualBonus>(`/api/manual-bonuses/${id}/cancel`, { method: "POST" }),
+
   submissions: (assignmentId?: number) =>
     request<Submission[]>(
       `/api/submissions${assignmentId ? `?assignment_id=${assignmentId}` : ""}`,
@@ -698,6 +718,13 @@ const demoApi = {
   updatePerformanceBonusSettings: async (payload: PerformanceBonusSettings) => payload,
   approvePerformanceBonus: async () => ({ ok: true }),
   rejectPerformanceBonus: async () => ({ ok: true }),
+  manualBonuses: async () => [] as ManualBonus[],
+  createManualBonus: async (payload: { staff_id: string; amount: number; reason: string; period?: string }): Promise<ManualBonus> => ({
+    id: 1, staff_id: payload.staff_id, amount: payload.amount, reason: payload.reason, period: payload.period || null,
+    status: "approved", created_by: "1", created_at: new Date().toISOString()
+  }),
+  cancelManualBonus: async (id: number) => ({ id } as ManualBonus),
+
   submissions: async () => [],
   downloadSubmission: async () => ({ download_url: "#" }),
   audit: async () => [

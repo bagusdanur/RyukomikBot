@@ -382,7 +382,10 @@ async def create_payout(staff_id, method_id=None, payout_type="instant", cutoff_
         bonus_rows = await (await connection.execute("""SELECT * FROM performance_bonuses
             WHERE staff_id=? AND status='approved' AND invoice_id IS NULL AND proposed_amount>0""",
             (str(staff_id),))).fetchall()
-        if not items and not bonus_rows:
+        manual_rows = await (await connection.execute("""SELECT * FROM manual_bonuses
+            WHERE staff_id=? AND status='approved' AND invoice_id IS NULL AND amount>0""",
+            (str(staff_id),))).fetchall()
+        if not items and not bonus_rows and not manual_rows:
             raise ValueError("Tidak ada saldo approved yang tersedia untuk dicairkan.")
         snapshot = _method_snapshot(method)
         payout_status = "issued" if method else "awaiting_method"
@@ -390,7 +393,7 @@ async def create_payout(staff_id, method_id=None, payout_type="instant", cutoff_
         number = f"RYU-{period.replace('-', '')}-{staff_id}-{secrets.token_hex(2).upper()}"
         chapter_count = sum(item["chapter_count"] or 1 for item in items)
         assignment_total = sum(item["final_rate"] for item in items)
-        total = assignment_total + sum(int(item["proposed_amount"]) for item in bonus_rows)
+        total = assignment_total + sum(int(item["proposed_amount"]) for item in bonus_rows) + sum(int(item["amount"]) for item in manual_rows)
         invoice = await connection.execute("""INSERT INTO dashboard_invoices
             (invoice_number,staff_id,period,chapter_count,total_amount,status,issued_by,invoice_type)
             VALUES(?,?,?,?,?,'issued',?,?)""",
@@ -408,6 +411,7 @@ async def create_payout(staff_id, method_id=None, payout_type="instant", cutoff_
             [(item["id"], invoice_id) for item in items],
         )
         await bonus_service.attach_approved_to_invoice(connection, invoice_id, staff_id)
+        await bonus_service.attach_manual_to_invoice(connection, invoice_id, staff_id)
         cursor = await connection.execute("""INSERT INTO payout_requests
             (staff_id,payout_type,cycle_key,cutoff_start,cutoff_end,invoice_id,payment_method_id,
              method_snapshot_encrypted,chapter_count,total_amount,status)
@@ -443,9 +447,11 @@ async def ensure_payout_for_invoice(invoice_id):
             raise ValueError("Invoice tidak ditemukan atau sudah diproses.")
         await connection.execute("BEGIN IMMEDIATE")
         bonus_total = await bonus_service.attach_approved_to_invoice(connection, invoice_id, invoice["staff_id"])
-        if bonus_total:
+        manual_total = await bonus_service.attach_manual_to_invoice(connection, invoice_id, invoice["staff_id"])
+        combined_bonus = bonus_total + manual_total
+        if combined_bonus:
             await connection.execute("UPDATE dashboard_invoices SET total_amount=total_amount+? WHERE id=?",
-                                     (bonus_total, invoice_id))
+                                     (combined_bonus, invoice_id))
             invoice = await (await connection.execute("SELECT * FROM dashboard_invoices WHERE id=?", (invoice_id,))).fetchone()
         method = await (await connection.execute("""SELECT * FROM staff_payment_methods
             WHERE staff_id=? AND is_active=1 AND is_default=1 ORDER BY id LIMIT 1""",
@@ -518,14 +524,18 @@ async def _wrap_existing_invoice(staff_id, method, cycle_key, start, end):
                 [(item["id"], invoice["id"]) for item in additions],
             )
         await bonus_service.attach_approved_to_invoice(connection, invoice["id"], staff_id)
+        await bonus_service.attach_manual_to_invoice(connection, invoice["id"], staff_id)
         totals = await (await connection.execute("""SELECT COALESCE(SUM(chapter_count),0) chapters,COALESCE(SUM(amount),0) total
             FROM dashboard_invoice_items WHERE invoice_id=?""", (invoice["id"],))).fetchone()
         bonus_total = int((await (await connection.execute(
             "SELECT COALESCE(SUM(amount),0) total FROM dashboard_invoice_bonus_items WHERE invoice_id=?",
             (invoice["id"],))).fetchone())["total"])
+        manual_bonus_total = int((await (await connection.execute(
+            "SELECT COALESCE(SUM(amount),0) total FROM dashboard_invoice_manual_bonus_items WHERE invoice_id=?",
+            (invoice["id"],))).fetchone())["total"])
         await connection.execute(
             "UPDATE dashboard_invoices SET chapter_count=?,total_amount=?,invoice_type='scheduled' WHERE id=?",
-            (totals["chapters"], totals["total"] + bonus_total, invoice["id"]))
+            (totals["chapters"], totals["total"] + bonus_total + manual_bonus_total, invoice["id"]))
         snapshot = _method_snapshot(method)
         status = "issued" if method else "awaiting_method"
         cursor = await connection.execute("""INSERT INTO payout_requests
@@ -556,6 +566,8 @@ async def create_due_scheduled_payouts(today=None):
                     WHERE a.status='approved' AND date(a.approved_at) BETWEEN ? AND ?
                 UNION SELECT staff_id FROM performance_bonuses
                     WHERE status='approved' AND invoice_id IS NULL AND period<=substr(?,1,7)
+                UNION SELECT staff_id FROM manual_bonuses
+                    WHERE status='approved' AND invoice_id IS NULL
             )""",
                 (str(start), str(end), str(end)))).fetchall()
         finally:
@@ -622,6 +634,7 @@ async def payout_detail(payout_id, include_sensitive=False):
         items = await (await connection.execute("""SELECT * FROM dashboard_invoice_items
             WHERE invoice_id=? ORDER BY assignment_id""", (row["invoice_id"],))).fetchall()
         bonus_items = await bonus_service.invoice_bonus_items(connection, row["invoice_id"])
+        manual_bonus_items = await bonus_service.invoice_manual_bonus_items(connection, row["invoice_id"])
     finally:
         await connection.close()
     result = dict(row)
@@ -634,7 +647,12 @@ async def payout_detail(payout_id, include_sensitive=False):
         "chapter": item["period"], "role": "BONUS", "amount": item["amount"],
         "rate_per_chapter": item["amount"], "chapter_count": 0,
         "approved_at": None, "score": item["total_score"], "percentage": item["percentage"],
-    } for item in bonus_items]
+    } for item in bonus_items] + [{
+        "assignment_id": None, "item_type": "manual_bonus", "manga": f"Bonus Manual: {item['reason']}",
+        "chapter": item.get("period", "-"), "role": "BONUS", "amount": item["amount"],
+        "rate_per_chapter": item["amount"], "chapter_count": 0,
+        "approved_at": None,
+    } for item in manual_bonus_items]
     return result
 
 
@@ -675,6 +693,7 @@ async def pay_payout(payout_id, actor_id):
             [(assignment_id, str(actor_id), f"Pembayaran periode {period}.") for assignment_id in ids],
         )
         await bonus_service.mark_invoice_paid(connection, payout["invoice_id"])
+        await bonus_service.mark_manual_invoice_paid(connection, payout["invoice_id"])
         await connection.execute(
             "UPDATE dashboard_invoices SET status='paid',paid_at=CURRENT_TIMESTAMP WHERE id=?",
             (payout["invoice_id"],),
@@ -720,6 +739,7 @@ async def reject_payout(payout_id, actor_id, reason):
             raise ValueError("Permintaan tidak ditemukan atau sudah diproses.")
         await connection.execute("DELETE FROM dashboard_assignment_billing WHERE invoice_id=?", (payout["invoice_id"],))
         await bonus_service.release_invoice(connection, payout["invoice_id"])
+        await bonus_service.release_manual_invoice(connection, payout["invoice_id"])
         await connection.execute("""UPDATE dashboard_invoices SET status='void',voided_at=CURRENT_TIMESTAMP,
             voided_by=? WHERE id=?""", (actor_id, payout["invoice_id"]))
         await connection.execute("""UPDATE payout_requests SET status='rejected',rejection_reason=?,

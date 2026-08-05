@@ -325,7 +325,7 @@ def render_paid_invoice(detail, staff_name=None, admin_name=None):
         Paragraph("<b>JUMLAH</b>", styles["SlipRight"]),
     ]]
     for index, item in enumerate(detail.get("items") or [], 1):
-        is_bonus = item.get("item_type") == "performance_bonus" or item.get("role") == "BONUS"
+        is_bonus = item.get("item_type") in {"performance_bonus", "manual_bonus"} or item.get("role") == "BONUS"
         title = str(item.get("manga") or "-")
         chapter = str(item.get("chapter") or "-")
         rows.append([

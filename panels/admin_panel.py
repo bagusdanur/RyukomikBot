@@ -127,6 +127,7 @@ class AdminPanelView(discord.ui.View):
     async def guide_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(embed=build_guide_embed("admin"), ephemeral=False)
 
+
     @discord.ui.button(label="Project Scout", style=discord.ButtonStyle.primary, custom_id="admin_project_scout", row=2)
     async def project_scout_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         from config import DASHBOARD_URL
