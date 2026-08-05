@@ -307,15 +307,6 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="Ryukomik Staff Dashboard API", version="1.0.0", lifespan=lifespan)
 
-@app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    import sys
-    print("--- VALIDATION ERROR ---", file=sys.stderr)
-    print("BODY:", exc.body, file=sys.stderr)
-    print("ERRORS:", exc.errors(), file=sys.stderr)
-    print("------------------------", file=sys.stderr)
-    return JSONResponse(status_code=422, content={"detail": exc.errors(), "body": exc.body})
-
 app.add_middleware(
     SessionMiddleware,
     secret_key=SESSION_SECRET or "development-only-change-me",
@@ -543,11 +534,18 @@ class BonusRejectRequest(BaseModel):
     reason: str = Field(min_length=3, max_length=500)
 
 
+from pydantic import BaseModel, Field, field_validator
+
 class ManualBonusCreateRequest(BaseModel):
     staff_id: str = Field(min_length=1)
     amount: int = Field(gt=0)
     reason: str = Field(min_length=1, max_length=200)
     period: str | None = Field(default=None)
+
+    @field_validator("staff_id", mode="before")
+    @classmethod
+    def coerce_staff_id(cls, v):
+        return str(v)
 
 
 
