@@ -747,6 +747,19 @@ async function logout() {
   await api.logout();
   user.value = null;
 }
+async function syncStaff() {
+  try {
+    loading.value = true;
+    error.value = "";
+    const result = await api.syncStaff();
+    success.value = `Sinkronisasi selesai: ${result.count} staff aktif ditemukan.`;
+    await loadPage();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "Sinkronisasi gagal.";
+  } finally {
+    loading.value = false;
+  }
+}
 watch(page, async () => {
   const params = new URLSearchParams(location.search);
   params.set("page", page.value);
@@ -1202,7 +1215,20 @@ onMounted(async () => {
         </div></template
       >
       <template v-if="page === 'staff'"
-        ><div class="people-grid">
+        ><div class="section-header">
+          <div>
+            <span>Tim Staff</span>
+            <small>{{ staff.length }} anggota terdaftar</small>
+          </div>
+          <Button
+            label="Sync Discord"
+            icon="pi pi-refresh"
+            severity="secondary"
+            :loading="loading"
+            @click="syncStaff"
+          />
+        </div>
+        <div class="people-grid">
           <article v-for="s in staff" :key="s.id" class="person-card">
             <div class="person-head">
               <img v-if="s.avatar" :src="s.avatar" /><span

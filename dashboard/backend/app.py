@@ -2211,7 +2211,8 @@ async def staff(
                    SUM(CASE WHEN status='paid' THEN final_rate ELSE 0 END) paid_amount
             FROM assignments WHERE staff_id IS NOT NULL GROUP BY staff_id ORDER BY task_count DESC
         """)).fetchall()
-        stats = {row["staff_id"]: dict(row) for row in rows}
+        # Konversi key ke str agar cocok dengan id dari staff_directory() yang selalu string
+        stats = {str(row["staff_id"]): dict(row) for row in rows}
     finally:
         await connection.close()
     directory = await staff_directory()
