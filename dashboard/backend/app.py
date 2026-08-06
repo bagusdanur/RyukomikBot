@@ -452,7 +452,7 @@ class RecruitmentCloseRequest(BaseModel):
 class AssignmentCreate(BaseModel):
     manga: str = Field(min_length=2, max_length=150)
     chapter: str = Field(min_length=1, max_length=30)
-    staff_id: int
+    staff_id: str
     role: Literal["TL", "TS", "TL+TS"]
     rate_per_chapter: int | None = Field(default=None, ge=0, le=1_000_000)
     final_rate: int | None = Field(default=None, ge=0, le=1_000_000)
@@ -462,8 +462,8 @@ class AssignmentCreate(BaseModel):
 class TlTsPairCreate(BaseModel):
     manga: str = Field(min_length=2, max_length=150)
     chapter: str = Field(min_length=1, max_length=30)
-    tl_staff_id: int
-    ts_staff_id: int
+    tl_staff_id: str
+    ts_staff_id: str
     tl_rate_per_chapter: int = Field(ge=0, le=1_000_000)
     ts_rate_per_chapter: int = Field(ge=0, le=1_000_000)
     deadline_at: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
@@ -495,7 +495,7 @@ class ScoutDecisionRequest(BaseModel):
 
 
 class InvoiceCreate(BaseModel):
-    staff_id: int
+    staff_id: str
     period: str = Field(pattern=r"^\d{4}-\d{2}$")
 
 
@@ -833,6 +833,44 @@ def discord_avatar(member: dict) -> str | None:
         return f"https://cdn.discordapp.com/guilds/{GUILD_ID}/users/{user['id']}/avatars/{avatar}.png?size=128"
     return f"https://cdn.discordapp.com/avatars/{user['id']}/{avatar}.png?size=128"
 
+
+def resolve_staff_id(staff_id: str, profiles: dict) -> str | None:
+    if staff_id in profiles:
+        return staff_id
+    for pid in profiles:
+        if pid[:14] == staff_id[:14]:
+            return pid
+    return None
+
+
+async def resolve_staff_id_with_fallback(staff_id: str, profiles: dict) -> str | None:
+    """Seperti resolve_staff_id, tapi kalau tidak ditemukan di direktori Discord,
+    cek dashboard_staff_cache DB sebagai fallback. Ini mengatasi kondisi di mana
+    cache direktori expired dan Discord API mengembalikan data segar yang mungkin
+    belum mencerminkan perubahan role, atau saat ada race condition antara
+    dropdown (in-memory cache) dan validasi saat submit."""
+    result = resolve_staff_id(staff_id, profiles)
+    if result:
+        return result
+    # Fallback: cek dashboard_staff_cache DB
+    connection = await dashboard_db()
+    try:
+        row = await (await connection.execute(
+            "SELECT staff_id FROM dashboard_staff_cache WHERE staff_id=?",
+            (staff_id,),
+        )).fetchone()
+        if row:
+            return str(row[0])
+        # Partial match (14 karakter pertama)
+        row = await (await connection.execute(
+            "SELECT staff_id FROM dashboard_staff_cache WHERE SUBSTR(staff_id,1,14)=?",
+            (staff_id[:14],),
+        )).fetchone()
+        if row:
+            return str(row[0])
+    finally:
+        await connection.close()
+    return None
 
 def member_profile(member: dict):
     discord_user = member.get("user", {})
@@ -1861,8 +1899,10 @@ async def create_dashboard_assignment(payload: AssignmentCreate, user=Depends(ad
             ),
         )
     profiles = {item["id"]: item for item in await staff_directory()}
-    if payload.staff_id not in profiles:
-        raise HTTPException(status_code=422, detail="Staff tidak ditemukan atau tidak memiliki role Staff.")
+    real_staff_id = await resolve_staff_id_with_fallback(payload.staff_id, profiles)
+    if not real_staff_id:
+        raise HTTPException(status_code=422, detail="Staff tidak ditemukan. Pastikan staff sudah memiliki role Staff di Discord, atau coba sinkronisasi ulang daftar staff.")
+    payload.staff_id = real_staff_id
     assignment_id = await staff_db.create_assignment(
         manga=payload.manga.strip(), chapter=chapter_display(chapters), chapters=chapters, role=payload.role,
         base_rate=rate_per_chapter, rate_per_chapter=rate_per_chapter,
@@ -1895,9 +1935,13 @@ async def create_tl_ts_pair(payload: TlTsPairCreate, user=Depends(admin_user)):
         raise HTTPException(status_code=422, detail=f"Rate TL harus Rp{tl_min:,.0f}–Rp{tl_max:,.0f} per chapter.".replace(",", "."))
     if not ts_min <= payload.ts_rate_per_chapter <= ts_max:
         raise HTTPException(status_code=422, detail=f"Rate TS harus Rp{ts_min:,.0f}–Rp{ts_max:,.0f} per chapter.".replace(",", "."))
-    profiles = {item["id"] for item in await staff_directory()}
-    if payload.tl_staff_id not in profiles or payload.ts_staff_id not in profiles:
-        raise HTTPException(status_code=422, detail="Pilih staff TL dan TS yang memiliki role Staff.")
+    profiles = {item["id"]: item for item in await staff_directory()}
+    real_tl = await resolve_staff_id_with_fallback(payload.tl_staff_id, profiles)
+    real_ts = await resolve_staff_id_with_fallback(payload.ts_staff_id, profiles)
+    if not real_tl or not real_ts:
+        raise HTTPException(status_code=422, detail="Salah satu staff tidak ditemukan. Pastikan keduanya memiliki role Staff di Discord atau sudah pernah menerima tugas sebelumnya.")
+    payload.tl_staff_id = real_tl
+    payload.ts_staff_id = real_ts
     if payload.tl_staff_id == payload.ts_staff_id:
         raise HTTPException(status_code=422, detail="Untuk Pair TL → TS, pilih dua staff berbeda. Gunakan TL+TS untuk satu staff.")
     project = await pair_service.create_project(
