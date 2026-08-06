@@ -838,7 +838,7 @@ def member_profile(member: dict):
     discord_user = member.get("user", {})
     if not discord_user.get("id"):
         return None
-    return {"id": int(discord_user["id"]), "username": member.get("nick") or discord_user.get("global_name") or discord_user.get("username", "Staff"), "avatar": discord_avatar(member)}
+    return {"id": str(discord_user["id"]), "username": member.get("nick") or discord_user.get("global_name") or discord_user.get("username", "Staff"), "avatar": discord_avatar(member)}
 
 
 async def cache_staff_profile(profile: dict):
@@ -862,7 +862,7 @@ async def staff_directory(force=False):
             rows = await (await connection.execute(
                 "SELECT DISTINCT staff_id FROM assignments WHERE staff_id IS NOT NULL"
             )).fetchall()
-            return [{"id": row[0], "username": f"Staff {row[0]}", "avatar": None} for row in rows]
+            return [{"id": str(row[0]), "username": f"Staff {row[0]}", "avatar": None} for row in rows]
         finally:
             await connection.close()
     if not force and _staff_cache["items"] and time.monotonic() < _staff_cache["expires_at"]:
