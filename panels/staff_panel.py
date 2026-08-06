@@ -96,44 +96,34 @@ class StaffPanelView(discord.ui.View):
         )
         embed.add_field(
             name="Saldo Belum Dibayar",
-            value=format_currency(lifetime_stats["total_earned"]),
+            value=format_currency(lifetime_stats["total_earned"] + pending_manual_total),
             inline=True,
         )
         embed.add_field(
             name="Total Penghasilan",
-            value=format_currency(lifetime_stats["total_completed_amount"]),
+            value=format_currency(lifetime_stats["total_completed_amount"] + pending_manual_total + paid_manual_total),
             inline=True,
         )
         embed.add_field(
             name="Total Sudah Dibayar",
-            value=format_currency(lifetime_stats["total_paid"]),
+            value=format_currency(lifetime_stats["total_paid"] + paid_manual_total),
             inline=True,
         )
+        
+        period_pending_manual = sum(b["amount"] for b in pending_manual if b.get("period") == period)
+        period_paid_manual = sum(b["amount"] for b in paid_manual if b.get("period") == period)
+
         embed.add_field(
             name=f"Periode {period}",
             value=(
                 f"**{period_stats['completed_chapters']} chapter selesai**\n"
-                f"Disetujui: {format_currency(period_stats['total_earned'])}\n"
-                f"Dibayar: {format_currency(period_stats['total_paid'])}\n"
+                f"Disetujui: {format_currency(period_stats['total_earned'] + period_pending_manual)}\n"
+                f"Dibayar: {format_currency(period_stats['total_paid'] + period_paid_manual)}\n"
                 f"Tugas solo berjalan: {period_stats['pending']}\n"
                 f"Chapter pair belum final: {lifetime_stats['pair_pending']}"
             ),
             inline=False,
         )
-        # Manual bonus section
-        if pending_manual or paid_manual:
-            bonus_lines = []
-            if pending_manual:
-                bonus_lines.append(f"🎁 Menunggu cair: **{format_currency(pending_manual_total)}** ({len(pending_manual)} bonus)")
-                for b in pending_manual[:3]:
-                    bonus_lines.append(f"  └ {format_currency(b['amount'])} — {b['reason']}")
-            if paid_manual:
-                bonus_lines.append(f"✅ Sudah dibayar: **{format_currency(paid_manual_total)}**")
-            embed.add_field(
-                name="🎁 Bonus Manual",
-                value="\n".join(bonus_lines),
-                inline=False,
-            )
 
         methods = await payments.list_methods(interaction.user.id)
         default = next((item for item in methods if item["is_default"]), None)
