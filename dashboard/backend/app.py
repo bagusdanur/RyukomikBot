@@ -2573,6 +2573,8 @@ async def invoice_detail(invoice_id: int, _user=Depends(admin_user)):
             FROM dashboard_invoice_items WHERE invoice_id=? ORDER BY assignment_id
         """, (invoice_id,))).fetchall()
         bonus_items = await bonus_service.invoice_bonus_items(connection, invoice_id)
+        manual_bonus_items = await bonus_service.invoice_manual_bonus_items(connection, invoice_id)
+        bonus_items.extend(manual_bonus_items)
         if not items:
             status_clause = "paid_period=?" if invoice["status"] == "paid" else "status='approved' AND approved_at LIKE ?"
             items = await (await connection.execute(f"""
@@ -2636,8 +2638,10 @@ async def create_invoice(payload: InvoiceCreate, user=Depends(admin_user)):
                 [(item["id"], invoice_id) for item in items],
             )
             bonus_total = await bonus_service.attach_approved_to_invoice(connection, invoice_id, payload.staff_id)
-            if bonus_total:
-                total_amount += bonus_total
+            manual_bonus_total = await bonus_service.attach_manual_to_invoice(connection, invoice_id, payload.staff_id)
+            total_bonus = (bonus_total or 0) + (manual_bonus_total or 0)
+            if total_bonus:
+                total_amount += total_bonus
                 await connection.execute("UPDATE dashboard_invoices SET total_amount=? WHERE id=?", (total_amount, invoice_id))
             await connection.commit()
         except aiosqlite.IntegrityError:
@@ -2777,6 +2781,7 @@ async def delete_invoice(invoice_id: int, user=Depends(admin_user)):
             raise HTTPException(status_code=409, detail="Invoice sudah dibatalkan.")
         await connection.execute("DELETE FROM dashboard_assignment_billing WHERE invoice_id=?", (invoice_id,))
         await bonus_service.release_invoice(connection, invoice_id)
+        await bonus_service.release_manual_invoice(connection, invoice_id)
         await connection.execute("UPDATE dashboard_invoices SET status='void',voided_at=CURRENT_TIMESTAMP,voided_by=? WHERE id=?", (user["id"], invoice_id))
         await connection.commit()
     finally:
@@ -3016,6 +3021,21 @@ async def create_manual_bonus_route(payload: ManualBonusCreateRequest, user=Depe
             created_by=user["id"],
             period=clean_period,
         )
+        connection = await dashboard_db()
+        try:
+            row = await (await connection.execute("""SELECT ticket_channel_id FROM assignments
+                WHERE staff_id=? AND ticket_channel_id IS NOT NULL ORDER BY id DESC LIMIT 1""", (payload.staff_id.strip(),))).fetchone()
+            if row and row["ticket_channel_id"]:
+                message = {
+                    "embeds": [{
+                        "title": "🎉 BONUS TAMBAHAN DITERIMA!",
+                        "description": f"Kamu mendapatkan tambahan bonus manual yang akan ditambahkan ke saldo invoice gaji mu berikutnya.\n\n**Alasan:** {payload.reason.strip()}\n**Jumlah Bonus:** Rp {payload.amount:,}",
+                        "color": 0x57F287
+                    }]
+                }
+                await discord_api("POST", f"/channels/{row['ticket_channel_id']}/messages", message)
+        finally:
+            await connection.close()
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     await audit(
