@@ -36,6 +36,29 @@ class AdminPanelView(discord.ui.View):
         )
         await interaction.response.send_message(embed=embed, view=AssignRoleView(), ephemeral=False)
 
+    @discord.ui.button(label="Tarik Tugas", style=discord.ButtonStyle.danger, custom_id="admin_revoke", row=0)
+    async def revoke_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=False)
+        revokable = await db.get_revokable_assignments()
+        if not revokable:
+            return await interaction.followup.send("Tidak ada tugas yang bisa ditarik (semua tugas sudah disetor/dibayar atau kosong).")
+
+        embed = discord.Embed(
+            title="🗑️ Tarik Tugas",
+            description="Pilih tugas yang belum selesai melalui menu di bawah untuk membatalkannya.",
+            color=discord.Color.red(),
+        )
+        for assignment in revokable[:10]:
+            embed.add_field(
+                name=f"#{assignment['id']} - {assignment['manga']}",
+                value=(
+                    f"Chapter: **{assignment['chapter']}** | Status: **{assignment['status']}**"
+                ),
+                inline=False,
+            )
+        from views.select_views import RevokeSelectView
+        await interaction.followup.send(embed=embed, view=RevokeSelectView(revokable))
+
     @discord.ui.button(label="Review", style=discord.ButtonStyle.secondary, custom_id="admin_review")
     async def review_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=False)

@@ -877,3 +877,33 @@ async def get_pending_payments() -> List[Dict[str, Any]]:
         return [dict(row) for row in rows]
     finally:
         await db.close()
+
+
+async def get_revokable_assignments() -> List[Dict[str, Any]]:
+    """Get all assignments that can be revoked (open or claimed)."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT * FROM assignments WHERE status IN ('open', 'claimed') ORDER BY assigned_at DESC LIMIT 25"
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        await db.close()
+
+
+async def revoke_assignment(assignment_id: int, reason: str = None) -> bool:
+    """Revoke an assignment and set its status to cancelled."""
+    db = await get_db()
+    try:
+        cursor = await db.execute("""
+            UPDATE assignments 
+            SET status = 'cancelled', admin_notes = ?
+            WHERE id = ? AND status IN ('open', 'claimed')
+        """, (reason, assignment_id))
+        await db.commit()
+        if cursor.rowcount:
+            await add_assignment_event(assignment_id, "cancelled", None, f"Tugas ditarik oleh admin. Alasan: {reason or 'Tidak ada'}")
+        return cursor.rowcount > 0
+    finally:
+        await db.close()

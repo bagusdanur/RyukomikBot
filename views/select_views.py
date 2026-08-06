@@ -267,3 +267,38 @@ class ConfirmPayView(discord.ui.View):
                 "❌ Gagal memproses pembayaran!",
                 ephemeral=False
             )
+
+
+class RevokeSelectView(discord.ui.View):
+    """Dropdown view for revoking a task."""
+    def __init__(self, assignments: list):
+        super().__init__(timeout=120)
+        self.add_item(RevokeSelect(assignments))
+
+class RevokeSelect(discord.ui.Select):
+    def __init__(self, assignments: list):
+        options = []
+        for a in assignments:
+            # Show ID, manga, chapter, and status
+            status_map = {"open": "🔓 Open", "claimed": "✋ Claimed"}
+            options.append(
+                discord.SelectOption(
+                    label=f"#{a['id']} - {a['manga'][:80]}",
+                    description=f"Ch {a['chapter']} | {status_map.get(a['status'], a['status'])}",
+                    value=str(a["id"])
+                )
+            )
+        super().__init__(
+            placeholder="Pilih tugas yang ingin ditarik...",
+            options=options[:25],
+            custom_id="revoke_select"
+        )
+    
+    async def callback(self, interaction: discord.Interaction):
+        assignment_id = int(self.values[0])
+        assignment = await db.get_assignment(assignment_id)
+        if not assignment or assignment["status"] not in ("open", "claimed"):
+            return await interaction.response.send_message("❌ Tugas tidak ditemukan atau statusnya sudah berubah.", ephemeral=False)
+        
+        from modals.revoke_modal import RevokeModal
+        await interaction.response.send_modal(RevokeModal(assignment))
