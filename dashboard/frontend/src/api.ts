@@ -258,6 +258,7 @@ export type ManualBonus = {
 
 
 let csrfToken = "";
+export function getCsrfToken(): string { return csrfToken; }
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     credentials: "include",
@@ -306,6 +307,7 @@ const liveApi = {
       `/api/assignments?paginated=true&page=${page}&page_size=${pageSize}&status=${encodeURIComponent(status)}&search=${encodeURIComponent(search)}`,
     ),
   staff: () => request<Staff[]>("/api/staff"),
+  staffWorkload: () => request<{ workload: Array<Record<string, unknown>>; upcoming_deadlines: Array<Record<string, unknown>>; overdue: Array<Record<string, unknown>>; summary: Record<string, number> }>("/api/staff/workload"),
   createAssignment: (payload: Record<string, unknown>) =>
     request<{ id: number; notified: boolean }>("/api/assignments", {
       method: "POST",
@@ -339,6 +341,20 @@ const liveApi = {
     request(`/api/assignments/${id}/revision`, {
       method: "POST",
       body: JSON.stringify({ notes }),
+    }),
+  revokeAssignment: (id: number, reason: string) =>
+    request(`/api/assignments/${id}/revoke`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
+  notifPreferences: () =>
+    request<{ staff_id: string; types: string[]; channels: string[]; preferences: Array<Record<string, unknown>> }>(
+      "/api/notifications/preferences",
+    ),
+  updateNotifPreferences: (preferences: Array<Record<string, unknown>>) =>
+    request("/api/notifications/preferences", {
+      method: "PUT",
+      body: JSON.stringify({ preferences }),
     }),
   payrates: () =>
     request<Array<{ role: string; base_rate: number; min_rate: number; max_rate: number; updated_at: string }>>(
@@ -567,6 +583,7 @@ const demoApi = {
       paid_amount: 89000,
     },
   ],
+  staffWorkload: async () => ({ workload: [], upcoming_deadlines: [], overdue: [], summary: { total_staff: 0, overload: 0, busy: 0, normal: 0, idle: 0, overdue_count: 0 } }),
   createAssignment: async () => ({ id: 25, notified: true }),
   createTlTsPair: async () => ({ tl_assignment_id: 26, pair_project_id: 1, channel_id: "123", notified: true }),
   pairProjects: async (): Promise<PairProject[]> => [],
@@ -582,6 +599,9 @@ const demoApi = {
   }),
   approveAssignment: async () => ({ ok: true }),
   reviseAssignment: async () => ({ ok: true }),
+  revokeAssignment: async () => ({ ok: true }),
+  notifPreferences: async () => ({ staff_id: "1", types: ["assignment", "deadline", "payout", "review", "revoke"], channels: ["dm", "ticket", "dashboard"], preferences: [] }),
+  updateNotifPreferences: async () => ({ ok: true }),
   payrates: async () => [
     { role: "TL", base_rate: 4000, min_rate: 4000, max_rate: 8000, updated_at: "2026-07-22" },
     { role: "TS", base_rate: 5000, min_rate: 5000, max_rate: 10000, updated_at: "2026-07-22" },

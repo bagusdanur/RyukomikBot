@@ -2,7 +2,7 @@ import discord
 
 import database as db
 from config import STAFF_PAYRATE_CHANNEL_ID
-from helpers.utils import ROLE_PAYRATES, find_ticket
+from helpers.utils import DEFAULT_PAYRATES, find_ticket
 
 
 ROLE_LABELS = {
@@ -22,7 +22,7 @@ async def get_payrate_ranges() -> dict[str, dict[str, int]]:
         await connection.close()
     result = {
         role: {"min": values["min"], "max": values["max"]}
-        for role, values in ROLE_PAYRATES.items()
+        for role, values in DEFAULT_PAYRATES.items()
     }
     for row in rows:
         result[row["role"]] = {

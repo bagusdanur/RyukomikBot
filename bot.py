@@ -89,6 +89,7 @@ class RyukomikBot(commands.Bot):
         await payments.setup_payment_tables()
         await operations.setup_operations()
         await scout_service.setup_scout_tables()
+        await db.setup_notification_preferences()
         await setup_project_sync()
         await operations.recover_outbox()
         
@@ -125,6 +126,8 @@ class RyukomikBot(commands.Bot):
             project_event_sync_loop.start()
         if not daily_backup_loop.is_running():
             daily_backup_loop.start()
+        if not weekly_vacuum_loop.is_running():
+            weekly_vacuum_loop.start()
         print("[OK] Bot setup complete!")
     
     async def on_ready(self):
@@ -442,6 +445,7 @@ async def notification_outbox_loop():
     except Exception as error:
         failure = error
         await operations.record_event("outbox", "error", "Worker outbox gagal", {"error": str(error)[:500]})
+        await alert_admin("outbox", error)
     finally:
         await operations.mark_scheduler("notification_outbox", started, failure)
 
@@ -485,12 +489,49 @@ async def daily_backup_loop():
         await operations.create_verified_backup(payments.r2_client(), payments.R2_BUCKET_NAME)
     except Exception as error:
         failure = error
+        await alert_admin("backup", error)
     finally:
         await operations.mark_scheduler("daily_backup", now, failure)
 
 
 @daily_backup_loop.before_loop
 async def before_daily_backup_loop():
+    await bot.wait_until_ready()
+
+
+@tasks.loop(hours=1)
+async def weekly_vacuum_loop():
+    """Run VACUUM every Sunday at 4 AM WIB to reclaim space."""
+    now = datetime.now(ZoneInfo("Asia/Jakarta"))
+    if now.weekday() != 6 or now.hour != 4:
+        return
+    if not await operations.daily_job_due("weekly_vacuum", now.date().isoformat()):
+        return
+    failure = None
+    try:
+        conn = await db.get_db()
+        before = (await (await conn.execute("PRAGMA page_count")).fetchone())[0]
+        before *= (await (await conn.execute("PRAGMA page_size")).fetchone())[0]
+        await conn.execute("VACUUM")
+        await conn.close()
+        after_conn = await db.get_db()
+        after = (await (await after_conn.execute("PRAGMA page_count")).fetchone())[0]
+        after *= (await (await after_conn.execute("PRAGMA page_size")).fetchone())[0]
+        await after_conn.close()
+        saved = (before - after) / (1024 * 1024)
+        print(f"[VACUUM] {before/(1024*1024):.1f}MB → {after/(1024*1024):.1f}MB (saved {saved:.1f}MB)")
+        if saved > 1:
+            await operations.record_event("database", "info", f"VACUUM: hemat {saved:.1f}MB", {"before": before, "after": after})
+    except Exception as error:
+        failure = error
+        print(f"[VACUUM] Error: {error}")
+        await alert_admin("vacuum", error)
+    finally:
+        await operations.mark_scheduler("weekly_vacuum", now, failure)
+
+
+@weekly_vacuum_loop.before_loop
+async def before_weekly_vacuum_loop():
     await bot.wait_until_ready()
 
 
@@ -940,18 +981,51 @@ async def help_command(ctx: commands.Context):
 
 # ==================== ERROR HANDLING ====================
 
+_last_alert: dict[str, float] = {}
+_ALERT_COOLDOWN = 300  # 5 min cooldown per source
+
+
+async def alert_admin(source: str, error: Exception | str, context: str = ""):
+    """Send error alert to #staff-mod with cooldown to avoid spam."""
+    import time as _time
+    now = _time.monotonic()
+    if now - _last_alert.get(source, 0) < _ALERT_COOLDOWN:
+        return
+    _last_alert[source] = now
+    guild = bot.get_guild(GUILD_ID)
+    if not guild:
+        return
+    channel = guild.get_channel(STAFF_LOG_CHANNEL_ID)
+    if not channel:
+        return
+    msg = str(error)[:500]
+    embed = discord.Embed(
+        title=f"⚠️ Error Alert • {source}",
+        description=f"```\n{msg}\n```",
+        color=discord.Color.red(),
+    )
+    if context:
+        embed.add_field(name="Context", value=context[:200], inline=False)
+    embed.set_footer(text=f"Cooldown 5 menit • {datetime.now(ZoneInfo('Asia/Jakarta')).strftime('%H:%M WIB')}")
+    try:
+        await channel.send(embed=embed)
+    except Exception:
+        pass
+
+
 @bot.event
 async def on_command_error(ctx: commands.Context, error: commands.CommandError):
     """Handle command errors."""
     if isinstance(error, commands.CommandNotFound):
         return
     elif isinstance(error, commands.MissingPermissions):
-        await ctx.send("Ã¢ÂÅ’ Kamu tidak memiliki izin untuk menggunakan command ini!")
+        await ctx.send("❌ Kamu tidak memiliki izin untuk menggunakan command ini!")
     elif isinstance(error, commands.BadArgument):
-        await ctx.send("Ã¢ÂÅ’ Argument tidak valid!")
+        await ctx.send("❌ Argument tidak valid!")
     else:
         print(f"Error: {error}")
-        await ctx.send("Ã¢ÂÅ’ Terjadi error saat menjalankan command!")
+        await alert_admin("command", error, ctx.message.content[:100] if ctx.message else "")
+        await ctx.send("❌ Terjadi error saat menjalankan command!")
 
 
 @bot.event

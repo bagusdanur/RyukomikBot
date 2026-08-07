@@ -48,11 +48,16 @@ def is_staff(member: Union[discord.Member, discord.User]) -> bool:
     return any(role.id == ROLE_STAFF_ID for role in member.roles)
 
 
-ROLE_PAYRATES = {
+# Default fallback rates — DB (payrates table) is the source of truth.
+# These are only used when DB rows don't exist yet.
+DEFAULT_PAYRATES: dict[str, dict[str, int]] = {
     "TL": {"base": 4000, "min": 4000, "max": 8000},
     "TS": {"base": 5000, "min": 5000, "max": 10000},
     "TL+TS": {"base": 9000, "min": 9000, "max": 18000},
 }
+
+# Backward compat alias — deprecated, use DEFAULT_PAYRATES or DB directly.
+ROLE_PAYRATES = DEFAULT_PAYRATES
 
 
 def normalize_role(role: str) -> Optional[str]:

@@ -728,16 +728,6 @@ async def add_assignment_event(
     """Append an immutable assignment timeline entry."""
     db = await get_db()
     try:
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS assignment_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                assignment_id INTEGER NOT NULL,
-                event_type TEXT NOT NULL,
-                actor_id TEXT,
-                detail TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
         await db.execute(
             """INSERT INTO assignment_events (assignment_id,event_type,actor_id,detail)
                VALUES (?,?,?,?)""",
@@ -905,5 +895,107 @@ async def revoke_assignment(assignment_id: int, reason: str = None) -> bool:
         if cursor.rowcount:
             await add_assignment_event(assignment_id, "cancelled", None, f"Tugas ditarik oleh admin. Alasan: {reason or 'Tidak ada'}")
         return cursor.rowcount > 0
+    finally:
+        await db.close()
+
+
+# ---------------------------------------------------------------------------
+# Notification Preferences
+# ---------------------------------------------------------------------------
+
+NOTIF_TYPES = ("assignment", "deadline", "payout", "review", "revoke")
+NOTIF_CHANNELS = ("dm", "ticket", "dashboard")
+
+
+async def setup_notification_preferences():
+    db = await get_db()
+    try:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS notification_preferences (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                staff_id INTEGER NOT NULL,
+                notif_type TEXT NOT NULL,
+                channel TEXT NOT NULL DEFAULT 'ticket',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                reminder_hours INTEGER DEFAULT 24,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(staff_id, notif_type, channel)
+            )
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_notif_prefs_staff
+            ON notification_preferences(staff_id)
+        """)
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def get_notification_preferences(staff_id: int) -> list[dict]:
+    db = await get_db()
+    try:
+        rows = await (await db.execute(
+            "SELECT * FROM notification_preferences WHERE staff_id=? ORDER BY notif_type, channel",
+            (staff_id,)
+        )).fetchall()
+        if rows:
+            return [dict(r) for r in rows]
+        # Return defaults if no preferences set
+        defaults = []
+        for ntype in NOTIF_TYPES:
+            defaults.append({
+                "staff_id": staff_id, "notif_type": ntype,
+                "channel": "ticket", "enabled": 1, "reminder_hours": 24,
+            })
+        return defaults
+    finally:
+        await db.close()
+
+
+async def set_notification_preference(
+    staff_id: int, notif_type: str, channel: str, enabled: bool, reminder_hours: int = 24
+) -> bool:
+    db = await get_db()
+    try:
+        await db.execute("""
+            INSERT INTO notification_preferences (staff_id, notif_type, channel, enabled, reminder_hours, updated_at)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(staff_id, notif_type, channel)
+            DO UPDATE SET enabled=excluded.enabled, reminder_hours=excluded.reminder_hours,
+                          updated_at=CURRENT_TIMESTAMP
+        """, (staff_id, notif_type, channel, int(enabled), reminder_hours))
+        await db.commit()
+        return True
+    finally:
+        await db.close()
+
+
+async def bulk_set_preferences(staff_id: int, preferences: list[dict]) -> bool:
+    db = await get_db()
+    try:
+        await db.execute("DELETE FROM notification_preferences WHERE staff_id=?", (staff_id,))
+        for pref in preferences:
+            await db.execute("""
+                INSERT INTO notification_preferences (staff_id, notif_type, channel, enabled, reminder_hours)
+                VALUES (?, ?, ?, ?, ?)
+            """, (staff_id, pref["notif_type"], pref["channel"], int(pref.get("enabled", True)), pref.get("reminder_hours", 24)))
+        await db.commit()
+        return True
+    finally:
+        await db.close()
+
+
+async def get_notif_channel(staff_id: int, notif_type: str) -> str | None:
+    """Get the preferred notification channel for a staff+type. Returns None if disabled."""
+    db = await get_db()
+    try:
+        row = await (await db.execute("""
+            SELECT channel, enabled FROM notification_preferences
+            WHERE staff_id=? AND notif_type=?
+        """, (staff_id, notif_type))).fetchone()
+        if row and not row["enabled"]:
+            return None
+        return row["channel"] if row else "ticket"  # default to ticket
     finally:
         await db.close()

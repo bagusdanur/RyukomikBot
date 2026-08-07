@@ -1,5 +1,6 @@
 fastapi>=0.116.0
 uvicorn[standard]>=0.35.0
+python-multipart>=0.0.18
 authlib>=1.6.0
 httpx>=0.28.0
 itsdangerous>=2.2.0

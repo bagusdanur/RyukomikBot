@@ -26,11 +26,14 @@ import {
 } from "./api";
 
 type Page =
-  "overview" | "actions" | "tasks" | "staff" | "payrates" | "recruitment" | "scout" | "deadlines" | "recap" | "payouts" | "bonuses" | "operations" | "audit";
+  "overview" | "actions" | "tasks" | "staff" | "payrates" | "recruitment" | "scout" | "deadlines" | "recap" | "payouts" | "bonuses" | "operations" | "audit" | "converter" | "notifications" | "workload";
 const OperationsPage = defineAsyncComponent(() => import("./pages/OperationsPage.vue"));
 const ActionCenterPage = defineAsyncComponent(() => import("./pages/ActionCenterPage.vue"));
 const ScoutPage = defineAsyncComponent(() => import("./pages/ScoutPage.vue"));
 const PerformanceBonusPage = defineAsyncComponent(() => import("./pages/PerformanceBonusPage.vue"));
+const ConverterPage = defineAsyncComponent(() => import("./pages/ConverterPage.vue"));
+const NotificationPrefsPage = defineAsyncComponent(() => import("./pages/NotificationPrefsPage.vue"));
+const WorkloadPage = defineAsyncComponent(() => import("./pages/WorkloadPage.vue"));
 const user = ref<User | null>(null),
   authChecked = ref(false),
   loading = ref(false),
@@ -110,10 +113,13 @@ const navItems = computed(() => [
         { id: "payouts", label: "Permintaan Gaji", icon: "pi pi-money-bill" },
         { id: "bonuses", label: "Bonus Performa", icon: "pi pi-star" },
         { id: "operations", label: "Operasional", icon: "pi pi-heart-fill" },
+        { id: "workload", label: "Workload", icon: "pi pi-chart-bar" },
+        { id: "converter", label: "Converter", icon: "pi pi-image" },
         { id: "audit", label: "Audit Log", icon: "pi pi-shield" },
       ]
     : []),
   { id: "deadlines", label: "Deadline", icon: "pi pi-clock" },
+  { id: "notifications", label: "Notifikasi", icon: "pi pi-bell" },
 ]);
 const mobilePrimaryIds = computed(() =>
   user.value?.role === "admin"
@@ -150,6 +156,7 @@ const statusLabel: Record<string, string> = {
   revision: "Perlu Revisi",
   approved: "Disetujui",
   paid: "Dibayar",
+  cancelled: "Dibatalkan",
 };
 const severity = (v: string) =>
   (({
@@ -159,6 +166,7 @@ const severity = (v: string) =>
     revision: "danger",
     approved: "success",
     paid: "contrast",
+    cancelled: "danger",
   })[v] || "secondary") as any;
 const avatar = (id: string, hash: string | null | undefined) =>
   hash ? `https://cdn.discordapp.com/avatars/${id}/${hash}.png?size=128` : "";
@@ -578,6 +586,23 @@ async function reviseTask(item: Assignment) {
     await loadPage();
   } catch (e) {
     error.value = e instanceof Error ? e.message : "Revisi gagal.";
+  } finally {
+    loading.value = false;
+  }
+}
+async function revokeTask(item: Assignment) {
+  const reason = prompt(
+    `Alasan penarikan tugas ${item.manga} chapter ${item.chapter} (opsional):`,
+  )?.trim();
+  if (reason === undefined) return; // user cancelled prompt
+  if (!confirm(`Tarik tugas #${item.id}? Status akan berubah menjadi Dibatalkan.`)) return;
+  try {
+    loading.value = true;
+    await api.revokeAssignment(item.id, reason || "");
+    success.value = `Tugas #${item.id} berhasil ditarik.`;
+    await loadPage();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "Gagal menarik tugas.";
   } finally {
     loading.value = false;
   }
@@ -1049,6 +1074,9 @@ onMounted(async () => {
         <ScoutPage />
         <template #fallback><div class="operations-skeleton"><span v-for="n in 4" :key="n"></span></div></template>
       </Suspense>
+      <ConverterPage v-if="page === 'converter'" />
+      <NotificationPrefsPage v-if="page === 'notifications'" />
+      <WorkloadPage v-if="page === 'workload'" />
       <template v-if="page === 'tasks'"
         ><div class="toolbar">
           <span class="search"
@@ -1192,6 +1220,17 @@ onMounted(async () => {
                       size="small"
                       severity="secondary"
                       @click="editTask(data)"
+                    />
+                    <Button
+                      v-if="
+                        user.role === 'admin' &&
+                        ['open', 'claimed'].includes(data.status)
+                      "
+                      label="Tarik"
+                      icon="pi pi-trash"
+                      size="small"
+                      severity="danger"
+                      @click="revokeTask(data)"
                     />
                     <span
                       v-if="

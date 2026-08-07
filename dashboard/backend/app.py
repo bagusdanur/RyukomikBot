@@ -11,7 +11,9 @@ from zoneinfo import ZoneInfo
 from typing import Literal
 import secrets
 import time
+import zipfile
 from collections import defaultdict, deque
+from pathlib import Path
 
 import aiohttp
 import aiosqlite
@@ -55,38 +57,30 @@ from raw_downloader import asura_downloader, doujiva_downloader, omega_downloade
 from raw_downloader.resolver import resolve_assignment_raw
 from raw_rate_analysis import RawWorkload, classify_workload, suggested_rate
 
-DEFAULT_RATE_RANGES = {
-    "TL": (4000, 8000),
-    "TS": (5000, 10000),
-    "TL+TS": (9000, 18000),
-}
+# Shared deps (extracted to reduce app.py size)
+from dashboard.backend.deps import (
+    DASHBOARD_ORIGIN, API_ORIGIN, SESSION_SECRET,
+    DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET, DEV_BYPASS,
+    R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY,
+    R2_BUCKET_NAME, R2_ENDPOINT,
+    TRAKTEER_WEBHOOK_TOKEN, TRAKTEER_TIP_URL, TRAKTEER_CHANNEL_NAME,
+    _staff_cache, _staff_cache_lock,
+    dashboard_db, DEFAULT_RATE_RANGES,
+)
 
-load_dotenv()
-
-DASHBOARD_ORIGIN = os.getenv("DASHBOARD_ORIGIN", "http://localhost:5173").rstrip("/")
-API_ORIGIN = os.getenv("DASHBOARD_API_ORIGIN", "http://localhost:8000").rstrip("/")
-SESSION_SECRET = os.getenv("DASHBOARD_SESSION_SECRET", "")
-DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", "")
-DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET", "")
-DEV_BYPASS = os.getenv("DASHBOARD_DEV_BYPASS", "false").lower() == "true"
-R2_ACCOUNT_ID = os.getenv("R2_ACCOUNT_ID", "")
-R2_ACCESS_KEY_ID = os.getenv("R2_ACCESS_KEY_ID", "")
-R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY", "")
-R2_BUCKET_NAME = os.getenv("R2_BUCKET_NAME", "ryukomik-staff-submissions")
-R2_ENDPOINT = os.getenv("R2_ENDPOINT", f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com" if R2_ACCOUNT_ID else "")
-TRAKTEER_WEBHOOK_TOKEN = os.getenv("TRAKTEER_WEBHOOK_TOKEN", "")
-TRAKTEER_TIP_URL = os.getenv("TRAKTEER_TIP_URL", "https://trakteer.id/kanimenia17/tip")
-TRAKTEER_CHANNEL_NAME = "apresiasi-staff"
-_staff_cache = {"items": [], "expires_at": 0.0, "updated_at": None}
-_staff_cache_lock = asyncio.Lock()
-
-
-async def dashboard_db():
-    connection = await aiosqlite.connect(DB_PATH, timeout=30)
-    connection.row_factory = aiosqlite.Row
-    await connection.execute("PRAGMA busy_timeout=30000")
-    await connection.execute("PRAGMA foreign_keys=ON")
-    return connection
+# Routers
+from dashboard.backend.routers.tools import router as tools_router
+from dashboard.backend.routers.assignments import router as assignments_router
+from dashboard.backend.routers.invoices import router as invoices_router
+from dashboard.backend.routers.payouts import router as payouts_router
+from dashboard.backend.routers.bonus import router as bonus_router
+from dashboard.backend.routers.scout import router as scout_router
+from dashboard.backend.routers.pair import router as pair_router
+from dashboard.backend.routers.recruitment import router as recruitment_router
+from dashboard.backend.routers.staff import router as staff_router
+from dashboard.backend.routers.payrate import router as payrate_router
+from dashboard.backend.routers.operations import router as operations_router
+from dashboard.backend.routers.notifications import router as notifications_router
 
 
 async def setup_dashboard_tables():
@@ -321,14 +315,31 @@ app.add_middleware(
     allow_headers=["Content-Type", "X-CSRF-Token"],
 )
 
+# Include routers (auth stays in app.py — uses local helpers)
+app.include_router(tools_router)
+app.include_router(assignments_router)
+app.include_router(invoices_router)
+app.include_router(payouts_router)
+app.include_router(bonus_router)
+app.include_router(scout_router)
+app.include_router(pair_router)
+app.include_router(recruitment_router)
+app.include_router(staff_router)
+app.include_router(payrate_router)
+app.include_router(operations_router)
+app.include_router(notifications_router)
+
 _rate_windows: dict[str, deque] = defaultdict(deque)
 MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
-    if int(request.headers.get("content-length", "0") or 0) > 2 * 1024 * 1024:
-        return JSONResponse({"detail": "Ukuran request melebihi batas 2 MB."}, status_code=413)
+    content_length = int(request.headers.get("content-length", "0") or 0)
+    # Converter needs larger uploads (images can be 50MB+)
+    max_size = 200 * 1024 * 1024 if request.url.path.startswith("/api/tools/") else 2 * 1024 * 1024
+    if content_length > max_size:
+        return JSONResponse({"detail": "Ukuran request melebihi batas."}, status_code=413)
     if request.method in MUTATING_METHODS:
         origin = request.headers.get("origin")
         if origin and origin.rstrip("/") != DASHBOARD_ORIGIN:
@@ -546,7 +557,6 @@ class ManualBonusCreateRequest(BaseModel):
     @classmethod
     def coerce_staff_id(cls, v):
         return str(v)
-
 
 
 class OperationAction(BaseModel):
@@ -1559,56 +1569,6 @@ async def me(request: Request, user=Depends(current_user)):
     return {**user, "id": str(user["id"]), "csrf_token": request.session["csrf_token"]}
 
 
-@app.get("/api/scout")
-async def scout_titles(
-    status: str = "", search: str = "", page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=50), user=Depends(admin_user),
-):
-    allowed = {
-        "", "untranslated", "lagging", "available", "ambiguous", "ryukomik_project",
-        "candidate", "adopted", "ignored",
-    }
-    if status not in allowed:
-        raise HTTPException(status_code=422, detail="Status Project Scout tidak dikenal.")
-    return await scout_service.list_scout_titles(status, search.strip(), page, page_size)
-
-
-@app.post("/api/scout/search")
-async def scout_search(payload: ScoutSearchRequest, user=Depends(admin_user)):
-    try:
-        result = await scout_service.scan_title(
-            payload.title, payload.raw_source, force=payload.force,
-        )
-    except ValueError as error:
-        raise HTTPException(status_code=422, detail=str(error))
-    await audit(user["id"], "scout.search", "scout_title", result["id"], after={
-        "title": payload.title, "raw_source": payload.raw_source,
-        "status": result["scout_status"], "confidence": result["confidence"],
-        "cached": result.get("cached", False),
-    })
-    return result
-
-
-@app.get("/api/scout/{scout_id}")
-async def scout_detail(scout_id: int, user=Depends(admin_user)):
-    result = await scout_service.get_scout_title(scout_id)
-    if not result:
-        raise HTTPException(status_code=404, detail="Kandidat Project Scout tidak ditemukan.")
-    return result
-
-
-@app.post("/api/scout/{scout_id}/decision")
-async def scout_decision(scout_id: int, payload: ScoutDecisionRequest, user=Depends(admin_user)):
-    try:
-        result = await scout_service.decide(scout_id, int(user["id"]), payload.action, payload.notes.strip())
-    except ValueError as error:
-        raise HTTPException(status_code=404 if "ditemukan" in str(error) else 422, detail=str(error))
-    await audit(user["id"], f"scout.{payload.action}", "scout_title", scout_id, after={
-        "status": result["scout_status"], "notes": payload.notes.strip() or None,
-    })
-    return result
-
-
 @app.get("/api/overview")
 async def overview(user=Depends(current_user)):
     connection = await dashboard_db()
@@ -1696,89 +1656,6 @@ async def action_center(_user=Depends(admin_user)):
             ORDER BY priority,p.id DESC
         """)).fetchall()
         return await enrich_staff([*rows, *payouts])
-    finally:
-        await connection.close()
-
-
-@app.get("/api/operations")
-async def operations_status(_user=Depends(admin_user)):
-    snapshot = await operations.operations_snapshot()
-    snapshot["staff_cache"] = {
-        "count": len(_staff_cache["items"]),
-        "updated_at": _staff_cache["updated_at"],
-        "ttl_seconds": max(0, int(_staff_cache["expires_at"] - time.monotonic())),
-    }
-    return snapshot
-
-
-@app.post("/api/operations/events/{event_id}/resolve")
-async def resolve_operation_event(event_id: int, user=Depends(admin_user)):
-    if not await operations.resolve_event(event_id, user["id"]):
-        raise HTTPException(status_code=404, detail="Error aktif tidak ditemukan.")
-    await audit(user["id"], "operation.resolve", "system_event", event_id)
-    return {"ok": True}
-
-
-@app.post("/api/operations/outbox/{item_id}/retry")
-async def retry_outbox_item(item_id: int, user=Depends(admin_user)):
-    if not await operations.retry_notification(item_id):
-        raise HTTPException(status_code=409, detail="Notifikasi tidak berstatus gagal.")
-    await audit(user["id"], "notification.retry", "outbox", item_id)
-    return {"ok": True}
-
-
-@app.post("/api/staff/sync")
-async def sync_staff_cache(user=Depends(admin_user)):
-    rows = await staff_directory(force=True)
-    await audit(user["id"], "staff.sync", "discord_cache", after={"count": len(rows)})
-    return {"ok": True, "count": len(rows), "updated_at": _staff_cache["updated_at"]}
-
-
-@app.get("/api/assignments/{assignment_id}/timeline")
-async def assignment_timeline(assignment_id: int, _user=Depends(current_user)):
-    if not await staff_db.get_assignment(assignment_id):
-        raise HTTPException(status_code=404, detail="Tugas tidak ditemukan.")
-    return await staff_db.get_assignment_timeline(assignment_id)
-
-
-@app.get("/api/assignments")
-async def assignments(
-    status: str | None = Query(default=None),
-    search: str | None = Query(default=None, max_length=100),
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=100),
-    paginated: bool = Query(default=False),
-    user=Depends(current_user),
-):
-    page, page_size, paginated = normalize_paging(page, page_size, paginated)
-    # Pair child assignments are payment records; the grouped pair endpoint is
-    # their public dashboard representation.
-    clauses, params = ["pair_project_id IS NULL"], []
-    if user["role"] == "staff":
-        clauses.append("staff_id = ?")
-        params.append(user["id"])
-    if status:
-        clauses.append("status = ?")
-        params.append(status)
-    if search:
-        clauses.append("(manga LIKE ? OR chapter LIKE ?)")
-        params.extend([f"%{search}%", f"%{search}%"])
-    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-    connection = await dashboard_db()
-    try:
-        if paginated:
-            total = (await (await connection.execute(
-                f"SELECT COUNT(*) count FROM assignments{where}", params
-            )).fetchone())["count"]
-            rows = await (await connection.execute(
-                f"SELECT * FROM assignments{where} ORDER BY assigned_at DESC LIMIT ? OFFSET ?",
-                [*params, page_size, (page - 1) * page_size],
-            )).fetchall()
-            return page_payload(await enrich_staff(rows), page, page_size, total)
-        rows = await (await connection.execute(
-            f"SELECT * FROM assignments{where} ORDER BY assigned_at DESC LIMIT 250", params
-        )).fetchall()
-        return await enrich_staff(rows)
     finally:
         await connection.close()
 
@@ -1880,106 +1757,6 @@ async def raw_rate_analysis(payload: RawRateAnalysisRequest, _user=Depends(admin
     }
 
 
-@app.post("/api/assignments", status_code=201)
-async def create_dashboard_assignment(payload: AssignmentCreate, user=Depends(admin_user)):
-    try:
-        chapters = parse_chapters(payload.chapter)
-    except ValueError as error:
-        raise HTTPException(status_code=422, detail=str(error))
-    rate_per_chapter = payload.rate_per_chapter if payload.rate_per_chapter is not None else payload.final_rate
-    if rate_per_chapter is None:
-        raise HTTPException(status_code=422, detail="Bayaran per chapter wajib diisi.")
-    minimum, maximum = await role_rate_range(payload.role)
-    if not minimum <= rate_per_chapter <= maximum:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"Rate {payload.role} harus Rp{minimum:,.0f}–Rp{maximum:,.0f} per chapter."
-                .replace(",", ".")
-            ),
-        )
-    profiles = {item["id"]: item for item in await staff_directory()}
-    real_staff_id = await resolve_staff_id_with_fallback(payload.staff_id, profiles)
-    if not real_staff_id:
-        raise HTTPException(status_code=422, detail="Staff tidak ditemukan. Pastikan staff sudah memiliki role Staff di Discord, atau coba sinkronisasi ulang daftar staff.")
-    payload.staff_id = real_staff_id
-    assignment_id = await staff_db.create_assignment(
-        manga=payload.manga.strip(), chapter=chapter_display(chapters), chapters=chapters, role=payload.role,
-        base_rate=rate_per_chapter, rate_per_chapter=rate_per_chapter,
-        final_rate=rate_per_chapter * len(chapters), multiplier=1.0,
-        staff_id=payload.staff_id, deadline_at=payload.deadline_at,
-    )
-    notice_payload = payload.model_copy(update={
-        "chapter": chapter_display(chapters),
-        "rate_per_chapter": rate_per_chapter,
-        "final_rate": rate_per_chapter * len(chapters),
-    })
-    notified = await send_assignment_notice(payload.staff_id, assignment_id, notice_payload)
-    await audit(user["id"], "assignment.create", "assignment", assignment_id, after={
-        **payload.model_dump(), "chapters": chapters, "chapter_count": len(chapters),
-        "rate_per_chapter": rate_per_chapter, "final_rate": rate_per_chapter * len(chapters),
-        "notified": notified,
-    })
-    return {"id": assignment_id, "notified": notified}
-
-
-@app.post("/api/assignments/tl-ts-pair", status_code=201)
-async def create_tl_ts_pair(payload: TlTsPairCreate, user=Depends(admin_user)):
-    try:
-        chapters = parse_chapters(payload.chapter)
-    except ValueError as error:
-        raise HTTPException(status_code=422, detail=str(error))
-    tl_min, tl_max = await role_rate_range("TL")
-    ts_min, ts_max = await role_rate_range("TS")
-    if not tl_min <= payload.tl_rate_per_chapter <= tl_max:
-        raise HTTPException(status_code=422, detail=f"Rate TL harus Rp{tl_min:,.0f}–Rp{tl_max:,.0f} per chapter.".replace(",", "."))
-    if not ts_min <= payload.ts_rate_per_chapter <= ts_max:
-        raise HTTPException(status_code=422, detail=f"Rate TS harus Rp{ts_min:,.0f}–Rp{ts_max:,.0f} per chapter.".replace(",", "."))
-    profiles = {item["id"]: item for item in await staff_directory()}
-    real_tl = await resolve_staff_id_with_fallback(payload.tl_staff_id, profiles)
-    real_ts = await resolve_staff_id_with_fallback(payload.ts_staff_id, profiles)
-    if not real_tl or not real_ts:
-        raise HTTPException(status_code=422, detail="Salah satu staff tidak ditemukan. Pastikan keduanya memiliki role Staff di Discord atau sudah pernah menerima tugas sebelumnya.")
-    payload.tl_staff_id = real_tl
-    payload.ts_staff_id = real_ts
-    if payload.tl_staff_id == payload.ts_staff_id:
-        raise HTTPException(status_code=422, detail="Untuk Pair TL → TS, pilih dua staff berbeda. Gunakan TL+TS untuk satu staff.")
-    project = await pair_service.create_project(
-        manga=payload.manga.strip(), chapters=chapters,
-        tl_staff_id=payload.tl_staff_id, ts_staff_id=payload.ts_staff_id,
-        tl_rate_per_chapter=payload.tl_rate_per_chapter,
-        ts_rate_per_chapter=payload.ts_rate_per_chapter,
-        deadline_at=payload.deadline_at, created_by=user["id"],
-    )
-    try:
-        channel_id, panel_message_id = await create_pair_workspace(int(project["id"]))
-    except RuntimeError as error:
-        await pair_service.delete_unpublished_project(int(project["id"]))
-        raise HTTPException(status_code=503, detail=str(error))
-    first_tl_id = (await pair_service.get_chapter(int(project["chapters"][0]["id"]))) ["tl_assignment_id"]
-    await audit(user["id"], "assignment.pair_create", "pair_project", project["id"], after={
-        **payload.model_dump(), "chapters": chapters, "channel_id": channel_id,
-    })
-    return {
-        "tl_assignment_id": first_tl_id, "pair_project_id": project["id"],
-        "channel_id": channel_id, "panel_message_id": panel_message_id, "notified": True,
-    }
-
-
-@app.get("/api/pair-projects")
-async def pair_projects(user=Depends(current_user)):
-    rows = await pair_service.list_projects(None if user["role"] == "admin" else int(user["id"]))
-    directory = {str(item["id"]): item for item in await staff_directory()}
-    for item in rows:
-        tl = directory.get(str(item["tl_staff_id"]), {})
-        ts = directory.get(str(item["ts_staff_id"]), {})
-        item["tl_staff_name"] = tl.get("username") or str(item["tl_staff_id"])
-        item["ts_staff_name"] = ts.get("username") or str(item["ts_staff_id"])
-        item["tl_staff_id"], item["ts_staff_id"] = str(item["tl_staff_id"]), str(item["ts_staff_id"])
-        item["channel_id"] = str(item["channel_id"]) if item.get("channel_id") else None
-    return rows
-
-
 class PairRevisionRequest(BaseModel):
     target: Literal["tl", "ts", "both"]
     notes: str = Field(min_length=3, max_length=1500)
@@ -2019,411 +1796,6 @@ async def send_pair_ticket_notice(chapter: dict, staff_id: int, role: str, appro
         }],
         "allowed_mentions": {"users": [str(staff_id)]},
     }))
-
-
-@app.post("/api/pair-chapters/{chapter_id}/approve")
-async def dashboard_pair_approve(chapter_id: int, user=Depends(admin_user)):
-    chapter = await pair_service.approve_final(chapter_id, int(user["id"]))
-    if not chapter:
-        raise HTTPException(status_code=409, detail="Chapter bukan dalam status review final atau sudah diproses.")
-    notices = await asyncio.gather(
-        send_pair_ticket_notice(chapter, int(chapter["tl_staff_id"]), "TL", True),
-        send_pair_ticket_notice(chapter, int(chapter["ts_staff_id"]), "TS", True),
-    )
-    await refresh_pair_workspace_rest(int(chapter["project_id"]))
-    await complete_pair_review_rest(chapter)
-    await audit(user["id"], "pair.final_approve", "pair_chapter", chapter_id, after={
-        "project_id": chapter["project_id"], "tl_notified": notices[0], "ts_notified": notices[1]
-    })
-    return {"ok": True, "chapter": chapter, "notified": all(notices)}
-
-
-@app.post("/api/pair-chapters/{chapter_id}/revision")
-async def dashboard_pair_revision(chapter_id: int, payload: PairRevisionRequest, user=Depends(admin_user)):
-    before = await pair_service.get_chapter(chapter_id)
-    if not await pair_service.request_revision(
-        chapter_id, int(user["id"]), payload.target, payload.notes.strip(), admin=True
-    ):
-        raise HTTPException(status_code=409, detail="Chapter bukan dalam status review final atau sudah diproses.")
-    chapter = await pair_service.get_chapter(chapter_id)
-    if before:
-        await remove_pair_review_rest(before)
-    await refresh_pair_workspace_rest(int(chapter["project_id"]))
-    targets = []
-    if payload.target in {"tl", "both"}:
-        targets.append(send_pair_ticket_notice(chapter, int(chapter["tl_staff_id"]), "TL", False, payload.notes.strip()))
-    if payload.target in {"ts", "both"}:
-        targets.append(send_pair_ticket_notice(chapter, int(chapter["ts_staff_id"]), "TS", False, payload.notes.strip()))
-    notices = await asyncio.gather(*targets) if targets else []
-    await audit(user["id"], f"pair.revision_{payload.target}", "pair_chapter", chapter_id, after={
-        "notes": payload.notes.strip(), "notified": all(notices)
-    })
-    return {"ok": True, "chapter": chapter, "notified": all(notices)}
-
-
-@app.get("/api/pair-projects/{project_id}/timeline")
-async def pair_project_timeline(project_id: int, user=Depends(current_user)):
-    project = await pair_service.get_project(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Pair project tidak ditemukan.")
-    if user["role"] != "admin" and int(user["id"]) not in {int(project["tl_staff_id"]), int(project["ts_staff_id"])}:
-        raise HTTPException(status_code=403, detail="Kamu bukan anggota pair project ini.")
-    return await pair_service.timeline(project_id)
-
-
-@app.put("/api/assignments/{assignment_id}")
-async def update_dashboard_assignment(
-    assignment_id: int,
-    payload: AssignmentUpdate,
-    user=Depends(admin_user),
-):
-    before = await staff_db.get_assignment(assignment_id)
-    if not before:
-        raise HTTPException(status_code=404, detail="Tugas tidak ditemukan.")
-    if before["status"] not in {"open", "claimed", "submitted", "revision"}:
-        raise HTTPException(
-            status_code=409,
-            detail="Tugas yang sudah approved atau paid tidak dapat diubah.",
-        )
-    try:
-        chapters = parse_chapters(payload.chapter)
-    except ValueError as error:
-        raise HTTPException(status_code=422, detail=str(error))
-    minimum, maximum = await role_rate_range(payload.role)
-    if not minimum <= payload.rate_per_chapter <= maximum:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"Rate {payload.role} harus Rp{minimum:,.0f}–Rp{maximum:,.0f} per chapter."
-                .replace(",", ".")
-            ),
-        )
-    final_rate = payload.rate_per_chapter * len(chapters)
-    connection = await dashboard_db()
-    try:
-        await connection.execute("BEGIN IMMEDIATE")
-        cursor = await connection.execute(
-            """UPDATE assignments
-               SET manga=?,chapter=?,chapters=?,chapter_count=?,role=?,
-                   base_rate=?,rate_per_chapter=?,final_rate=?,deadline_at=?
-               WHERE id=? AND status IN ('open','claimed','submitted','revision')""",
-            (
-                payload.manga.strip(),
-                chapter_display(chapters),
-                json.dumps(chapters, ensure_ascii=False),
-                len(chapters),
-                payload.role,
-                payload.rate_per_chapter,
-                payload.rate_per_chapter,
-                final_rate,
-                payload.deadline_at,
-                assignment_id,
-            ),
-        )
-        if not cursor.rowcount:
-            await connection.rollback()
-            raise HTTPException(status_code=409, detail="Status tugas berubah. Muat ulang dashboard.")
-        await connection.commit()
-    finally:
-        await connection.close()
-    await staff_db.add_assignment_event(
-        assignment_id,
-        "updated",
-        user["id"],
-        "Detail tugas diperbarui melalui dashboard.",
-    )
-    after = await staff_db.get_assignment(assignment_id)
-    notified = await send_assignment_update_notice(before, after)
-    await audit(
-        user["id"],
-        "assignment.update",
-        "assignment",
-        assignment_id,
-        before,
-        {**after, "notified": notified},
-    )
-    return {"ok": True, "assignment": after, "notified": notified}
-
-
-@app.post("/api/assignments/{assignment_id}/approve")
-async def dashboard_approve_assignment(assignment_id: int, user=Depends(admin_user)):
-    connection = await dashboard_db()
-    try:
-        before = await (await connection.execute("SELECT * FROM assignments WHERE id=?", (assignment_id,))).fetchone()
-    finally:
-        await connection.close()
-    if not before:
-        raise HTTPException(status_code=404, detail="Tugas tidak ditemukan.")
-    if before["status"] != "submitted":
-        raise HTTPException(status_code=409, detail=f"Tugas berstatus {before['status']}, bukan submitted.")
-    if not await staff_db.approve_assignment(assignment_id):
-        raise HTTPException(status_code=409, detail="Status tugas berubah. Muat ulang dashboard.")
-    after = await staff_db.get_assignment(assignment_id)
-    next_task = await staff_db.activate_ts_handoff(assignment_id)
-    next_notified = False
-    if next_task:
-        next_payload = AssignmentCreate(
-            manga=next_task["manga"], chapter=next_task["chapter"], staff_id=int(next_task["staff_id"]),
-            role="TS", rate_per_chapter=int(next_task["rate_per_chapter"]),
-            final_rate=int(next_task["final_rate"]), deadline_at=next_task.get("deadline_at"),
-        )
-        next_notified = await send_assignment_notice(
-            int(next_task["staff_id"]), int(next_task["id"]), next_payload,
-            handoff_note=next_task.get("admin_notes"),
-        )
-    notified = await send_ticket_review_notice(after, True)
-    await audit(user["id"], "assignment.approve", "assignment", assignment_id, dict(before), {**after, "notified": notified, "ts_assignment_id": next_task.get("id") if next_task else None})
-    return {"ok": True, "notified": notified, "ts_assignment_id": next_task.get("id") if next_task else None, "ts_notified": next_notified}
-
-
-@app.post("/api/assignments/{assignment_id}/revision")
-async def dashboard_revision_assignment(assignment_id: int, payload: RevisionRequest, user=Depends(admin_user)):
-    connection = await dashboard_db()
-    try:
-        before = await (await connection.execute("SELECT * FROM assignments WHERE id=?", (assignment_id,))).fetchone()
-    finally:
-        await connection.close()
-    if not before:
-        raise HTTPException(status_code=404, detail="Tugas tidak ditemukan.")
-    if before["status"] != "submitted":
-        raise HTTPException(status_code=409, detail=f"Tugas berstatus {before['status']}, bukan submitted.")
-    if not await staff_db.revise_assignment(assignment_id, payload.notes.strip()):
-        raise HTTPException(status_code=409, detail="Status tugas berubah. Muat ulang dashboard.")
-    after = await staff_db.get_assignment(assignment_id)
-    notified = await send_ticket_review_notice(after, False, payload.notes.strip())
-    await audit(user["id"], "assignment.revision", "assignment", assignment_id, dict(before), {**after, "notified": notified})
-    return {"ok": True, "notified": notified}
-
-
-@app.get("/api/staff")
-async def staff(
-    page: int = Query(default=1, ge=1), page_size: int = Query(default=20, ge=1, le=100),
-    paginated: bool = Query(default=False), _user=Depends(admin_user),
-):
-    page, page_size, paginated = normalize_paging(page, page_size, paginated)
-    connection = await dashboard_db()
-    try:
-        rows = await (await connection.execute("""
-            SELECT staff_id,
-                   COUNT(*) task_count,
-                   SUM(CASE WHEN status IN ('claimed','submitted','revision','pair_waiting') THEN 1 ELSE 0 END) active_count,
-                   SUM(CASE WHEN status='approved' THEN final_rate ELSE 0 END) approved_amount,
-                   SUM(CASE WHEN status='paid' THEN final_rate ELSE 0 END) paid_amount
-            FROM assignments WHERE staff_id IS NOT NULL GROUP BY staff_id ORDER BY task_count DESC
-        """)).fetchall()
-        # Konversi key ke str agar cocok dengan id dari staff_directory() yang selalu string
-        stats = {str(row["staff_id"]): dict(row) for row in rows}
-    finally:
-        await connection.close()
-    directory = await staff_directory()
-    result = []
-    for profile in directory:
-        staff_id = profile["id"]
-        result.append({
-            **profile,
-            "id": str(staff_id),
-            "staff_id": str(staff_id),
-            **stats.get(staff_id, {"task_count": 0, "active_count": 0, "approved_amount": 0, "paid_amount": 0}),
-        })
-    if paginated:
-        start = (page - 1) * page_size
-        return page_payload(result[start:start + page_size], page, page_size, len(result))
-    return result
-
-
-@app.get("/api/payrates")
-async def payrates(_user=Depends(current_user)):
-    connection = await dashboard_db()
-    try:
-        rows = await (await connection.execute("SELECT * FROM payrates ORDER BY role")).fetchall()
-        return [
-            {
-                **dict(row),
-                "min_rate": int(row["min_rate"] or row["base_rate"]),
-                "max_rate": int(row["max_rate"] or row["base_rate"]),
-            }
-            for row in rows
-        ]
-    finally:
-        await connection.close()
-
-
-@app.get("/api/recruitment/settings")
-async def recruitment_settings(_user=Depends(admin_user)):
-    connection = await dashboard_db()
-    try:
-        rows = await (await connection.execute(
-            """SELECT position,enabled,updated_at,updated_by
-               FROM recruitment_position_settings ORDER BY position"""
-        )).fetchall()
-        counts = await (await connection.execute(
-            """SELECT position,COUNT(*) active_count
-               FROM recruitment_submissions
-               WHERE status='submitted' GROUP BY position"""
-        )).fetchall()
-    finally:
-        await connection.close()
-    count_map = {row["position"]: int(row["active_count"]) for row in counts}
-    row_map = {row["position"]: row for row in rows}
-    try:
-        material_expiry = datetime.fromisoformat(RECRUITMENT_TEST_EXPIRES_AT.replace("Z", "+00:00"))
-        material_hours = (material_expiry.replace(tzinfo=material_expiry.tzinfo or ZoneInfo("UTC")) - datetime.now(ZoneInfo("UTC"))).total_seconds() / 3600
-        material_status = "expired" if material_hours <= 0 else "expiring" if material_hours <= 24 else "active"
-    except ValueError:
-        material_hours, material_status = None, "unknown"
-    return {
-        "positions": [
-            {
-                "position": position,
-                "enabled": bool(row_map[position]["enabled"]) if position in row_map else True,
-                "active_count": count_map.get(position, 0),
-                "updated_at": row_map[position]["updated_at"] if position in row_map else None,
-                "updated_by": row_map[position]["updated_by"] if position in row_map else None,
-            }
-            for position in ("TL", "TS", "TL+TS")
-        ],
-        "open": any(
-            bool(row_map[position]["enabled"]) if position in row_map else True
-            for position in ("TL", "TS", "TL+TS")
-        ),
-        "test_material": {
-            "url": RECRUITMENT_TEST_URL,
-            "tl_example_url": RECRUITMENT_TL_EXAMPLE_URL,
-            "ts_assets_url": RECRUITMENT_TS_ASSETS_URL,
-            "expires_at": RECRUITMENT_TEST_EXPIRES_AT,
-            "hours_remaining": round(material_hours, 1) if material_hours is not None else None,
-            "status": material_status,
-        },
-    }
-
-@app.get("/api/recruitment/submissions")
-async def recruitment_submissions(_user=Depends(admin_user)):
-    channels = await discord_api("GET", f"/guilds/{GUILD_ID}/channels")
-    result = []
-    for channel in channels if isinstance(channels, list) else []:
-        topic = str(channel.get("topic") or "")
-        owner = re.search(r"applicant_id=(\d+)", topic)
-        if channel.get("type") != 0 or str(channel.get("parent_id")) != str(REKRUT_CAT_ID) or not owner:
-            continue
-        member = await discord_api("GET", f"/guilds/{GUILD_ID}/members/{owner.group(1)}")
-        if isinstance(member, dict) and str(ROLE_STAFF_ID) in {str(role) for role in member.get("roles", [])}:
-            continue
-        profile = member.get("user", {}) if isinstance(member, dict) else {}
-        applicant_name = str(member.get("nick") or profile.get("global_name") or profile.get("username") or f"User {owner.group(1)}") if isinstance(member, dict) else f"User {owner.group(1)}"
-        result.append({"id": str(channel["id"]), "applicant_id": owner.group(1), "applicant_name": applicant_name, "ticket_name": str(channel.get("name") or "tiket-pendaftaran"), "position": re.search(r"position=([^|]+)", topic).group(1).strip() if "position=" in topic else "Belum dipilih", "ticket_channel_id": str(channel["id"]), "status": "submitted", "submitted_at": ""})
-    return result
-
-@app.post("/api/recruitment/submissions/{submission_id}/close")
-async def close_recruitment_submission(submission_id: int, payload: RecruitmentCloseRequest, user=Depends(admin_user)):
-    connection = await dashboard_db()
-    try:
-        channel = await discord_api("GET", f"/channels/{submission_id}")
-        owner = re.search(r"applicant_id=(\d+)", str(channel.get("topic") or "")) if isinstance(channel, dict) else None
-        if not owner: raise HTTPException(404, "Tiket pendaftaran tidak ditemukan.")
-        applicant_id = owner.group(1)
-        member = await discord_api("GET", f"/guilds/{GUILD_ID}/members/{applicant_id}")
-        if isinstance(member, dict) and str(ROLE_STAFF_ID) in {str(role) for role in member.get("roles", [])}:
-            raise HTTPException(409, "Pelamar sudah menjadi Staff; tiket ini adalah workspace staff dan tidak dapat ditutup dari Rekrutmen.")
-        await connection.execute("UPDATE recruitment_submissions SET status='closed',reviewed_at=CURRENT_TIMESTAMP,reviewed_by=?,notes=COALESCE(notes,'') || ? WHERE ticket_channel_id=? AND status='submitted'", (user["id"], "\n[Ditutup admin] " + payload.reason.strip(), submission_id))
-        await connection.commit()
-    finally: await connection.close()
-    deleted = await discord_api("DELETE", f"/channels/{submission_id}")
-    if deleted is None:
-        raise HTTPException(503, "Status pendaftaran tersimpan, tetapi channel tiket gagal dihapus. Coba lagi dari dashboard.")
-    await audit(user["id"], "recruitment.close", "ticket", submission_id, None, {"reason":payload.reason.strip()})
-    return {"ok":True}
-
-
-@app.put("/api/recruitment/settings")
-async def update_recruitment_settings(
-    payload: RecruitmentSettingsUpdate,
-    user=Depends(admin_user),
-):
-    before = await staff_db.get_recruitment_position_settings()
-    requested = {
-        "TL": payload.tl,
-        "TS": payload.ts,
-        "TL+TS": payload.tl_ts,
-    }
-    after = await staff_db.set_recruitment_position_settings(requested, user["id"])
-    synced = False
-    sync_error = None
-    try:
-        synced = await update_discord_recruitment_panel(after)
-        if not synced:
-            sync_error = "Panel rekrutmen aktif tidak ditemukan."
-    except Exception as exc:
-        sync_error = str(exc)[:500]
-    if sync_error:
-        await operations.record_event(
-            "recruitment",
-            "warning",
-            "Pengaturan tersimpan tetapi panel Discord belum tersinkron.",
-            {"error": sync_error, "settings": after},
-        )
-    await audit(
-        user["id"],
-        "recruitment.settings.update",
-        "recruitment_settings",
-        "positions",
-        before,
-        {**after, "discord_synced": synced},
-    )
-    return {"ok": True, "settings": after, "discord_synced": synced}
-
-
-@app.put("/api/payrates/{role}")
-async def update_payrate(
-    role: Literal["TL", "TS", "TL+TS"], payload: PayrateUpdate, user=Depends(admin_user)
-):
-    connection = await dashboard_db()
-    try:
-        old = await (await connection.execute("SELECT * FROM payrates WHERE role=?", (role,))).fetchone()
-        min_rate = payload.min_rate if payload.min_rate is not None else payload.base_rate
-        if min_rate is None:
-            raise HTTPException(status_code=422, detail="Rate minimum wajib diisi.")
-        max_rate = payload.max_rate
-        if max_rate is None:
-            old_data = dict(old) if old else {}
-            max_rate = max(
-                min_rate,
-                int(old_data.get("max_rate") or DEFAULT_RATE_RANGES[role][1]),
-            )
-        if max_rate < min_rate:
-            raise HTTPException(status_code=422, detail="Rate maksimum harus sama atau lebih besar dari minimum.")
-        await connection.execute("""
-            INSERT INTO payrates(role,base_rate,min_rate,max_rate,updated_at)
-            VALUES(?,?,?,?,CURRENT_TIMESTAMP)
-            ON CONFLICT(role) DO UPDATE SET
-                base_rate=excluded.base_rate,
-                min_rate=excluded.min_rate,
-                max_rate=excluded.max_rate,
-                updated_at=CURRENT_TIMESTAMP
-        """, (role, min_rate, min_rate, max_rate))
-        await connection.commit()
-    finally:
-        await connection.close()
-    panel_updated, notified = await asyncio.gather(
-        update_discord_payrate_panel(),
-        broadcast_payrate_to_staff(role, min_rate, max_rate),
-    )
-    result = {
-        "role": role,
-        "base_rate": min_rate,
-        "min_rate": min_rate,
-        "max_rate": max_rate,
-        "panel_updated": panel_updated,
-        "notified": notified,
-    }
-    await audit(
-        user["id"],
-        "payrate.update",
-        "payrate",
-        role,
-        dict(old) if old else None,
-        result,
-    )
-    return result
 
 
 @app.get("/api/deadlines")
@@ -2484,220 +1856,6 @@ async def recap_summary(_user=Depends(admin_user)):
         await connection.close()
 
 
-@app.get("/api/invoices")
-async def invoices(period: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$"), _user=Depends(admin_user)):
-    connection = await dashboard_db()
-    try:
-        where, params = (" WHERE period=?", [period]) if period else ("", [])
-        rows = await (await connection.execute(
-            f"SELECT * FROM dashboard_invoices{where} ORDER BY issued_at DESC LIMIT 200", params
-        )).fetchall()
-        return await enrich_staff(rows)
-    finally:
-        await connection.close()
-
-
-@app.get("/api/payouts")
-async def payout_requests(
-    status: str | None = None, page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=100),
-    paginated: bool = Query(default=False), _user=Depends(admin_user),
-):
-    page, page_size, paginated = normalize_paging(page, page_size, paginated)
-    if status and status not in {"awaiting_method", "issued", "paid", "rejected", "cancelled"}:
-        raise HTTPException(status_code=422, detail="Status pencairan tidak valid.")
-    rows = await enrich_staff(await payout_service.list_payouts(status))
-    if paginated:
-        start = (page - 1) * page_size
-        return page_payload(rows[start:start + page_size], page, page_size, len(rows))
-    return rows
-
-
-@app.get("/api/payouts/{payout_id}")
-async def payout_request_detail(payout_id: int, _user=Depends(admin_user)):
-    detail = await payout_service.payout_detail(payout_id, include_sensitive=True)
-    if not detail:
-        raise HTTPException(status_code=404, detail="Permintaan gaji tidak ditemukan.")
-    return (await enrich_staff([detail]))[0]
-
-
-@app.get("/api/payouts/{payout_id}/qris")
-async def payout_qris(payout_id: int, _user=Depends(admin_user)):
-    detail = await payout_service.payout_detail(payout_id, include_sensitive=True)
-    object_key = detail and detail["method"].get("qris_object_key")
-    if not object_key:
-        raise HTTPException(status_code=404, detail="QRIS tidak tersedia.")
-    try:
-        url = await payout_service.qris_download_url(object_key, 600)
-    except RuntimeError as error:
-        raise HTTPException(status_code=503, detail=str(error))
-    return {"download_url": url, "expires_in": 600}
-
-
-@app.get("/api/payouts/{payout_id}/pdf")
-async def payout_invoice_pdf(payout_id: int, _user=Depends(admin_user)):
-    detail = await payout_service.payout_detail(payout_id, include_sensitive=True)
-    if not detail:
-        raise HTTPException(status_code=404, detail="Permintaan gaji tidak ditemukan.")
-    detail = (await enrich_staff([detail]))[0]
-    pdf = render_paid_invoice(detail, staff_name=detail.get("staff_name"))
-    return Response(
-        content=pdf, media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{detail["invoice_number"]}.pdf"'},
-    )
-
-
-@app.post("/api/payouts/{payout_id}/resend-invoice")
-async def resend_payout_invoice(payout_id: int, user=Depends(admin_user)):
-    detail = await payout_service.payout_detail(payout_id)
-    if not detail or detail["status"] != "paid":
-        raise HTTPException(status_code=409, detail="Invoice hanya dapat dikirim untuk pembayaran lunas.")
-    sent, error = await send_paid_invoice_pdf(payout_id, user["username"])
-    await audit(user["id"], "payout.invoice_resend", "payout", payout_id,
-                after={"sent": sent, "error": error})
-    if not sent:
-        raise HTTPException(status_code=502, detail=f"Invoice gagal dikirim: {error}")
-    return {"ok": True}
-
-
-@app.post("/api/payouts/{payout_id}/pay")
-async def pay_payout_request(
-    payout_id: int, payload: PayoutPayConfirmRequest, user=Depends(admin_user)
-):
-    before = await payout_service.payout_detail(payout_id)
-    if not before:
-        raise HTTPException(status_code=404, detail="Permintaan gaji tidak ditemukan.")
-    sensitive = await payout_service.payout_detail(payout_id, include_sensitive=True)
-    destination = (
-        sensitive["method"].get("account_number")
-        or sensitive["method"].get("masked_account")
-        or "QRIS"
-    )
-    expected_last4 = "".join(char for char in str(destination) if char.isalnum())[-4:]
-    if payload.amount != int(before["total_amount"]) or payload.destination_last4.casefold() != expected_last4.casefold():
-        raise HTTPException(
-            status_code=422,
-            detail="Nominal atau 4 karakter terakhir tujuan pembayaran tidak cocok.",
-        )
-    try:
-        payout = await payout_service.pay_payout(payout_id, int(user["id"]))
-    except ValueError as error:
-        raise HTTPException(status_code=409, detail=str(error))
-    await audit(user["id"], "payout.pay", "payout", payout_id, {"status": before["status"]}, {"status": "paid"})
-    sent, error = await send_paid_invoice_pdf(payout_id, user["username"])
-    return {"ok": True, "invoice_sent": sent, "invoice_error": error}
-
-
-@app.post("/api/payouts/{payout_id}/reject")
-async def reject_payout_request(payout_id: int, payload: PayoutRejectRequest, user=Depends(admin_user)):
-    before = await payout_service.payout_detail(payout_id)
-    if not before:
-        raise HTTPException(status_code=404, detail="Permintaan gaji tidak ditemukan.")
-    try:
-        payout = await payout_service.reject_payout(payout_id, int(user["id"]), payload.reason)
-    except ValueError as error:
-        raise HTTPException(status_code=409, detail=str(error))
-    await audit(user["id"], "payout.reject", "payout", payout_id, {"status": before["status"]},
-                {"status": "rejected", "reason": payload.reason})
-    await send_payout_ticket_notice(int(payout["staff_id"]), "Pengajuan Gaji Ditolak", payload.reason, False)
-    return {"ok": True}
-
-
-@app.get("/api/invoices/{invoice_id}")
-async def invoice_detail(invoice_id: int, _user=Depends(admin_user)):
-    connection = await dashboard_db()
-    try:
-        invoice = await (await connection.execute(
-            "SELECT * FROM dashboard_invoices WHERE id=?", (invoice_id,)
-        )).fetchone()
-        if not invoice:
-            raise HTTPException(status_code=404, detail="Invoice tidak ditemukan.")
-        items = await (await connection.execute("""
-            SELECT assignment_id,manga,chapter,role,amount,assigned_at,approved_at,
-                   chapter_count,rate_per_chapter
-            FROM dashboard_invoice_items WHERE invoice_id=? ORDER BY assignment_id
-        """, (invoice_id,))).fetchall()
-        bonus_items = await bonus_service.invoice_bonus_items(connection, invoice_id)
-        manual_bonus_items = await bonus_service.invoice_manual_bonus_items(connection, invoice_id)
-        bonus_items.extend(manual_bonus_items)
-        if not items:
-            status_clause = "paid_period=?" if invoice["status"] == "paid" else "status='approved' AND approved_at LIKE ?"
-            items = await (await connection.execute(f"""
-                SELECT id assignment_id,manga,chapter,role,final_rate amount,assigned_at,approved_at,
-                       COALESCE(chapter_count,1) chapter_count,COALESCE(rate_per_chapter,final_rate) rate_per_chapter
-                FROM assignments WHERE staff_id=? AND {status_clause} ORDER BY id
-            """, (invoice["staff_id"], invoice["period"] if invoice["status"] == "paid" else f"{invoice['period']}%"))).fetchall()
-        result = (await enrich_staff([invoice]))[0]
-        result["items"] = [dict(item) for item in items] + [{
-            "assignment_id": None, "item_type": "performance_bonus", "manga": "Bonus Performa",
-            "chapter": item["period"], "role": "BONUS", "amount": item["amount"],
-            "chapter_count": 0, "rate_per_chapter": item["amount"], "assigned_at": None,
-            "approved_at": None, "score": item["total_score"], "percentage": item["percentage"],
-        } for item in bonus_items]
-        dates = [item["assigned_at"] for item in items if item["assigned_at"]]
-        approved = [item["approved_at"] for item in items if item["approved_at"]]
-        result["work_started_at"] = min(dates) if dates else None
-        result["work_ended_at"] = max(approved) if approved else None
-        return result
-    finally:
-        await connection.close()
-
-
-@app.post("/api/invoices", status_code=201)
-async def create_invoice(payload: InvoiceCreate, user=Depends(admin_user)):
-    connection = await dashboard_db()
-    try:
-        items = await (await connection.execute("""
-            SELECT id,manga,chapter,role,final_rate,assigned_at,approved_at,
-                   COALESCE(chapter_count,1) chapter_count,COALESCE(rate_per_chapter,final_rate) rate_per_chapter
-            FROM assignments a WHERE staff_id=? AND status='approved' AND approved_at LIKE ?
-              AND NOT EXISTS (SELECT 1 FROM dashboard_assignment_billing b WHERE b.assignment_id=a.id)
-            ORDER BY id
-        """, (payload.staff_id, f"{payload.period}%"))).fetchall()
-        bonus_rows = await (await connection.execute("""SELECT id FROM performance_bonuses
-            WHERE staff_id=? AND status='approved' AND invoice_id IS NULL AND proposed_amount>0""",
-            (str(payload.staff_id),))).fetchall()
-        if not items and not bonus_rows:
-            raise HTTPException(status_code=422, detail="Tidak ada tugas approved yang belum dibayar pada periode ini.")
-        chapter_count = sum(item["chapter_count"] or 1 for item in items)
-        total_amount = sum(item["final_rate"] for item in items)
-        invoice_number = f"RYU-{payload.period.replace('-', '')}-{payload.staff_id}-{secrets.token_hex(2).upper()}"
-        try:
-            cursor = await connection.execute("""
-                INSERT INTO dashboard_invoices
-                    (invoice_number,staff_id,period,chapter_count,total_amount,status,issued_by)
-                VALUES(?,?,?,?,?,'issued',?)
-            """, (invoice_number, payload.staff_id, payload.period, chapter_count, total_amount, user["id"]))
-            invoice_id = cursor.lastrowid
-            await connection.executemany("""
-                INSERT INTO dashboard_invoice_items
-                    (invoice_id,assignment_id,manga,chapter,role,amount,assigned_at,approved_at,chapter_count,rate_per_chapter)
-                VALUES(?,?,?,?,?,?,?,?,?,?)
-            """, [(
-                invoice_id, item["id"], item["manga"], item["chapter"], item["role"],
-                item["final_rate"], item["assigned_at"], item["approved_at"],
-                item["chapter_count"] or 1, item["rate_per_chapter"] or item["final_rate"]
-            ) for item in items])
-            await connection.executemany(
-                "INSERT INTO dashboard_assignment_billing(assignment_id,invoice_id) VALUES(?,?)",
-                [(item["id"], invoice_id) for item in items],
-            )
-            bonus_total = await bonus_service.attach_approved_to_invoice(connection, invoice_id, payload.staff_id)
-            manual_bonus_total = await bonus_service.attach_manual_to_invoice(connection, invoice_id, payload.staff_id)
-            total_bonus = (bonus_total or 0) + (manual_bonus_total or 0)
-            if total_bonus:
-                total_amount += total_bonus
-                await connection.execute("UPDATE dashboard_invoices SET total_amount=? WHERE id=?", (total_amount, invoice_id))
-            await connection.commit()
-        except aiosqlite.IntegrityError:
-            await connection.rollback()
-            raise HTTPException(status_code=409, detail="Salah satu tugas sudah masuk invoice lain. Muat ulang data.")
-    finally:
-        await connection.close()
-    await audit(user["id"], "invoice.create", "invoice", invoice_id, after={"invoice_number": invoice_number})
-    return {"id": invoice_id, "invoice_number": invoice_number}
-
-
 async def _replace_invoice_items(connection, invoice, items, actor_id: int):
     if invoice["status"] != "issued":
         raise HTTPException(status_code=409, detail="Hanya invoice berstatus issued yang dapat direvisi.")
@@ -2725,114 +1883,6 @@ async def _replace_invoice_items(connection, invoice, items, actor_id: int):
         revised_at=CURRENT_TIMESTAMP,revised_by=? WHERE id=?""",
         (sum(item["chapter_count"] or 1 for item in items), sum(item["final_rate"] for item in items) + bonus_total, actor_id, invoice["id"]))
     return old_ids
-
-
-@app.post("/api/invoices/{invoice_id}/refresh")
-async def refresh_invoice(invoice_id: int, user=Depends(admin_user)):
-    connection = await dashboard_db()
-    try:
-        invoice = await (await connection.execute("SELECT * FROM dashboard_invoices WHERE id=?", (invoice_id,))).fetchone()
-        if not invoice:
-            raise HTTPException(status_code=404, detail="Invoice tidak ditemukan.")
-        items = await (await connection.execute("""
-            SELECT a.id,a.manga,a.chapter,a.role,a.final_rate,a.assigned_at,a.approved_at,
-                   COALESCE(a.chapter_count,1) chapter_count,COALESCE(a.rate_per_chapter,a.final_rate) rate_per_chapter
-            FROM assignments a WHERE a.staff_id=? AND a.status='approved' AND a.approved_at LIKE ?
-              AND (NOT EXISTS (SELECT 1 FROM dashboard_assignment_billing b WHERE b.assignment_id=a.id)
-                   OR EXISTS (SELECT 1 FROM dashboard_assignment_billing b WHERE b.assignment_id=a.id AND b.invoice_id=?))
-            ORDER BY a.id
-        """, (invoice["staff_id"], f"{invoice['period']}%", invoice_id))).fetchall()
-        before_items = await _replace_invoice_items(connection, invoice, items, user["id"])
-        await connection.commit()
-        after = {"chapter_count": sum(item["chapter_count"] or 1 for item in items), "total_amount": sum(item["final_rate"] for item in items),
-                 "assignment_ids": [item["id"] for item in items]}
-    except Exception:
-        await connection.rollback()
-        raise
-    finally:
-        await connection.close()
-    await audit(user["id"], "invoice.refresh", "invoice", invoice_id, {"assignment_ids": before_items}, after)
-    return {"ok": True, **after}
-
-
-@app.post("/api/invoices/{invoice_id}/correction", status_code=201)
-async def create_correction_invoice(invoice_id: int, user=Depends(admin_user)):
-    connection = await dashboard_db()
-    try:
-        parent = await (await connection.execute("SELECT * FROM dashboard_invoices WHERE id=?", (invoice_id,))).fetchone()
-        if not parent or parent["status"] != "paid":
-            raise HTTPException(status_code=409, detail="Invoice koreksi hanya dapat dibuat dari invoice yang sudah lunas.")
-        items = await (await connection.execute("""SELECT a.id,a.manga,a.chapter,a.role,a.final_rate,a.assigned_at,a.approved_at,
-                   COALESCE(a.chapter_count,1) chapter_count,COALESCE(a.rate_per_chapter,a.final_rate) rate_per_chapter
-            FROM assignments a WHERE a.staff_id=? AND a.status='approved' AND a.approved_at LIKE ?
-              AND NOT EXISTS (SELECT 1 FROM dashboard_assignment_billing b WHERE b.assignment_id=a.id) ORDER BY a.id""",
-            (parent["staff_id"], f"{parent['period']}%"))).fetchall()
-        if not items:
-            raise HTTPException(status_code=422, detail="Tidak ada tugas terlambat yang belum ditagihkan.")
-        count = (await (await connection.execute("SELECT COUNT(*) n FROM dashboard_invoices WHERE parent_invoice_id=?", (invoice_id,))).fetchone())["n"] + 1
-        number = f"{parent['invoice_number']}-C{count:02d}"
-        cursor = await connection.execute("""INSERT INTO dashboard_invoices
-            (invoice_number,staff_id,period,chapter_count,total_amount,status,issued_by,invoice_type,parent_invoice_id)
-            VALUES(?,?,?,?,?,'issued',?,'correction',?)""",
-            (number, parent["staff_id"], parent["period"], sum(i["chapter_count"] or 1 for i in items), sum(i["final_rate"] for i in items), user["id"], invoice_id))
-        correction_id = cursor.lastrowid
-        await connection.executemany("""INSERT INTO dashboard_invoice_items
-            (invoice_id,assignment_id,manga,chapter,role,amount,assigned_at,approved_at,chapter_count,rate_per_chapter)
-            VALUES(?,?,?,?,?,?,?,?,?,?)""",
-            [(correction_id,i["id"],i["manga"],i["chapter"],i["role"],i["final_rate"],i["assigned_at"],i["approved_at"],
-              i["chapter_count"] or 1,i["rate_per_chapter"] or i["final_rate"]) for i in items])
-        await connection.executemany("INSERT INTO dashboard_assignment_billing(assignment_id,invoice_id) VALUES(?,?)",
-                                     [(i["id"], correction_id) for i in items])
-        await connection.commit()
-    except Exception:
-        await connection.rollback()
-        raise
-    finally:
-        await connection.close()
-    await audit(user["id"], "invoice.correction", "invoice", correction_id, after={"parent_invoice_id": invoice_id, "invoice_number": number})
-    return {"id": correction_id, "invoice_number": number}
-
-
-@app.post("/api/invoices/{invoice_id}/pay")
-async def pay_invoice(invoice_id: int, user=Depends(admin_user)):
-    try:
-        payout_id = await payout_service.ensure_payout_for_invoice(invoice_id)
-        before = await payout_service.payout_detail(payout_id)
-        if before["status"] == "awaiting_method":
-            raise HTTPException(
-                status_code=409,
-                detail="Staff belum memiliki metode pembayaran utama. Invoice belum dapat dibayar.",
-            )
-        await payout_service.pay_payout(payout_id, int(user["id"]))
-    except ValueError as error:
-        raise HTTPException(status_code=409, detail=str(error))
-    await audit(user["id"], "invoice.pay", "invoice", invoice_id, before={"status": "issued"}, after={"status": "paid"})
-    sent, error = await send_paid_invoice_pdf(payout_id, user["username"])
-    return {"ok": True, "invoice_sent": sent, "invoice_error": error}
-
-
-@app.delete("/api/invoices/{invoice_id}")
-async def delete_invoice(invoice_id: int, user=Depends(admin_user)):
-    connection = await dashboard_db()
-    try:
-        invoice = await (await connection.execute(
-            "SELECT * FROM dashboard_invoices WHERE id=?", (invoice_id,)
-        )).fetchone()
-        if not invoice:
-            raise HTTPException(status_code=404, detail="Invoice tidak ditemukan.")
-        if invoice["status"] == "paid":
-            raise HTTPException(status_code=409, detail="Invoice yang sudah lunas tidak dapat dihapus.")
-        if invoice["status"] == "void":
-            raise HTTPException(status_code=409, detail="Invoice sudah dibatalkan.")
-        await connection.execute("DELETE FROM dashboard_assignment_billing WHERE invoice_id=?", (invoice_id,))
-        await bonus_service.release_invoice(connection, invoice_id)
-        await bonus_service.release_manual_invoice(connection, invoice_id)
-        await connection.execute("UPDATE dashboard_invoices SET status='void',voided_at=CURRENT_TIMESTAMP,voided_by=? WHERE id=?", (user["id"], invoice_id))
-        await connection.commit()
-    finally:
-        await connection.close()
-    await audit(user["id"], "invoice.void", "invoice", invoice_id, before=dict(invoice), after={"status": "void"})
-    return {"ok": True, "status": "void"}
 
 
 @app.post("/api/uploads/presign")
@@ -2981,130 +2031,6 @@ async def send_bonus_ticket_notice(bonus: dict) -> bool:
     return bool(await discord_api("POST", f"/channels/{row['ticket_channel_id']}/messages", payload))
 
 
-@app.get("/api/performance-bonuses/settings")
-async def performance_bonus_settings(_user=Depends(admin_user)):
-    return await bonus_service.get_settings()
-
-
-@app.put("/api/performance-bonuses/settings")
-async def update_performance_bonus_settings(payload: BonusSettingsUpdate, user=Depends(admin_user)):
-    before = await bonus_service.get_settings()
-    try:
-        result = await bonus_service.update_settings(payload.model_dump(), user["id"])
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    await audit(user["id"], "performance_bonus.settings", "performance_bonus_settings", "1", before, result)
-    return result
-
-
-@app.get("/api/performance-bonuses")
-async def performance_bonus_list(
-    period: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
-    status: str | None = Query(default=None), _user=Depends(admin_user),
-):
-    return await enrich_staff(await bonus_service.list_bonuses(period, status))
-
-
-@app.post("/api/performance-bonuses/run")
-async def run_performance_bonus(payload: BonusRunRequest, user=Depends(admin_user)):
-    try:
-        rows = await bonus_service.evaluate_period(payload.period)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail="Periode tidak valid.") from exc
-    await audit(user["id"], "performance_bonus.evaluate", "performance_bonus", payload.period or bonus_service.previous_period(),
-                None, {"count": len(rows)})
-    return {"count": len(rows), "period": payload.period or bonus_service.previous_period()}
-
-
-@app.post("/api/performance-bonuses/{bonus_id}/approve")
-async def approve_performance_bonus(bonus_id: int, user=Depends(admin_user)):
-    try:
-        result = await bonus_service.review_bonus(bonus_id, "approve", user["id"])
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    notified = await send_bonus_ticket_notice(result)
-    await audit(user["id"], "performance_bonus.approve", "performance_bonus", bonus_id,
-                {"status": "pending"}, {"status": "approved", "amount": result["proposed_amount"], "notified": notified})
-    return {**result, "notified": notified}
-
-
-@app.post("/api/performance-bonuses/{bonus_id}/reject")
-async def reject_performance_bonus(bonus_id: int, payload: BonusRejectRequest, user=Depends(admin_user)):
-    try:
-        result = await bonus_service.review_bonus(bonus_id, "reject", user["id"], payload.reason)
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    await audit(user["id"], "performance_bonus.reject", "performance_bonus", bonus_id,
-                {"status": "pending"}, {"status": "rejected", "reason": payload.reason})
-    return result
-
-
-@app.get("/api/manual-bonuses")
-async def list_manual_bonuses_route(
-    staff_id: str | None = Query(default=None),
-    period: str | None = Query(default=None),
-    status: str | None = Query(default=None),
-    _user=Depends(admin_user),
-):
-    clean_staff = staff_id.strip() if staff_id and staff_id.strip() else None
-    clean_period = period.strip() if period and re.match(r"^\d{4}-\d{2}$", period.strip()) else None
-    clean_status = status.strip() if status and status.strip() else None
-    return await enrich_staff(await bonus_service.list_manual_bonuses(clean_staff, clean_period, clean_status))
-
-
-
-@app.post("/api/manual-bonuses")
-async def create_manual_bonus_route(payload: ManualBonusCreateRequest, user=Depends(admin_user)):
-    clean_period = payload.period.strip() if payload.period and payload.period.strip() else None
-    if clean_period and not re.match(r"^\d{4}-\d{2}$", clean_period):
-        clean_period = None
-    try:
-        result = await bonus_service.create_manual_bonus(
-            staff_id=payload.staff_id.strip(),
-            amount=payload.amount,
-            reason=payload.reason.strip(),
-            created_by=user["id"],
-            period=clean_period,
-        )
-        connection = await dashboard_db()
-        try:
-            row = await (await connection.execute("""SELECT ticket_channel_id FROM assignments
-                WHERE staff_id=? AND ticket_channel_id IS NOT NULL ORDER BY id DESC LIMIT 1""", (payload.staff_id.strip(),))).fetchone()
-            if row and row["ticket_channel_id"]:
-                message = {
-                    "embeds": [{
-                        "title": "🎉 BONUS TAMBAHAN DITERIMA!",
-                        "description": f"Kamu mendapatkan tambahan bonus manual yang akan ditambahkan ke saldo invoice gaji mu berikutnya.\n\n**Alasan:** {payload.reason.strip()}\n**Jumlah Bonus:** Rp {payload.amount:,}",
-                        "color": 0x57F287
-                    }]
-                }
-                await discord_api("POST", f"/channels/{row['ticket_channel_id']}/messages", message)
-        finally:
-            await connection.close()
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    await audit(
-        user["id"], "manual_bonus.create", "manual_bonus", str(result["id"]),
-        None, result
-    )
-    return result
-
-
-
-@app.post("/api/manual-bonuses/{bonus_id}/cancel")
-async def cancel_manual_bonus_route(bonus_id: int, user=Depends(admin_user)):
-    try:
-        result = await bonus_service.cancel_manual_bonus(bonus_id, user["id"])
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    await audit(
-        user["id"], "manual_bonus.cancel", "manual_bonus", str(bonus_id),
-        {"status": "approved"}, {"status": "cancelled"}
-    )
-    return result
-
-
-
 @app.get("/api/audit")
 async def audit_logs(
     _user=Depends(admin_user), page: int = Query(default=1, ge=1),
@@ -3128,3 +2054,4 @@ async def audit_logs(
         return [dict(row) for row in rows]
     finally:
         await connection.close()
+

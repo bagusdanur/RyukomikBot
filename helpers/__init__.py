@@ -5,7 +5,8 @@ from .utils import (
     calculate_final_rate,
     is_popular_series,
     normalize_role,
-    ROLE_PAYRATES,
+    DEFAULT_PAYRATES,
+    ROLE_PAYRATES,  # deprecated alias
     find_ticket,
     format_currency,
     get_current_period,
@@ -15,11 +16,12 @@ from .utils import (
 
 __all__ = [
     "is_admin",
-    "is_staff", 
+    "is_staff",
     "calculate_rate",
     "calculate_final_rate",
     "is_popular_series",
     "normalize_role",
+    "DEFAULT_PAYRATES",
     "ROLE_PAYRATES",
     "find_ticket",
     "format_currency",
