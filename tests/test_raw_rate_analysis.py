@@ -94,8 +94,20 @@ class RawRateAnalysisTests(unittest.TestCase):
         self.assertEqual(suggested_rate(9_000, 18_000, raw), 10_000)
 
     def test_short_chapter_with_many_tall_pages_stays_at_owner_standard(self):
+        # 4/11 (36%) tall pages - a minority, so the default short-chapter
+        # cap still applies.
         raw = RawWorkload(11, 11, 112_000, 14_000, 4)
         self.assertEqual(suggested_rate(9_000, 18_000, raw), 11_000)
+
+    def test_short_chapter_where_most_pages_are_long_strips_earns_more(self):
+        # A real long-strip webtoon chapter: 13/14 (93%) tall pages. Most of
+        # the chapter is long vertical strips, so it should clear the
+        # default 0.22 short-chapter cap instead of pricing like a normal
+        # 14-page chapter.
+        raw = RawWorkload(14, 14, 154_000, 16_000, 13)
+        label, level, _ = classify_workload(raw)
+        self.assertEqual(label, "Berat")
+        self.assertEqual(suggested_rate(9_000, 18_000, raw), 12_500)
 
 
 class MeasureRawWorkloadTests(unittest.TestCase):
