@@ -16,6 +16,18 @@ from PIL import Image, UnidentifiedImageError
 
 from raw_downloader.resolver import resolve_assignment_raw
 
+# RAW CDNs (Asura, Omega, Doujiva, EvaScan, Thunder) reject requests without a
+# browser-like User-Agent, same as every raw_downloader/*.py session. Without
+# this, every range request comes back non-200/garbage, measured_pages stays
+# at 0, and the rate silently falls back to a page-count-only (usually
+# minimum) score instead of reflecting real RAW difficulty.
+DEFAULT_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    )
+}
+
 
 @dataclass(frozen=True)
 class RawWorkload:
@@ -75,8 +87,26 @@ def suggested_rate(minimum: int, maximum: int, workload: RawWorkload) -> int:
     return max(minimum, min(maximum, int(round(target / 500.0) * 500)))
 
 
+def _dimensions_from_bytes(payload: bytes):
+    try:
+        with Image.open(BytesIO(payload)) as image:
+            return image.width, image.height
+    except (OSError, UnidentifiedImageError):
+        return None
+
+
 async def measure_raw_workload(image_urls: list[str], *, session: aiohttp.ClientSession = None, concurrency: int = 8) -> RawWorkload:
-    """Range-request each RAW image to read its dimensions; never downloads a full file."""
+    """Range-request each RAW image to read its dimensions; falls back to a
+    full download only when the partial buffer fails to decode.
+
+    aiohttp's StreamReader.read(n) returns as soon as ANY data is available,
+    not once n bytes have accumulated, so the partial read must be built up
+    via iter_chunked. Some formats (e.g. extended/animated-container WebP,
+    as served by some RAW sources) also refuse to decode from a truncated
+    buffer at all, no matter how it was accumulated - those need the real
+    file, so a failed partial parse retries with a full GET rather than
+    silently counting the page as unmeasured.
+    """
 
     async def read_dimensions(client, url, semaphore):
         if not url.startswith(("https://", "http://")):
@@ -90,10 +120,22 @@ async def measure_raw_workload(image_urls: list[str], *, session: aiohttp.Client
                 ) as response:
                     if response.status not in {200, 206}:
                         return None
-                    payload = await response.content.read(524288)
-                with Image.open(BytesIO(payload)) as image:
-                    return image.width, image.height
-            except (aiohttp.ClientError, asyncio.TimeoutError, OSError, UnidentifiedImageError):
+                    chunks, total = [], 0
+                    async for chunk in response.content.iter_chunked(65536):
+                        chunks.append(chunk)
+                        total += len(chunk)
+                        if total >= 524288:
+                            break
+                    partial_payload = b"".join(chunks)
+                dimensions = _dimensions_from_bytes(partial_payload)
+                if dimensions:
+                    return dimensions
+                async with client.get(url, allow_redirects=False) as response:
+                    if response.status not in {200, 206}:
+                        return None
+                    full_payload = await response.read()
+                return _dimensions_from_bytes(full_payload)
+            except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
                 return None
 
     async def measure(client):
@@ -107,7 +149,7 @@ async def measure_raw_workload(image_urls: list[str], *, session: aiohttp.Client
         dimensions = await measure(session)
     else:
         timeout = aiohttp.ClientTimeout(total=18, connect=5, sock_read=8)
-        async with aiohttp.ClientSession(timeout=timeout) as owned_session:
+        async with aiohttp.ClientSession(timeout=timeout, headers=DEFAULT_HEADERS) as owned_session:
             dimensions = await measure(owned_session)
 
     measured = [item for item in dimensions if isinstance(item, tuple)]

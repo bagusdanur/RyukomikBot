@@ -21,14 +21,20 @@ class _FakeContent:
     def __init__(self, payload):
         self._payload = payload
 
-    async def read(self, _size):
+    async def read(self, _size=-1):
         return self._payload
+
+    async def iter_chunked(self, _size):
+        yield self._payload
 
 
 class _FakeResponse:
     def __init__(self, status, payload):
         self.status = status
         self.content = _FakeContent(payload)
+
+    async def read(self):
+        return await self.content.read()
 
     async def __aenter__(self):
         return self
@@ -43,6 +49,10 @@ class _FakeSession:
 
     def get(self, url, headers=None, allow_redirects=False):
         status, payload = self.responses[url]
+        # Simulate a source whose format only decodes from the full body
+        # (e.g. extended/animated-container WebP): truncate range requests.
+        if headers and "Range" in headers:
+            payload = payload[:40]
         return _FakeResponse(status, payload)
 
 
@@ -100,6 +110,16 @@ class MeasureRawWorkloadTests(unittest.TestCase):
         self.assertEqual(workload.measured_pages, 2)
         self.assertEqual(workload.max_height, 9000)
         self.assertEqual(workload.tall_pages, 1)
+
+    def test_falls_back_to_full_download_when_partial_fails_to_decode(self):
+        # Some sources (extended/animated-container WebP) refuse to decode
+        # from a truncated range read no matter the byte count; _FakeSession
+        # simulates that by truncating any request sent with a Range header.
+        url = "https://example.test/tall.png"
+        session = _FakeSession({url: (200, _png_bytes(800, 15670))})
+        workload = asyncio.run(measure_raw_workload([url], session=session))
+        self.assertEqual(workload.measured_pages, 1)
+        self.assertEqual(workload.max_height, 15670)
 
     def test_unreadable_image_is_skipped_not_fatal(self):
         urls = ["https://example.test/1.png", "https://example.test/broken.png"]
