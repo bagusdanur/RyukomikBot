@@ -5,7 +5,6 @@ from .utils import (
     calculate_final_rate,
     calculate_rate_db,
     calculate_final_rate_db,
-    is_popular_series,
     normalize_role,
     DEFAULT_PAYRATES,
     ROLE_PAYRATES,  # deprecated alias
@@ -13,7 +12,6 @@ from .utils import (
     format_currency,
     get_current_period,
     STATUS_EMOJI,
-    POPULAR_SERIES
 )
 
 __all__ = [
@@ -23,7 +21,6 @@ __all__ = [
     "calculate_final_rate",
     "calculate_rate_db",
     "calculate_final_rate_db",
-    "is_popular_series",
     "normalize_role",
     "DEFAULT_PAYRATES",
     "ROLE_PAYRATES",
@@ -31,5 +28,4 @@ __all__ = [
     "format_currency",
     "get_current_period",
     "STATUS_EMOJI",
-    "POPULAR_SERIES"
 ]

@@ -51,7 +51,10 @@ def build_payrate_embed(ranges: dict[str, dict[str, int]]) -> discord.Embed:
     embed.add_field(
         name="Ketentuan",
         value=(
-            "• Rate final ditentukan Administrator saat tugas dibuat.\n"
+            "• Rate final dihitung otomatis dari tingkat kesusahan RAW asli chapter "
+            "(jumlah halaman & tinggi gambar), lalu ditampilkan sebagai Ringan/Sedang/Berat "
+            "di tugas kamu — bukan tebakan Administrator.\n"
+            "• Administrator hanya bisa menyesuaikan manual bila memang diperlukan.\n"
             "• Tugas multi-chapter dihitung: rate per chapter × jumlah chapter.\n"
             "• Perubahan rate resmi tidak mengubah tugas lama secara otomatis."
         ),

@@ -4,7 +4,6 @@ import asyncio
 import hashlib
 import hmac
 import re
-from io import BytesIO
 from contextlib import asynccontextmanager
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -17,7 +16,6 @@ from pathlib import Path
 
 import aiohttp
 import aiosqlite
-from PIL import Image, UnidentifiedImageError
 try:
     import boto3
 except ImportError:  # Legacy R2 downloads are optional in local/test environments.
@@ -54,8 +52,7 @@ from database import DB_PATH, setup_database
 from chapter_utils import chapter_display, parse_chapters
 from invoice_pdf import render_paid_invoice
 from raw_downloader import asura_downloader, doujiva_downloader, omega_downloader, evascan_downloader, thunder_downloader
-from raw_downloader.resolver import resolve_assignment_raw
-from raw_rate_analysis import RawWorkload, classify_workload, suggested_rate
+from raw_rate_analysis import suggest_assignment_rate
 
 # Shared deps (extracted to reduce app.py size)
 from dashboard.backend.deps import (
@@ -1660,26 +1657,6 @@ async def action_center(_user=Depends(admin_user)):
         await connection.close()
 
 
-async def _read_image_dimensions(session: aiohttp.ClientSession, url: str, semaphore: asyncio.Semaphore):
-    """Read just enough bytes to identify dimensions; never download the RAW file."""
-    if not url.startswith(("https://", "http://")):
-        return None
-    async with semaphore:
-        try:
-            async with session.get(
-                url,
-                headers={"Range": "bytes=0-524287"},
-                allow_redirects=False,
-            ) as response:
-                if response.status not in {200, 206}:
-                    return None
-                payload = await response.content.read(524288)
-            with Image.open(BytesIO(payload)) as image:
-                return image.width, image.height
-        except (aiohttp.ClientError, asyncio.TimeoutError, OSError, UnidentifiedImageError):
-            return None
-
-
 @app.post("/api/raw-rate-analysis")
 async def raw_rate_analysis(payload: RawRateAnalysisRequest, _user=Depends(admin_user)):
     """Recommend a role rate from the matching RAW's pages and image heights."""
@@ -1688,9 +1665,13 @@ async def raw_rate_analysis(payload: RawRateAnalysisRequest, _user=Depends(admin
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error))
 
-    resolved = await resolve_assignment_raw(
+    minimum, maximum = await role_rate_range(payload.role)
+    result = await suggest_assignment_rate(
         payload.manga.strip(),
         requested_chapters,
+        payload.role,
+        minimum,
+        maximum,
         {
             "asura": asura_downloader,
             "omega": omega_downloader,
@@ -1700,61 +1681,17 @@ async def raw_rate_analysis(payload: RawRateAnalysisRequest, _user=Depends(admin
         },
         timeout=12,
     )
-    if resolved.get("status") != "resolved":
+    if result["status"] != "resolved":
         message = {
             "not_found": "Judul RAW tidak ditemukan di Asura, Omega, Doujiva, EvaScan, atau Thunder.",
             "ambiguous": "Judul RAW ambigu. Perjelas judul manga sebelum dianalisis.",
             "chapters_missing": "Chapter tugas belum tersedia pada sumber RAW yang ditemukan.",
             "timeout": "Analisis RAW terlalu lama. Coba lagi beberapa saat.",
-        }.get(resolved.get("status"), "RAW tidak dapat dianalisis saat ini.")
+            "no_images": "Daftar gambar RAW kosong. Coba lagi beberapa saat.",
+        }.get(result["status"], "RAW tidak dapat dianalisis saat ini.")
         raise HTTPException(status_code=422, detail=message)
 
-    source = resolved["source"]
-    downloader = {"asura": asura_downloader, "omega": omega_downloader, "doujiva": doujiva_downloader, "evascan": evascan_downloader, "thunder": thunder_downloader}[source]
-    image_sets = await asyncio.gather(
-        *(downloader.get_chapter_images(resolved["manga"]["id"], chapter["id"])
-          for chapter in resolved["chapters"]),
-        return_exceptions=True,
-    )
-    image_urls = [url for item in image_sets if isinstance(item, list) for url in item]
-    if not image_urls:
-        raise HTTPException(status_code=422, detail="Daftar gambar RAW kosong. Coba lagi beberapa saat.")
-
-    # A range request keeps this analysis light even for high-resolution RAW.
-    semaphore = asyncio.Semaphore(8)
-    timeout = aiohttp.ClientTimeout(total=18, connect=5, sock_read=8)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        dimensions = await asyncio.gather(
-            *(_read_image_dimensions(session, url, semaphore) for url in image_urls),
-            return_exceptions=True,
-        )
-    measured = [item for item in dimensions if isinstance(item, tuple)]
-    workload = RawWorkload(
-        page_count=len(image_urls),
-        measured_pages=len(measured),
-        total_height=sum(item[1] for item in measured),
-        max_height=max((item[1] for item in measured), default=0),
-        tall_pages=sum(item[1] > 8192 for item in measured),
-    )
-    label, level, reason = classify_workload(workload)
-    minimum, maximum = await role_rate_range(payload.role)
-    suggested = suggested_rate(minimum, maximum, workload)
-    return {
-        "source": source,
-        "matched_title": resolved["manga"].get("title", payload.manga),
-        "chapter_count": len(resolved["chapters"]),
-        "page_count": workload.page_count,
-        "measured_pages": workload.measured_pages,
-        "max_height": workload.max_height,
-        "total_height": workload.total_height,
-        "tall_pages": workload.tall_pages,
-        "workload": label,
-        "reason": reason,
-        "rate_per_chapter": suggested,
-        "minimum_rate": minimum,
-        "maximum_rate": maximum,
-        "note": "Rekomendasi dapat diubah administrator sebelum tugas dikirim.",
-    }
+    return result
 
 
 class PairRevisionRequest(BaseModel):

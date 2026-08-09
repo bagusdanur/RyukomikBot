@@ -2,25 +2,6 @@ import discord
 from typing import Optional, Union
 from config import REKRUT_CAT_ID, ROLE_ADMIN_ID, ROLE_STAFF_ID
 
-# Popular series with bonus multiplier
-POPULAR_SERIES = [
-    "Solo Leveling",
-    "Nano Machine",
-    "Martial Peak",
-    "Tomb Raider King",
-    "Leveling with the Gods",
-    "The S-Classes That I Raised",
-    "Return of the Mount Hua Sect",
-    "Demonic Emperor",
-    "I Grow Stronger By Eating!",
-    "A Returner's Magic Should Be Special",
-    "Infinite Leveling: Murim",
-    "The Dark Magician Transmigrates After 66666 Years",
-    "Seoul Station's Necromancer",
-    "Omniscient Reader's Viewpoint",
-    "Trash of the Count's Family",
-]
-
 # Status emojis for assignments
 STATUS_EMOJI = {
     "open": "🔓",
@@ -109,12 +90,6 @@ async def calculate_final_rate_db(base_rate: int, role: str, multiplier: float) 
     normalized = normalize_role(role) or role
     _minimum_rate, maximum_rate = await _db.get_role_payrate_range(normalized)
     return min(int(base_rate * multiplier), maximum_rate)
-
-
-def is_popular_series(manga: str) -> bool:
-    """Return whether a manga title should receive the popular-series bonus."""
-    normalized = manga.strip().casefold()
-    return any(title.casefold() == normalized for title in POPULAR_SERIES)
 
 
 async def get_or_fetch_member(guild: discord.Guild, user_id: int) -> Optional[discord.Member]:
