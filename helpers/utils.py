@@ -73,25 +73,42 @@ def normalize_role(role: str) -> Optional[str]:
 
 
 def calculate_rate(role: str, manga: str) -> int:
-    """Calculate the base rate for a role.
-    
-    Base rates:
-    - TL (Translator): 4000
-    - TS (Typesetter): 5000
-    - TL+TS: 9000
-    
-    Maximum rates: TL 8000, TS 10000, TL+TS 18000
+    """DEPRECATED sync helper — returns the DEFAULT base rate only.
+
+    The DB `payrates` table is the source of truth. Production assign flow uses
+    `database.get_role_payrate_range()` directly. Use `calculate_rate_db()` when
+    you need the live, admin-configured rate. This sync version is kept only for
+    backward compatibility and always reflects DEFAULT_PAYRATES, not DB edits.
     """
     role = normalize_role(role) or role
     rates = ROLE_PAYRATES.get(role, ROLE_PAYRATES["TL"])
     return min(rates["base"], rates["max"])
 
 
+async def calculate_rate_db(role: str) -> int:
+    """Return the live minimum (base) rate for a role from the DB payrates table."""
+    import database as _db
+    normalized = normalize_role(role) or role
+    minimum_rate, _maximum_rate = await _db.get_role_payrate_range(normalized)
+    return minimum_rate
+
+
 def calculate_final_rate(base_rate: int, role: str, multiplier: float) -> int:
-    """Calculate final rate while respecting the role cap."""
+    """DEPRECATED sync helper — caps against DEFAULT_PAYRATES, not DB edits.
+
+    Use `calculate_final_rate_db()` for a DB-accurate cap.
+    """
     role = normalize_role(role) or role
     max_rate = ROLE_PAYRATES.get(role, ROLE_PAYRATES["TL"])["max"]
     return min(int(base_rate * multiplier), max_rate)
+
+
+async def calculate_final_rate_db(base_rate: int, role: str, multiplier: float) -> int:
+    """Calculate final rate, capping against the live DB max_rate for the role."""
+    import database as _db
+    normalized = normalize_role(role) or role
+    _minimum_rate, maximum_rate = await _db.get_role_payrate_range(normalized)
+    return min(int(base_rate * multiplier), maximum_rate)
 
 
 def is_popular_series(manga: str) -> bool:

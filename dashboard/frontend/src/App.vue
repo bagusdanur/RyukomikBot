@@ -26,12 +26,13 @@ import {
 } from "./api";
 
 type Page =
-  "overview" | "actions" | "tasks" | "staff" | "payrates" | "recruitment" | "scout" | "deadlines" | "recap" | "payouts" | "bonuses" | "operations" | "audit" | "converter" | "notifications" | "workload";
+  "overview" | "actions" | "tasks" | "staff" | "payrates" | "recruitment" | "scout" | "deadlines" | "recap" | "payouts" | "bonuses" | "operations" | "audit" | "converter" | "ocr" | "notifications" | "workload";
 const OperationsPage = defineAsyncComponent(() => import("./pages/OperationsPage.vue"));
 const ActionCenterPage = defineAsyncComponent(() => import("./pages/ActionCenterPage.vue"));
 const ScoutPage = defineAsyncComponent(() => import("./pages/ScoutPage.vue"));
 const PerformanceBonusPage = defineAsyncComponent(() => import("./pages/PerformanceBonusPage.vue"));
 const ConverterPage = defineAsyncComponent(() => import("./pages/ConverterPage.vue"));
+const OcrPage = defineAsyncComponent(() => import("./pages/OcrPage.vue"));
 const NotificationPrefsPage = defineAsyncComponent(() => import("./pages/NotificationPrefsPage.vue"));
 const WorkloadPage = defineAsyncComponent(() => import("./pages/WorkloadPage.vue"));
 const user = ref<User | null>(null),
@@ -115,6 +116,7 @@ const navItems = computed(() => [
         { id: "operations", label: "Operasional", icon: "pi pi-heart-fill" },
         { id: "workload", label: "Workload", icon: "pi pi-chart-bar" },
         { id: "converter", label: "Converter", icon: "pi pi-image" },
+        { id: "ocr", label: "OCR Extractor", icon: "pi pi-language" },
         { id: "audit", label: "Audit Log", icon: "pi pi-shield" },
       ]
     : []),
@@ -1075,6 +1077,7 @@ onMounted(async () => {
         <template #fallback><div class="operations-skeleton"><span v-for="n in 4" :key="n"></span></div></template>
       </Suspense>
       <ConverterPage v-if="page === 'converter'" />
+      <OcrPage v-if="page === 'ocr'" />
       <NotificationPrefsPage v-if="page === 'notifications'" />
       <WorkloadPage v-if="page === 'workload'" />
       <template v-if="page === 'tasks'"

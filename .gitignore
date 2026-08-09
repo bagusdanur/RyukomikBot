@@ -29,3 +29,6 @@ Thumbs.db
 dashboard/frontend/node_modules/
 dashboard/frontend/dist/
 dashboard/frontend/*.tsbuildinfo
+
+# Backups
+data/backups/

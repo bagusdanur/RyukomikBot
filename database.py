@@ -389,6 +389,11 @@ async def get_staff_stats(staff_id: int, period: Optional[str] = None) -> Dict[s
     db = await get_db()
     try:
         if period:
+            # Each assignment is attributed to exactly ONE "effective period" so it
+            # can never be counted in two months at once:
+            #   - paid      -> paid_period (the month it was actually disbursed)
+            #   - approved  -> month of approved_at (completed, awaiting payout)
+            #   - otherwise -> month of assigned_at (still in progress)
             cursor = await db.execute("""
                 SELECT 
                     COUNT(*) as total,
@@ -401,11 +406,13 @@ async def get_staff_stats(staff_id: int, period: Optional[str] = None) -> Dict[s
                 FROM assignments 
                 WHERE staff_id = ? 
                   AND (
-                    approved_at LIKE ?
-                    OR paid_period = ?
-                    OR (approved_at IS NULL AND assigned_at LIKE ?)
-                  )
-            """, (staff_id, f"{period}%", period, f"{period}%"))
+                    CASE
+                        WHEN status = 'paid' THEN paid_period
+                        WHEN approved_at IS NOT NULL THEN substr(approved_at, 1, 7)
+                        ELSE substr(assigned_at, 1, 7)
+                    END
+                  ) = ?
+            """, (staff_id, period))
         else:
             cursor = await db.execute("""
                 SELECT 
