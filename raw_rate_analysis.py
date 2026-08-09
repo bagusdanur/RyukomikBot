@@ -87,7 +87,7 @@ def suggested_rate(minimum: int, maximum: int, workload: RawWorkload) -> int:
     # cap.
     if workload.page_count <= 15:
         majority_tall = workload.page_count > 0 and workload.tall_pages / workload.page_count > 0.5
-        score = min(score, 0.38 if majority_tall else 0.22)
+        score = min(score, 0.33 if majority_tall else 0.22)
     target = minimum + (maximum - minimum) * min(score, 0.90)
     return max(minimum, min(maximum, int(round(target / 500.0) * 500)))
 

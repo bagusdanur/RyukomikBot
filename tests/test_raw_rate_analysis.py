@@ -107,7 +107,7 @@ class RawRateAnalysisTests(unittest.TestCase):
         raw = RawWorkload(14, 14, 154_000, 16_000, 13)
         label, level, _ = classify_workload(raw)
         self.assertEqual(label, "Berat")
-        self.assertEqual(suggested_rate(9_000, 18_000, raw), 12_500)
+        self.assertEqual(suggested_rate(9_000, 18_000, raw), 12_000)
 
 
 class MeasureRawWorkloadTests(unittest.TestCase):
