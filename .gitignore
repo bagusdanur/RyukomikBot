@@ -11,7 +11,7 @@ venv/
 .env
 
 # Database
-data/*.db
+data/*.db*
 data/*.sqlite
 
 # IDE
