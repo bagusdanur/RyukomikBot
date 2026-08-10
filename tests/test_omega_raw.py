@@ -115,7 +115,7 @@ class EvaScanAdapterTests(unittest.IsolatedAsyncioTestCase):
             "title": "Chapter 4", "slug": "chapter-4", "date": "today",
         }]})
         chapter_rows = await downloader.get_chapter_list("64db57fa096")
-        self.assertEqual(chapter_rows[0]["id"], "chapter-4")
+        self.assertEqual(chapter_rows[0]["id"], "64db57fa096-chapter-4")
 
     async def test_image_order_is_preserved(self):
         downloader = EvaScanDownloader()
