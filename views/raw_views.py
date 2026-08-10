@@ -39,10 +39,6 @@ def cleanup_old_raw_files(max_age_hours=24):
                     os.remove(path)
             except OSError:
                 pass
-
-
-def raw_mode_label(raw_mode: str) -> str:
-    return "RAW Original" if raw_mode == "original" else "Aman untuk Editor (maks. 8192 px)"
         for directory in directories:
             path = os.path.join(root, directory)
             try:
@@ -50,6 +46,10 @@ def raw_mode_label(raw_mode: str) -> str:
                     os.rmdir(path)
             except OSError:
                 pass
+
+
+def raw_mode_label(raw_mode: str) -> str:
+    return "RAW Original" if raw_mode == "original" else "Aman untuk Editor (maks. 8192 px)"
 
 
 async def upload_to_filebin(bin_id, file_path, remote_filename=None, session=None):
