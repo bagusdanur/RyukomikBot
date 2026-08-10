@@ -764,6 +764,20 @@ async def search_manga_command(interaction: discord.Interaction, query: str, sou
     await interaction.followup.send(embed=embed, view=RawSearchView(source, results), ephemeral=False)
 
 
+def raw_progress_embed(title: str, source: str, chapter: str, message: str) -> discord.Embed:
+    """Consistent, readable live status card for administrator RAW commands."""
+    embed = discord.Embed(
+        title=title,
+        description="Sedang menyiapkan file RAW. Pesan ini akan diperbarui otomatis.",
+        color=discord.Color.gold(),
+    )
+    embed.add_field(name="Sumber", value=f"**{source.title()}**", inline=True)
+    embed.add_field(name="Chapter", value=f"`{chapter}`", inline=True)
+    embed.add_field(name="Progress", value=message, inline=False)
+    embed.set_footer(text="Jangan jalankan ulang — proses tetap berjalan di VPS.")
+    return embed
+
+
 async def download_raw_command(interaction: discord.Interaction, manga_id: str, chapter_id: str, source: str = "asura"):
     """Download one RAW chapter."""
     if not is_admin(interaction.user):
@@ -775,7 +789,9 @@ async def download_raw_command(interaction: discord.Interaction, manga_id: str, 
     await interaction.response.defer(ephemeral=False, thinking=True)
     async def progress(message: str):
         try:
-            await interaction.edit_original_response(embed=discord.Embed(title="Menyiapkan RAW…", description=f"Sumber: **{source.title()}**\\nChapter: **{display_chapter}**\\n\\n{message}", color=discord.Color.gold()))
+            await interaction.edit_original_response(
+                embed=raw_progress_embed("Menyiapkan RAW…", source, display_chapter, message)
+            )
         except discord.HTTPException as error:
             print(f"RAW progress update skipped: {error}")
     filebin_url, completed, final_source = await create_filebin_download(source, manga_id, [display_chapter], progress=progress)
@@ -923,7 +939,9 @@ async def raw_download_batch_command(interaction: discord.Interaction, manga_id:
         return await interaction.followup.send("Isi minimal satu chapter ID.", ephemeral=False)
     async def progress(message: str):
         try:
-            await interaction.edit_original_response(embed=discord.Embed(title="Menyiapkan Batch RAW…", description=f"Sumber: **{source.title()}**\\n\\n{message}", color=discord.Color.gold()))
+            await interaction.edit_original_response(
+                embed=raw_progress_embed("Menyiapkan Batch RAW…", source, ", ".join(ids), message)
+            )
         except discord.HTTPException as error:
             print(f"Batch RAW progress update skipped: {error}")
     filebin_url, completed, final_source = await create_filebin_download(source, manga_id, ids, progress=progress)
