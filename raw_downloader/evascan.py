@@ -24,9 +24,21 @@ def _clean_id(value: str) -> str:
     return str(value or "").strip("/").removeprefix("series/").removeprefix("manga/")
 
 
-def _clean_chapter(value: str) -> str:
-    value = str(value or "").strip("/").split("/")[-1]
-    return f"chapter-{value}" if value.replace(".", "", 1).isdigit() else value
+def canonical_chapter_slug(manga_id: str, chapter_id: str) -> str:
+    """Return the exact Evascan chapter slug used by its API.
+
+    Evascan uses ``manga-slug-chapter-2``, unlike other sources which often
+    accept ``chapter-2``.  Keep an already complete slug untouched so special
+    chapter slugs remain valid.
+    """
+    clean_manga = _clean_id(manga_id)
+    value = str(chapter_id or "").strip("/").split("/")[-1]
+    if value.startswith(f"{clean_manga}-chapter-"):
+        return value
+    number = value.removeprefix("chapter-")
+    if number.replace(".", "", 1).isdigit():
+        return f"{clean_manga}-chapter-{number}"
+    return value
 
 
 def _image_extension(url: str) -> str:
@@ -60,10 +72,11 @@ class EvaScanDownloader:
         if not info:
             return []
         clean_id = _clean_id(manga_id)
-        return [{"id": _clean_chapter(chapter.get("slug", chapter.get("title", ""))), "title": chapter.get("title", "Unknown Chapter"), "date": chapter.get("date", chapter.get("time", "")), "manga_id": clean_id, "source": "evascan"} for chapter in info.get("chapters", []) if chapter.get("slug") or chapter.get("title")]
+        return [{"id": canonical_chapter_slug(clean_id, chapter.get("slug", chapter.get("title", ""))), "title": chapter.get("title", "Unknown Chapter"), "date": chapter.get("date", chapter.get("time", "")), "manga_id": clean_id, "source": "evascan"} for chapter in info.get("chapters", []) if chapter.get("slug") or chapter.get("title")]
 
     async def get_chapter_images(self, manga_id: str, chapter_id: str) -> List[str]:
-        clean_manga, clean_chapter = _clean_id(manga_id), _clean_chapter(chapter_id)
+        clean_manga = _clean_id(manga_id)
+        clean_chapter = canonical_chapter_slug(clean_manga, chapter_id)
         async with _create_session() as session:
             payload = await get_json(session, f"{self.api_url}/chapter/{clean_manga}/{clean_chapter}", source="evascan", stage=f"chapter:{clean_manga}:{clean_chapter}", timeout=10, validator=lambda item: bool(item.get("images")))
         return [str(image).strip() for image in payload.get("images", []) if str(image).strip()] if payload else []
@@ -72,7 +85,8 @@ class EvaScanDownloader:
         images = await self.get_chapter_images(manga_id, chapter_id)
         if not images:
             return None
-        clean_manga, clean_chapter = _clean_id(manga_id), _clean_chapter(chapter_id)
+        clean_manga = _clean_id(manga_id)
+        clean_chapter = canonical_chapter_slug(clean_manga, chapter_id)
         chapter_dir = os.path.join(save_dir, "evascan", f"{clean_manga}_{clean_chapter}")
         async with _create_session() as session:
             complete = await download_images(

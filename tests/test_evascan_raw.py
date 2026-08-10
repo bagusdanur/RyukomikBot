@@ -2,10 +2,20 @@ import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from raw_downloader.evascan import EvaScanDownloader
+from raw_downloader.evascan import EvaScanDownloader, canonical_chapter_slug
 
 
 class EvaScanRawTests(unittest.IsolatedAsyncioTestCase):
+    def test_numeric_chapter_becomes_official_evascan_slug(self):
+        self.assertEqual(
+            canonical_chapter_slug("hush-now-saintess", "2"),
+            "hush-now-saintess-chapter-2",
+        )
+        self.assertEqual(
+            canonical_chapter_slug("hush-now-saintess", "hush-now-saintess-chapter-2"),
+            "hush-now-saintess-chapter-2",
+        )
+
     async def test_chapter_download_reuses_one_session_and_reports_progress(self):
         downloader = EvaScanDownloader()
         images = [f"https://example.invalid/{index}.webp" for index in range(1, 6)]

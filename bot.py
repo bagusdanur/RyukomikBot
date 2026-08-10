@@ -18,6 +18,7 @@ from views.ticket_views import (
 )
 from views.select_views import ReviewSelectView, SubmitSelectView, ConfirmPayView
 from views.raw_views import RawSearchView, create_filebin_download
+from raw_downloader.evascan import canonical_chapter_slug
 from views.scout_views import ScoutResultView
 from modals.assign_modal import AssignModal
 from modals.revisi_modal import RevisiModal
@@ -770,13 +771,14 @@ async def download_raw_command(interaction: discord.Interaction, manga_id: str, 
             "Download RAW bebas hanya untuk administrator. Staff gunakan **Download RAW** pada Staff Panel.",
             ephemeral=True,
         )
+    display_chapter = canonical_chapter_slug(manga_id, chapter_id) if source == "evascan" else chapter_id
     await interaction.response.defer(ephemeral=False, thinking=True)
     async def progress(message: str):
         try:
-            await interaction.edit_original_response(embed=discord.Embed(title="Menyiapkan RAW…", description=f"Sumber: **{source.title()}**\\nChapter: **{chapter_id}**\\n\\n{message}", color=discord.Color.gold()))
+            await interaction.edit_original_response(embed=discord.Embed(title="Menyiapkan RAW…", description=f"Sumber: **{source.title()}**\\nChapter: **{display_chapter}**\\n\\n{message}", color=discord.Color.gold()))
         except discord.HTTPException as error:
             print(f"RAW progress update skipped: {error}")
-    filebin_url, completed, final_source = await create_filebin_download(source, manga_id, [chapter_id], progress=progress)
+    filebin_url, completed, final_source = await create_filebin_download(source, manga_id, [display_chapter], progress=progress)
     if not filebin_url:
         return await interaction.followup.send(f"Gagal download atau upload ke Filebin dari **{source.title()}**. Coba lagi nanti.", ephemeral=False)
     embed = discord.Embed(title=f"RAW Siap Diunduh ({final_source.title()})", color=discord.Color.green())
@@ -915,6 +917,8 @@ async def raw_download_batch_command(interaction: discord.Interaction, manga_id:
         )
     await interaction.response.defer(ephemeral=False)
     ids = [item.strip() for item in chapter_ids.split(",") if item.strip()][:10]
+    if source == "evascan":
+        ids = [canonical_chapter_slug(manga_id, item) for item in ids]
     if not ids:
         return await interaction.followup.send("Isi minimal satu chapter ID.", ephemeral=False)
     async def progress(message: str):
