@@ -40,6 +40,9 @@ async def setup_pair_tables() -> None:
                 completed_at DATETIME
             )
         """)
+        project_columns = {row[1] for row in await (await db.execute("PRAGMA table_info(pair_projects)")).fetchall()}
+        if "raw_mode" not in project_columns:
+            await db.execute("ALTER TABLE pair_projects ADD COLUMN raw_mode TEXT NOT NULL DEFAULT 'editor_safe'")
         await db.execute("""
             CREATE TABLE IF NOT EXISTS pair_chapters (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -90,7 +93,7 @@ async def setup_pair_tables() -> None:
 async def create_project(
     *, manga: str, chapters: list[str], tl_staff_id: int, ts_staff_id: int,
     tl_rate_per_chapter: int, ts_rate_per_chapter: int,
-    deadline_at: Optional[str], created_by: Optional[int],
+    deadline_at: Optional[str], created_by: Optional[int], raw_mode: str = "editor_safe",
 ) -> dict[str, Any]:
     """Create one project and two non-payable assignments for every chapter."""
     db = await db_module.get_db()
@@ -99,11 +102,11 @@ async def create_project(
         cursor = await db.execute(
             """INSERT INTO pair_projects
                (manga,chapters,tl_staff_id,ts_staff_id,tl_rate_per_chapter,
-                ts_rate_per_chapter,deadline_at,created_by)
-               VALUES(?,?,?,?,?,?,?,?)""",
+                ts_rate_per_chapter,deadline_at,created_by,raw_mode)
+               VALUES(?,?,?,?,?,?,?,?,?)""",
             (manga, json.dumps(chapters, ensure_ascii=False), tl_staff_id, ts_staff_id,
              tl_rate_per_chapter, ts_rate_per_chapter, deadline_at,
-             str(created_by) if created_by else None),
+             str(created_by) if created_by else None, raw_mode),
         )
         project_id = int(cursor.lastrowid)
         chapter_rows = []

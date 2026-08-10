@@ -71,6 +71,7 @@ class AssignmentCreate(BaseModel):
     rate_per_chapter: int | None = Field(default=None, ge=0, le=1_000_000)
     final_rate: int | None = Field(default=None, ge=0, le=1_000_000)
     deadline_at: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    raw_mode: Literal["editor_safe", "original"] = "editor_safe"
 
 
 class TlTsPairCreate(BaseModel):
@@ -81,6 +82,7 @@ class TlTsPairCreate(BaseModel):
     tl_rate_per_chapter: int = Field(ge=0, le=1_000_000)
     ts_rate_per_chapter: int = Field(ge=0, le=1_000_000)
     deadline_at: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    raw_mode: Literal["editor_safe", "original"] = "editor_safe"
 
 
 class AssignmentUpdate(BaseModel):
@@ -89,6 +91,7 @@ class AssignmentUpdate(BaseModel):
     role: Literal["TL", "TS", "TL+TS"]
     rate_per_chapter: int = Field(ge=0, le=1_000_000)
     deadline_at: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    raw_mode: Literal["editor_safe", "original"] = "editor_safe"
 
 
 class RevisionRequest(BaseModel):
@@ -371,6 +374,7 @@ async def create_dashboard_assignment(payload: AssignmentCreate, user=Depends(ad
         multiplier=1.0,
         staff_id=payload.staff_id,
         deadline_at=payload.deadline_at,
+        raw_mode=payload.raw_mode,
     )
     notice_payload = payload.model_copy(update={
         "chapter": chapter_display(chapters),
@@ -431,6 +435,7 @@ async def create_tl_ts_pair(payload: TlTsPairCreate, user=Depends(admin_user)):
         ts_rate_per_chapter=payload.ts_rate_per_chapter,
         deadline_at=payload.deadline_at,
         created_by=user["id"],
+        raw_mode=payload.raw_mode,
     )
     try:
         channel_id, panel_message_id = await create_pair_workspace(int(project["id"]))
@@ -486,7 +491,7 @@ async def update_dashboard_assignment(
         cursor = await connection.execute(
             """UPDATE assignments
                SET manga=?,chapter=?,chapters=?,chapter_count=?,role=?,
-                   base_rate=?,rate_per_chapter=?,final_rate=?,deadline_at=?
+                   base_rate=?,rate_per_chapter=?,final_rate=?,deadline_at=?,raw_mode=?
                WHERE id=? AND status IN ('open','claimed','submitted','revision')""",
             (
                 payload.manga.strip(),
@@ -498,6 +503,7 @@ async def update_dashboard_assignment(
                 payload.rate_per_chapter,
                 final_rate,
                 payload.deadline_at,
+                payload.raw_mode,
                 assignment_id,
             ),
         )

@@ -19,6 +19,7 @@ export type Assignment = {
   deadline_at: string | null;
   assigned_at: string;
   gdrive_link?: string | null;
+  raw_mode?: "editor_safe" | "original";
   staff_name?: string;
   staff_avatar?: string | null;
 };

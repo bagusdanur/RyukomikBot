@@ -172,6 +172,8 @@ async def setup_database():
             await db.execute("ALTER TABLE assignments ADD COLUMN rate_per_chapter INTEGER")
         if "review_message_id" not in columns:
             await db.execute("ALTER TABLE assignments ADD COLUMN review_message_id INTEGER")
+        if "raw_mode" not in columns:
+            await db.execute("ALTER TABLE assignments ADD COLUMN raw_mode TEXT NOT NULL DEFAULT 'editor_safe'")
         await db.execute("""
             UPDATE assignments
             SET chapters = COALESCE(chapters, json_array(chapter)),
@@ -229,6 +231,7 @@ async def create_assignment(
     deadline_at: Optional[str] = None,
     chapters: Optional[List[str]] = None,
     rate_per_chapter: Optional[int] = None,
+    raw_mode: str = "editor_safe",
 ) -> int:
     """Create a new assignment and return its ID."""
     db = await get_db()
@@ -237,14 +240,15 @@ async def create_assignment(
             INSERT INTO assignments
                 (manga, chapter, staff_id, role, base_rate, final_rate, multiplier,
                  status, message_id, ticket_channel_id, claimed_at, deadline_at,
-                 chapters, chapter_count, rate_per_chapter)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 chapters, chapter_count, rate_per_chapter, raw_mode)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             manga, chapter, staff_id, role, base_rate, final_rate, multiplier,
             "claimed" if staff_id else "open", message_id, ticket_channel_id,
             datetime.now().isoformat(timespec="seconds") if staff_id else None,
             deadline_at, json.dumps(chapters or [chapter], ensure_ascii=False),
             len(chapters or [chapter]), rate_per_chapter if rate_per_chapter is not None else final_rate,
+            raw_mode if raw_mode in {"editor_safe", "original"} else "editor_safe",
         ))
         await db.commit()
         await add_assignment_event(

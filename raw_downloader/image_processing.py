@@ -10,6 +10,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 
 MAX_RAW_IMAGE_HEIGHT = int(os.getenv("RAW_MAX_IMAGE_HEIGHT", "8192"))
+RAW_MODES = {"editor_safe", "original"}
 
 
 @dataclass(frozen=True)

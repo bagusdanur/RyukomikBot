@@ -39,6 +39,10 @@ def cleanup_old_raw_files(max_age_hours=24):
                     os.remove(path)
             except OSError:
                 pass
+
+
+def raw_mode_label(raw_mode: str) -> str:
+    return "RAW Original" if raw_mode == "original" else "Aman untuk Editor (maks. 8192 px)"
         for directory in directories:
             path = os.path.join(root, directory)
             try:
@@ -121,6 +125,7 @@ async def create_filebin_download(
     chapter_ids,
     fallbacks=None,
     progress: Optional[Callable[[str], Awaitable[None]]] = None,
+    raw_mode: str = "editor_safe",
 ):
     """Upload images directly so Filebin's download ZIP has no nested archive/folders."""
     cleanup_old_raw_files()
@@ -188,7 +193,7 @@ async def create_filebin_download(
         for index, (_, image_path, _) in enumerate(upload_entries, 1):
             # Thunder RAW must remain byte-for-byte original. Its long pages are
             # intentionally not capped to the editor-safe 8192 px height.
-            if selected_source != "thunder":
+            if raw_mode != "original" and selected_source != "thunder":
                 resize_result = await asyncio.to_thread(resize_for_editor, image_path)
                 resized_images += int(resize_result.resized)
             if index == len(upload_entries) or index % 3 == 0:
@@ -363,6 +368,7 @@ class RawAssignmentSelect(discord.ui.Select):
                         }
                         for item in result.get("fallbacks", [])
                     ],
+                    raw_mode=assignment.get("raw_mode", "editor_safe"),
                 ),
             )
 
@@ -381,22 +387,24 @@ class RawAssignmentSelect(discord.ui.Select):
                 "auto", combined,
                 allowed_chapters=allowed,
                 assignment_id=assignment["id"],
+                raw_mode=assignment.get("raw_mode", "editor_safe"),
             ),
         )
 
 
 class RawSearchView(discord.ui.View):
-    def __init__(self, source, results, allowed_chapters=None, assignment_id=None):
+    def __init__(self, source, results, allowed_chapters=None, assignment_id=None, raw_mode="editor_safe"):
         super().__init__(timeout=300)
         normalized = [{**manga, "_source": manga.get("_source", source)} for manga in results[:25]]
-        self.add_item(RawMangaSelect(normalized, allowed_chapters, assignment_id))
+        self.add_item(RawMangaSelect(normalized, allowed_chapters, assignment_id, raw_mode))
 
 
 class RawMangaSelect(discord.ui.Select):
-    def __init__(self, results, allowed_chapters=None, assignment_id=None):
+    def __init__(self, results, allowed_chapters=None, assignment_id=None, raw_mode="editor_safe"):
         self.results = results
         self.allowed_chapters = allowed_chapters
         self.assignment_id = assignment_id
+        self.raw_mode = raw_mode
         options = [
             discord.SelectOption(
                 label=str(manga.get("title", "Tanpa judul"))[:100],
@@ -489,22 +497,24 @@ class RawMangaSelect(discord.ui.Select):
                 chapters[:25],
                 restricted=self.allowed_chapters is not None,
                 fallbacks=fallback_candidates,
+                raw_mode=self.raw_mode,
             ),
         )
 
 
 class RawChapterView(discord.ui.View):
-    def __init__(self, source, manga_id, chapters, restricted=False, fallbacks=None):
+    def __init__(self, source, manga_id, chapters, restricted=False, fallbacks=None, raw_mode="editor_safe"):
         super().__init__(timeout=300)
         self.source, self.manga_id, self.chapters, self.restricted = source, manga_id, chapters, restricted
         self.fallbacks = fallbacks or []
+        self.raw_mode = raw_mode
         self.add_item(RawChapterSelect(self, chapters))
 
     @discord.ui.button(label="Download Chapter Tugas", style=discord.ButtonStyle.success, row=1)
     async def latest_button(self, interaction, _button):
         chapter_ids = [str(item["id"]) for item in self.chapters] if self.restricted else [str(self.chapters[0]["id"])]
         await download_chapters(
-            interaction, self.source, self.manga_id, chapter_ids, self.fallbacks
+            interaction, self.source, self.manga_id, chapter_ids, self.fallbacks, self.raw_mode
         )
 
 
@@ -521,11 +531,11 @@ class RawChapterSelect(discord.ui.Select):
             self.parent_view.source,
             self.parent_view.manga_id,
             self.values,
-            self.parent_view.fallbacks,
+            self.parent_view.fallbacks, self.parent_view.raw_mode,
         )
 
 
-async def download_chapters(interaction, source, manga_id, chapter_ids, fallbacks=None):
+async def download_chapters(interaction, source, manga_id, chapter_ids, fallbacks=None, raw_mode="editor_safe"):
     if not (is_staff(interaction.user) or is_admin(interaction.user)):
         return await interaction.response.send_message("Hanya staff atau administrator yang dapat download RAW.")
     await interaction.response.edit_message(
@@ -533,7 +543,7 @@ async def download_chapters(interaction, source, manga_id, chapter_ids, fallback
             title="Menyiapkan RAW...",
             description=(
                 f"Sumber: **{source.title()}**\nChapter: **{', '.join(chapter_ids)}**\n\n"
-                "Mengunduh gambar, memproses bila perlu, lalu mengunggahnya langsung ke Filebin."
+                f"Mode: **{raw_mode_label(raw_mode)}**\nMengunduh gambar lalu mengunggahnya ke Filebin."
             ),
             color=discord.Color.gold(),
         ),
@@ -549,12 +559,13 @@ async def download_chapters(interaction, source, manga_id, chapter_ids, fallback
         )
 
     filebin_url, completed, final_source = await create_filebin_download(
-        source, manga_id, chapter_ids, fallbacks, progress=progress
+        source, manga_id, chapter_ids, fallbacks, progress=progress, raw_mode=raw_mode
     )
     if not filebin_url:
         return await interaction.edit_original_response(embed=discord.Embed(title="Upload Filebin Gagal", description="RAW tidak tersedia atau Filebin sedang menolak upload. File lokal sudah dibersihkan; coba lagi nanti.", color=discord.Color.red()))
     embed = discord.Embed(title="RAW Siap Diunduh", description=f"Gambar dari **{len(completed)} chapter** sudah tersedia langsung di Filebin tanpa ZIP bertingkat.", color=discord.Color.green())
     embed.add_field(name="Sumber Final", value=final_source.title(), inline=False)
+    embed.add_field(name="Mode RAW", value=raw_mode_label(raw_mode), inline=False)
     embed.add_field(name="Chapter", value=", ".join(completed), inline=False)
     embed.add_field(name="Link Download", value=f"[Buka Filebin]({filebin_url})", inline=False)
     embed.add_field(name="Cara Download", value="Buka Filebin lalu pilih **Download files**. ZIP hasil download langsung berisi `ch-1_001.jpg`, `ch-1_002.jpg`, dan seterusnya.", inline=False)

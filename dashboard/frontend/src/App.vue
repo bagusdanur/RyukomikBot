@@ -88,6 +88,7 @@ const task = ref({
   ts_staff_id: "",
   ts_rate: 5000,
   deadline_at: "",
+  raw_mode: "editor_safe",
 });
 const rawRateAnalysis = ref<RawRateAnalysis | null>(null);
 const rawRateAnalyzing = ref(false);
@@ -443,6 +444,7 @@ async function createTask() {
         role: task.value.role,
         rate_per_chapter: task.value.final_rate,
         deadline_at: task.value.deadline_at || null,
+        raw_mode: task.value.raw_mode,
       });
       success.value = `Tugas #${editingTask.value.id} diperbarui${result.notified ? " dan staff sudah diberi notifikasi." : "."}`;
     } else if (task.value.role === "PAIR") {
@@ -451,6 +453,7 @@ async function createTask() {
         tl_staff_id: task.value.staff_id, ts_staff_id: task.value.ts_staff_id,
         tl_rate_per_chapter: task.value.final_rate, ts_rate_per_chapter: task.value.ts_rate,
         deadline_at: task.value.deadline_at || null,
+        raw_mode: task.value.raw_mode,
       });
       success.value = result.notified
         ? `Pair dibuat: tugas TL #${result.tl_assignment_id} dikirim ke tiket staff. Tugas TS akan otomatis aktif setelah TL disetujui.`
@@ -470,6 +473,7 @@ async function createTask() {
       ts_staff_id: "",
       ts_rate: 5000,
       deadline_at: "",
+      raw_mode: "editor_safe",
     };
     rawRateAnalysis.value = null;
     await loadPage();
@@ -543,6 +547,7 @@ function editTask(item: Assignment) {
     ts_staff_id: "",
     ts_rate: 5000,
     deadline_at: item.deadline_at || "",
+    raw_mode: item.raw_mode || "editor_safe",
   };
   rawRateAnalysis.value = null;
   showTask.value = true;
@@ -1750,6 +1755,7 @@ onMounted(async () => {
             <Button type="button" label="Analisis RAW" icon="pi pi-sparkles" severity="secondary"
               :loading="rawRateAnalyzing" @click="analyzeRawRate" />
           </div
+          ><label class="wide">Mode RAW<select v-model="task.raw_mode"><option value="editor_safe">Aman untuk Editor — maksimal 8192 px</option><option value="original">RAW Original — tanpa resize</option></select><small>{{ task.raw_mode === 'original' ? 'Kualitas dan ukuran asli dipertahankan; gambar panjang mungkin sulit dibuka di Ibis.' : 'Gambar sangat panjang dikecilkan proporsional agar aman dibuka editor.' }}</small></label
           ><div v-if="rawRateAnalysis" class="wide raw-rate-result" :class="rawRateAnalysis.workload.toLowerCase()">
             <div>
               <small>{{ rawRateAnalysis.source.toUpperCase() }} · {{ rawRateAnalysis.matched_title }}</small>
