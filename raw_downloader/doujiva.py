@@ -4,7 +4,7 @@ import shutil
 from typing import Optional, Dict, List, Any
 from urllib.parse import parse_qs, unquote, urlparse
 from config import DOUJIVA_API
-from .retry import get_bytes, get_json
+from .retry import download_images, get_json
 
 
 DEFAULT_HEADERS = {
@@ -145,21 +145,6 @@ class DoujivaDownloader:
             data = await get_json(session, url_fallback, source="doujiva", stage=f"chapter-fallback:{clean_manga}:{clean_chap}", timeout=10, validator=lambda item: bool(item.get("images")))
             return _normalize_chapter_images(data.get("images", [])) if data else []
 
-    async def download_image(self, url: str, save_path: str) -> bool:
-        """Download a single image."""
-        async with _create_session() as session:
-            try:
-                content = await get_bytes(session, url, source="doujiva", stage=f"image:{os.path.basename(save_path)}")
-                if not content:
-                    return False
-                os.makedirs(os.path.dirname(save_path), exist_ok=True)
-                with open(save_path, "wb") as f:
-                    f.write(content)
-                return True
-            except OSError as e:
-                print(f"Error downloading image from Doujiva: {e}")
-                return False
-
     async def download_chapter(
         self,
         manga_id: str,
@@ -175,17 +160,9 @@ class DoujivaDownloader:
         clean_manga = _clean_manga_id(manga_id)
         clean_chap = _clean_chapter_id(chapter_id)
         chapter_dir = os.path.join(save_dir, "doujiva", f"{clean_manga}_{clean_chap}")
-        os.makedirs(chapter_dir, exist_ok=True)
-
-        downloaded = 0
-        for i, url in enumerate(images):
-            ext = _image_extension(url)
-            save_path = os.path.join(chapter_dir, f"{i+1:03d}.{ext}")
-
-            if await self.download_image(url, save_path):
-                downloaded += 1
-
-        if downloaded == len(images):
+        async with _create_session() as session:
+            complete = await download_images(session, images, chapter_dir, source="doujiva", extension_for=_image_extension, concurrency=4, timeout=20, attempts=3)
+        if complete:
             return chapter_dir
         shutil.rmtree(chapter_dir, ignore_errors=True)
         return None

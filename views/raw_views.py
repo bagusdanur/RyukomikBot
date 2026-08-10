@@ -23,7 +23,8 @@ from raw_downloader.image_processing import resize_for_editor
 
 RAW_ROOT = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "raw")
 FILEBIN_BASE_URL = "https://filebin.net"
-FILEBIN_UPLOAD_CONCURRENCY = 3
+FILEBIN_UPLOAD_CONCURRENCY = 5
+FILEBIN_UPLOAD_TIMEOUT = aiohttp.ClientTimeout(total=90, sock_connect=15, sock_read=60)
 
 
 def cleanup_old_raw_files(max_age_hours=24):
@@ -50,11 +51,11 @@ def cleanup_old_raw_files(max_age_hours=24):
 async def upload_to_filebin(bin_id, file_path, remote_filename=None, session=None):
     """Upload one file into a shared Filebin bin."""
     filename = remote_filename or os.path.basename(file_path)
-    timeout = aiohttp.ClientTimeout(total=900)
+    timeout = FILEBIN_UPLOAD_TIMEOUT
     owned_session = session is None
     client = session or aiohttp.ClientSession(timeout=timeout)
     try:
-        for attempt in range(1, 4):
+        for attempt in range(1, 3):
             try:
                 with open(file_path, "rb") as upload_file:
                     async with client.post(
@@ -84,8 +85,8 @@ async def upload_to_filebin(bin_id, file_path, remote_filename=None, session=Non
                             reason = f"HTTP {response.status}"
             except (aiohttp.ClientError, TimeoutError, OSError) as error:
                 reason = type(error).__name__
-            print(f"Filebin upload {filename} attempt {attempt}/3 failed: {reason}")
-            if attempt < 3:
+            print(f"Filebin upload {filename} attempt {attempt}/2 failed: {reason}")
+            if attempt < 2:
                 await asyncio.sleep(0.75 * attempt)
         return False
     finally:
@@ -128,7 +129,7 @@ async def create_filebin_download(
     bin_id = secrets.token_urlsafe(12).replace("_", "").replace("-", "").lower()
     request_root = os.path.join(RAW_ROOT, f"request-{bin_id}")
     os.makedirs(request_root, exist_ok=True)
-    filebin_session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=900))
+    filebin_session = aiohttp.ClientSession(timeout=FILEBIN_UPLOAD_TIMEOUT)
     try:
         async def notify(message: str) -> None:
             if progress:

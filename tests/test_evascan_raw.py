@@ -12,13 +12,12 @@ class EvaScanRawTests(unittest.IsolatedAsyncioTestCase):
         progress = AsyncMock()
         with tempfile.TemporaryDirectory() as directory, patch.object(
             downloader, "get_chapter_images", AsyncMock(return_value=images)
-        ), patch.object(downloader, "download_image", AsyncMock(return_value=True)) as download:
+        ), patch("raw_downloader.evascan.download_images", new=AsyncMock(return_value=True)) as download:
             result = await downloader.download_chapter("manga", "chapter-2", directory, progress=progress)
         self.assertIsNotNone(result)
-        self.assertEqual(download.await_count, 5)
-        reported = [call.args for call in progress.await_args_list]
-        self.assertIn((4, 5), reported)
-        self.assertIn((5, 5), reported)
+        download.assert_awaited_once()
+        self.assertEqual(download.await_args.kwargs["timeout"], 20)
+        self.assertEqual(download.await_args.kwargs["concurrency"], 4)
 
 
 if __name__ == "__main__":

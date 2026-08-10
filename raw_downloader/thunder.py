@@ -7,7 +7,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 import aiohttp
 
 from config import THUNDER_API
-from .retry import get_bytes, get_json
+from .retry import download_images, get_json
 
 
 DEFAULT_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"}
@@ -88,30 +88,15 @@ class ThunderDownloader:
         root = payload.get("data", payload) if payload else {}
         return [str(image).strip() for image in root.get("images", []) if str(image).strip()]
 
-    async def download_image(self, url: str, save_path: str) -> bool:
-        async with _create_session() as session:
-            content = await get_bytes(session, url, source="thunder", stage=f"image:{os.path.basename(save_path)}")
-        if not content:
-            return False
-        try:
-            os.makedirs(os.path.dirname(save_path), exist_ok=True)
-            with open(save_path, "wb") as image_file:
-                image_file.write(content)
-            return True
-        except OSError:
-            return False
-
     async def download_chapter(self, manga_id: str, chapter_id: str, save_dir: str) -> Optional[str]:
         images = await self.get_chapter_images(manga_id, chapter_id)
         if not images:
             return None
         clean_manga, clean_chapter = _clean_id(manga_id), _clean_chapter(chapter_id)
         chapter_dir = os.path.join(save_dir, "thunder", f"{clean_manga}_{clean_chapter}")
-        downloaded = 0
-        for index, url in enumerate(images, 1):
-            if await self.download_image(url, os.path.join(chapter_dir, f"{index:03d}.{_image_extension(url)}")):
-                downloaded += 1
-        if downloaded == len(images):
+        async with _create_session() as session:
+            complete = await download_images(session, images, chapter_dir, source="thunder", extension_for=_image_extension, concurrency=4, timeout=20, attempts=3)
+        if complete:
             return chapter_dir
         shutil.rmtree(chapter_dir, ignore_errors=True)
         return None

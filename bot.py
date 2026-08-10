@@ -770,8 +770,13 @@ async def download_raw_command(interaction: discord.Interaction, manga_id: str, 
             "Download RAW bebas hanya untuk administrator. Staff gunakan **Download RAW** pada Staff Panel.",
             ephemeral=True,
         )
-    await interaction.response.defer(ephemeral=False)
-    filebin_url, completed, final_source = await create_filebin_download(source, manga_id, [chapter_id])
+    await interaction.response.defer(ephemeral=False, thinking=True)
+    async def progress(message: str):
+        try:
+            await interaction.edit_original_response(embed=discord.Embed(title="Menyiapkan RAW…", description=f"Sumber: **{source.title()}**\\nChapter: **{chapter_id}**\\n\\n{message}", color=discord.Color.gold()))
+        except discord.HTTPException as error:
+            print(f"RAW progress update skipped: {error}")
+    filebin_url, completed, final_source = await create_filebin_download(source, manga_id, [chapter_id], progress=progress)
     if not filebin_url:
         return await interaction.followup.send(f"Gagal download atau upload ke Filebin dari **{source.title()}**. Coba lagi nanti.", ephemeral=False)
     embed = discord.Embed(title=f"RAW Siap Diunduh ({final_source.title()})", color=discord.Color.green())
@@ -779,7 +784,7 @@ async def download_raw_command(interaction: discord.Interaction, manga_id: str, 
     embed.add_field(name="Chapter", value=", ".join(completed), inline=True)
     embed.add_field(name="Link Download", value=f"[Buka Filebin]({filebin_url})", inline=False)
     embed.set_footer(text="File lokal VPS sudah dihapus setelah upload.")
-    await interaction.followup.send(embed=embed, ephemeral=False)
+    await interaction.edit_original_response(embed=embed, view=None)
 
 
 @bot.tree.command(name="cari-project", description="Bandingkan judul RAW dengan katalog Indonesia")
@@ -912,7 +917,12 @@ async def raw_download_batch_command(interaction: discord.Interaction, manga_id:
     ids = [item.strip() for item in chapter_ids.split(",") if item.strip()][:10]
     if not ids:
         return await interaction.followup.send("Isi minimal satu chapter ID.", ephemeral=False)
-    filebin_url, completed, final_source = await create_filebin_download(source, manga_id, ids)
+    async def progress(message: str):
+        try:
+            await interaction.edit_original_response(embed=discord.Embed(title="Menyiapkan Batch RAW…", description=f"Sumber: **{source.title()}**\\n\\n{message}", color=discord.Color.gold()))
+        except discord.HTTPException as error:
+            print(f"Batch RAW progress update skipped: {error}")
+    filebin_url, completed, final_source = await create_filebin_download(source, manga_id, ids, progress=progress)
     if not filebin_url:
         return await interaction.followup.send("Download atau upload Filebin gagal. Coba kembali nanti.")
     embed = discord.Embed(title=f"Batch RAW Siap Diunduh ({final_source.title()})", color=discord.Color.green())
@@ -922,7 +932,7 @@ async def raw_download_batch_command(interaction: discord.Interaction, manga_id:
         embed.add_field(name="Chapter Gagal", value=", ".join(failed), inline=False)
     embed.add_field(name="Link Download", value=f"[Buka Filebin]({filebin_url})", inline=False)
     embed.set_footer(text="File lokal VPS sudah dihapus setelah upload.")
-    await interaction.followup.send(embed=embed, ephemeral=False)
+    await interaction.edit_original_response(embed=embed, view=None)
 
 
 @bot.tree.command(name="raw-update", description="Cek update RAW terbaru")

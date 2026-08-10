@@ -1,6 +1,7 @@
 import asyncio
 import logging
-from typing import Any, Callable, Optional
+import os
+from typing import Any, Callable, Iterable, Optional
 
 import aiohttp
 
@@ -60,3 +61,49 @@ async def get_bytes(session, url, *, source, stage, timeout=60, attempts=3) -> b
         if attempt < attempts:
             await asyncio.sleep(0.5 * attempt)
     return None
+
+
+async def download_images(
+    session: aiohttp.ClientSession,
+    images: Iterable[str],
+    chapter_dir: str,
+    *,
+    source: str,
+    extension_for: Callable[[str], str],
+    progress: Optional[Callable[[int, int], Any]] = None,
+    concurrency: int = 4,
+    timeout: float = 25,
+    attempts: int = 3,
+) -> bool:
+    """Download chapter pages concurrently while retaining the API page order."""
+    urls = [str(url).strip() for url in images if str(url).strip()]
+    if not urls:
+        return False
+    os.makedirs(chapter_dir, exist_ok=True)
+    semaphore = asyncio.Semaphore(max(1, concurrency))
+    completed = 0
+    progress_lock = asyncio.Lock()
+
+    async def fetch(index: int, url: str) -> bool:
+        nonlocal completed
+        async with semaphore:
+            content = await get_bytes(
+                session, url, source=source, stage=f"image:{index:03d}",
+                timeout=timeout, attempts=attempts,
+            )
+        if not content:
+            return False
+        try:
+            with open(os.path.join(chapter_dir, f"{index:03d}.{extension_for(url)}"), "wb") as image_file:
+                image_file.write(content)
+        except OSError:
+            return False
+        async with progress_lock:
+            completed += 1
+            if progress and (completed == len(urls) or completed % 2 == 0):
+                result = progress(completed, len(urls))
+                if hasattr(result, "__await__"):
+                    await result
+        return True
+
+    return all(await asyncio.gather(*(fetch(index, url) for index, url in enumerate(urls, 1))))

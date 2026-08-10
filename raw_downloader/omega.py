@@ -6,7 +6,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 import aiohttp
 
 from config import OMEGA_API
-from .retry import get_bytes, get_json
+from .retry import download_images, get_json
 
 
 DEFAULT_HEADERS = {
@@ -122,36 +122,15 @@ class OmegaDownloader:
         # API order is authoritative: first URL is page 1.
         return [str(image).strip() for image in payload.get("images", []) if str(image).strip()]
 
-    async def download_image(self, url: str, save_path: str) -> bool:
-        async with _create_session() as session:
-            content = await get_bytes(
-                session,
-                url,
-                source="omega",
-                stage=f"image:{os.path.basename(save_path)}",
-            )
-        if not content:
-            return False
-        try:
-            os.makedirs(os.path.dirname(save_path), exist_ok=True)
-            with open(save_path, "wb") as image_file:
-                image_file.write(content)
-            return True
-        except OSError:
-            return False
-
     async def download_chapter(self, manga_id: str, chapter_id: str, save_dir: str) -> Optional[str]:
         images = await self.get_chapter_images(manga_id, chapter_id)
         if not images:
             return None
         clean_manga, clean_chapter = _clean_id(manga_id), _clean_chapter(chapter_id)
         chapter_dir = os.path.join(save_dir, "omega", f"{clean_manga}_{clean_chapter}")
-        downloaded = 0
-        for index, url in enumerate(images, 1):
-            target = os.path.join(chapter_dir, f"{index:03d}.{_image_extension(url)}")
-            if await self.download_image(url, target):
-                downloaded += 1
-        if downloaded == len(images):
+        async with _create_session() as session:
+            complete = await download_images(session, images, chapter_dir, source="omega", extension_for=_image_extension, concurrency=4, timeout=20, attempts=3)
+        if complete:
             return chapter_dir
         shutil.rmtree(chapter_dir, ignore_errors=True)
         return None

@@ -7,7 +7,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 import aiohttp
 
 from config import EVASCAN_API
-from .retry import get_bytes, get_json
+from .retry import download_images, get_json
 
 
 DEFAULT_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"}
@@ -68,44 +68,18 @@ class EvaScanDownloader:
             payload = await get_json(session, f"{self.api_url}/chapter/{clean_manga}/{clean_chapter}", source="evascan", stage=f"chapter:{clean_manga}:{clean_chapter}", timeout=10, validator=lambda item: bool(item.get("images")))
         return [str(image).strip() for image in payload.get("images", []) if str(image).strip()] if payload else []
 
-    async def download_image(self, url: str, save_path: str, session: aiohttp.ClientSession) -> bool:
-        content = await get_bytes(session, url, source="evascan", stage=f"image:{os.path.basename(save_path)}")
-        if not content:
-            return False
-        try:
-            os.makedirs(os.path.dirname(save_path), exist_ok=True)
-            with open(save_path, "wb") as image_file:
-                image_file.write(content)
-            return True
-        except OSError:
-            return False
-
     async def download_chapter(self, manga_id: str, chapter_id: str, save_dir: str, progress=None) -> Optional[str]:
         images = await self.get_chapter_images(manga_id, chapter_id)
         if not images:
             return None
         clean_manga, clean_chapter = _clean_id(manga_id), _clean_chapter(chapter_id)
         chapter_dir = os.path.join(save_dir, "evascan", f"{clean_manga}_{clean_chapter}")
-        semaphore = asyncio.Semaphore(4)
-        completed = 0
-        progress_lock = asyncio.Lock()
-
         async with _create_session() as session:
-            async def fetch(index: int, url: str) -> bool:
-                nonlocal completed
-                async with semaphore:
-                    ok = await self.download_image(
-                        url, os.path.join(chapter_dir, f"{index:03d}.{_image_extension(url)}"), session
-                    )
-                if ok:
-                    async with progress_lock:
-                        completed += 1
-                        if progress and (completed == len(images) or completed % 2 == 0):
-                            await progress(completed, len(images))
-                return ok
-
-            results = await asyncio.gather(*(fetch(index, url) for index, url in enumerate(images, 1)))
-        if all(results):
+            complete = await download_images(
+                session, images, chapter_dir, source="evascan", extension_for=_image_extension,
+                progress=progress, concurrency=4, timeout=20, attempts=3,
+            )
+        if complete:
             return chapter_dir
         shutil.rmtree(chapter_dir, ignore_errors=True)
         return None

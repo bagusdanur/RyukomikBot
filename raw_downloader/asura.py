@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 import aiohttp
 
 from config import ASURA_API
-from .retry import get_bytes, get_json
+from .retry import download_images, get_json
 
 
 DEFAULT_HEADERS = {
@@ -86,20 +86,6 @@ class AsuraDownloader:
             payload = await get_json(session, f"{self.api_url}/chapter/{clean_manga}/{clean_chapter}", source="asura", stage=f"chapter:{clean_manga}:{clean_chapter}", timeout=10, validator=lambda item: bool(item.get("images")))
             return payload.get("images", []) if payload else []
 
-    async def download_image(self, url: str, save_path: str) -> bool:
-        async with _create_session() as session:
-            try:
-                content = await get_bytes(session, url, source="asura", stage=f"image:{os.path.basename(save_path)}")
-                if not content:
-                    return False
-                os.makedirs(os.path.dirname(save_path), exist_ok=True)
-                with open(save_path, "wb") as image_file:
-                    image_file.write(content)
-                return True
-            except OSError as error:
-                print(f"Error downloading Asura image: {error}")
-                return False
-
     async def download_chapter(
         self, manga_id: str, chapter_id: str, save_dir: str
     ) -> Optional[str]:
@@ -110,14 +96,11 @@ class AsuraDownloader:
         clean_manga = _clean_id(manga_id)
         clean_chapter = _clean_chapter(chapter_id)
         chapter_dir = os.path.join(save_dir, "asura", f"{clean_manga}_{clean_chapter}")
-        downloaded = 0
-        for index, url in enumerate(images, 1):
-            extension = url.split("?")[0].rsplit(".", 1)[-1] if "." in url.split("?")[0] else "jpg"
-            if await self.download_image(
-                url, os.path.join(chapter_dir, f"{index:03d}.{extension}")
-            ):
-                downloaded += 1
-        if downloaded == len(images):
+        def extension(url: str) -> str:
+            return url.split("?")[0].rsplit(".", 1)[-1] if "." in url.split("?")[0] else "jpg"
+        async with _create_session() as session:
+            complete = await download_images(session, images, chapter_dir, source="asura", extension_for=extension, concurrency=4, timeout=20, attempts=3)
+        if complete:
             return chapter_dir
         shutil.rmtree(chapter_dir, ignore_errors=True)
         return None
