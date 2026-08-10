@@ -5,6 +5,7 @@ import re
 import secrets
 import shutil
 import time
+from typing import Awaitable, Callable, Optional
 
 import discord
 
@@ -22,6 +23,7 @@ from raw_downloader.image_processing import resize_for_editor
 
 RAW_ROOT = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "raw")
 FILEBIN_BASE_URL = "https://filebin.net"
+FILEBIN_UPLOAD_CONCURRENCY = 3
 
 
 def cleanup_old_raw_files(max_age_hours=24):
@@ -112,7 +114,13 @@ async def verify_filebin(bin_id, expected_filenames, session):
     return False
 
 
-async def create_filebin_download(source, manga_id, chapter_ids, fallbacks=None):
+async def create_filebin_download(
+    source,
+    manga_id,
+    chapter_ids,
+    fallbacks=None,
+    progress: Optional[Callable[[str], Awaitable[None]]] = None,
+):
     """Upload images directly so Filebin's download ZIP has no nested archive/folders."""
     cleanup_old_raw_files()
     os.makedirs(RAW_ROOT, exist_ok=True)
@@ -122,6 +130,10 @@ async def create_filebin_download(source, manga_id, chapter_ids, fallbacks=None)
     os.makedirs(request_root, exist_ok=True)
     filebin_session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=900))
     try:
+        async def notify(message: str) -> None:
+            if progress:
+                await progress(message)
+
         candidates = [{"source": source, "manga_id": manga_id}] + list(fallbacks or [])
         selected_source = source
         chapter_directories = []
@@ -129,10 +141,18 @@ async def create_filebin_download(source, manga_id, chapter_ids, fallbacks=None)
             downloader = get_downloader(candidate["source"])
             attempt_root = os.path.join(request_root, candidate["source"])
             current = []
-            for chapter_id in chapter_ids:
-                result = await downloader.download_chapter(
-                    candidate["manga_id"], chapter_id, attempt_root
-                )
+            for chapter_index, chapter_id in enumerate(chapter_ids, 1):
+                await notify(f"Mengunduh chapter {chapter_index}/{len(chapter_ids)} dari {candidate['source'].title()}…")
+                if candidate["source"].casefold() == "evascan":
+                    async def evascan_progress(done: int, total: int, chapter=chapter_id):
+                        await notify(f"Mengunduh Evascan chapter {chapter}: **{done}/{total} halaman**")
+                    result = await downloader.download_chapter(
+                        candidate["manga_id"], chapter_id, attempt_root, progress=evascan_progress
+                    )
+                else:
+                    result = await downloader.download_chapter(
+                        candidate["manga_id"], chapter_id, attempt_root
+                    )
                 if not result:
                     break
                 current.append((chapter_id, result))
@@ -146,40 +166,55 @@ async def create_filebin_download(source, manga_id, chapter_ids, fallbacks=None)
         if not chapter_directories:
             return None, [], source
 
-        resized_images = 0
-        expected_filenames = []
-        upload_failed = False
+        upload_entries = []
         for chapter_id, result in chapter_directories:
             safe_chapter = re.sub(r"[^a-zA-Z0-9_-]+", "-", chapter_id).strip("-")[:30] or "chapter"
             image_number = 0
-            uploaded = True
             image_files = []
             for root, directories, files in os.walk(result):
                 directories.sort()
                 for filename in files:
                     image_files.append(os.path.join(root, filename))
             for image_path in sorted(image_files, key=lambda path: os.path.relpath(path, result)):
-                # Thunder RAW must remain byte-for-byte original. Its long pages are
-                # intentionally not capped to the editor-safe 8192 px height.
-                if selected_source != "thunder":
-                    resize_result = await asyncio.to_thread(resize_for_editor, image_path)
-                    resized_images += int(resize_result.resized)
                 image_number += 1
                 extension = os.path.splitext(image_path)[1] or ".jpg"
                 remote_name = f"ch-{safe_chapter}_{image_number:03d}{extension}"
-                if not await upload_to_filebin(bin_id, image_path, remote_name, filebin_session):
-                    uploaded = False
-                    upload_failed = True
-                    break
-                expected_filenames.append(remote_name)
-            if uploaded and image_number:
-                completed.append(chapter_id)
-            else:
-                shutil.rmtree(result, ignore_errors=True)
-            if upload_failed:
-                break
-        if upload_failed or not completed:
+                upload_entries.append((chapter_id, image_path, remote_name))
+
+        if not upload_entries:
             return None, [], selected_source
+        resized_images = 0
+        for index, (_, image_path, _) in enumerate(upload_entries, 1):
+            # Thunder RAW must remain byte-for-byte original. Its long pages are
+            # intentionally not capped to the editor-safe 8192 px height.
+            if selected_source != "thunder":
+                resize_result = await asyncio.to_thread(resize_for_editor, image_path)
+                resized_images += int(resize_result.resized)
+            if index == len(upload_entries) or index % 3 == 0:
+                await notify(f"Memproses gambar agar aman untuk editor: **{index}/{len(upload_entries)}**")
+
+        upload_semaphore = asyncio.Semaphore(FILEBIN_UPLOAD_CONCURRENCY)
+        uploaded_count = 0
+        upload_lock = asyncio.Lock()
+
+        async def upload_entry(chapter_id: str, image_path: str, remote_name: str) -> tuple[str, str, bool]:
+            nonlocal uploaded_count
+            async with upload_semaphore:
+                ok = await upload_to_filebin(bin_id, image_path, remote_name, filebin_session)
+            async with upload_lock:
+                uploaded_count += 1
+                if uploaded_count == len(upload_entries) or uploaded_count % 2 == 0:
+                    await notify(f"Mengunggah ke Filebin: **{uploaded_count}/{len(upload_entries)} gambar**")
+            return chapter_id, remote_name, ok
+
+        upload_results = await asyncio.gather(*(upload_entry(*entry) for entry in upload_entries))
+        failed = [remote_name for _, remote_name, ok in upload_results if not ok]
+        if failed:
+            print(f"Filebin upload failed for {len(failed)} image(s) in {bin_id}")
+            return None, [], selected_source
+        completed = list(dict.fromkeys(chapter_id for chapter_id, _, _ in upload_entries))
+        expected_filenames = [remote_name for _, _, remote_name in upload_entries]
+        await notify(f"Memverifikasi **{len(expected_filenames)} gambar** di Filebin…")
         if not await verify_filebin(bin_id, expected_filenames, filebin_session):
             print(
                 f"Filebin verification failed for {bin_id}: "
@@ -495,13 +530,25 @@ async def download_chapters(interaction, source, manga_id, chapter_ids, fallback
     await interaction.response.edit_message(
         embed=discord.Embed(
             title="Menyiapkan RAW...",
-            description=f"Sumber: **{source.title()}**\nChapter: **{', '.join(chapter_ids)}**\n\nMembuat satu ZIP gambar lalu upload ke Filebin.",
+            description=(
+                f"Sumber: **{source.title()}**\nChapter: **{', '.join(chapter_ids)}**\n\n"
+                "Mengunduh gambar, memproses bila perlu, lalu mengunggahnya langsung ke Filebin."
+            ),
             color=discord.Color.gold(),
         ),
         view=None,
     )
+    async def progress(message: str):
+        await interaction.edit_original_response(
+            embed=discord.Embed(
+                title="Menyiapkan RAW…",
+                description=f"Sumber: **{source.title()}**\nChapter: **{', '.join(chapter_ids)}**\n\n{message}",
+                color=discord.Color.gold(),
+            )
+        )
+
     filebin_url, completed, final_source = await create_filebin_download(
-        source, manga_id, chapter_ids, fallbacks
+        source, manga_id, chapter_ids, fallbacks, progress=progress
     )
     if not filebin_url:
         return await interaction.edit_original_response(embed=discord.Embed(title="Upload Filebin Gagal", description="RAW tidak tersedia atau Filebin sedang menolak upload. File lokal sudah dibersihkan; coba lagi nanti.", color=discord.Color.red()))

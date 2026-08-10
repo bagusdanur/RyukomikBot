@@ -1,3 +1,4 @@
+import asyncio
 import os
 import shutil
 from typing import Any, Dict, List, Optional
@@ -13,7 +14,10 @@ DEFAULT_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Appl
 
 
 def _create_session() -> aiohttp.ClientSession:
-    return aiohttp.ClientSession(connector=aiohttp.TCPConnector(resolver=aiohttp.ThreadedResolver()), headers=DEFAULT_HEADERS)
+    return aiohttp.ClientSession(
+        connector=aiohttp.TCPConnector(limit=4, limit_per_host=4, resolver=aiohttp.ThreadedResolver()),
+        headers=DEFAULT_HEADERS,
+    )
 
 
 def _clean_id(value: str) -> str:
@@ -64,9 +68,8 @@ class EvaScanDownloader:
             payload = await get_json(session, f"{self.api_url}/chapter/{clean_manga}/{clean_chapter}", source="evascan", stage=f"chapter:{clean_manga}:{clean_chapter}", timeout=10, validator=lambda item: bool(item.get("images")))
         return [str(image).strip() for image in payload.get("images", []) if str(image).strip()] if payload else []
 
-    async def download_image(self, url: str, save_path: str) -> bool:
-        async with _create_session() as session:
-            content = await get_bytes(session, url, source="evascan", stage=f"image:{os.path.basename(save_path)}")
+    async def download_image(self, url: str, save_path: str, session: aiohttp.ClientSession) -> bool:
+        content = await get_bytes(session, url, source="evascan", stage=f"image:{os.path.basename(save_path)}")
         if not content:
             return False
         try:
@@ -77,17 +80,32 @@ class EvaScanDownloader:
         except OSError:
             return False
 
-    async def download_chapter(self, manga_id: str, chapter_id: str, save_dir: str) -> Optional[str]:
+    async def download_chapter(self, manga_id: str, chapter_id: str, save_dir: str, progress=None) -> Optional[str]:
         images = await self.get_chapter_images(manga_id, chapter_id)
         if not images:
             return None
         clean_manga, clean_chapter = _clean_id(manga_id), _clean_chapter(chapter_id)
         chapter_dir = os.path.join(save_dir, "evascan", f"{clean_manga}_{clean_chapter}")
-        downloaded = 0
-        for index, url in enumerate(images, 1):
-            if await self.download_image(url, os.path.join(chapter_dir, f"{index:03d}.{_image_extension(url)}")):
-                downloaded += 1
-        if downloaded == len(images):
+        semaphore = asyncio.Semaphore(4)
+        completed = 0
+        progress_lock = asyncio.Lock()
+
+        async with _create_session() as session:
+            async def fetch(index: int, url: str) -> bool:
+                nonlocal completed
+                async with semaphore:
+                    ok = await self.download_image(
+                        url, os.path.join(chapter_dir, f"{index:03d}.{_image_extension(url)}"), session
+                    )
+                if ok:
+                    async with progress_lock:
+                        completed += 1
+                        if progress and (completed == len(images) or completed % 2 == 0):
+                            await progress(completed, len(images))
+                return ok
+
+            results = await asyncio.gather(*(fetch(index, url) for index, url in enumerate(images, 1)))
+        if all(results):
             return chapter_dir
         shutil.rmtree(chapter_dir, ignore_errors=True)
         return None
