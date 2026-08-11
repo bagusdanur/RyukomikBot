@@ -1,3 +1,5 @@
+import re
+
 from .qimanga import QiMangaDownloader
 from config import DEMON_API
 from chapter_utils import normalize_chapter
@@ -17,7 +19,13 @@ class DemonDownloader(QiMangaDownloader):
         return rows
     async def get_chapter_images(self, manga_id, chapter_id):
         manga_id = str(manga_id).removeprefix("manga/")
-        wanted = normalize_chapter(str(chapter_id))
+        raw_chapter_id = str(chapter_id).strip().strip('/')
+        # Opaque Demon slugs (for example 12903-50) must not be normalized:
+        # normalization turns them into 12903 and can select a wrong chapter.
+        if re.fullmatch(r'\d+-\d+(?:\.\d+)?', raw_chapter_id):
+            return await super().get_chapter_images(manga_id, raw_chapter_id)
+
+        wanted = normalize_chapter(raw_chapter_id)
         if wanted:
             chapters = await self.get_chapter_list(manga_id)
             matched = next((item for item in chapters if wanted in {
