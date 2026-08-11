@@ -482,7 +482,7 @@ async def before_project_event_sync_loop():
     await bot.wait_until_ready()
 
 
-@tasks.loop(minutes=30)
+@tasks.loop(hours=1)
 async def raw_chapter_watch_loop():
     """Notify the dedicated RAW Watch channel about new tracked chapters."""
     try:
@@ -492,18 +492,20 @@ async def raw_chapter_watch_loop():
             return
         updates = await scout_service.poll_active_raw_updates()
         for update in updates:
-            chapter = f"{update['chapter']:g}"
+            raw_chapter = f"{update['raw_chapter']:g}"
+            project_chapter = f"{update['project_chapter']:g}"
             embed = discord.Embed(
                 title="RAW Baru Terdeteksi",
                 description=(
-                    f"**{update['title']}** memiliki chapter RAW baru.\n"
-                    "Buat tugas jika chapter ini akan dikerjakan."
+                    f"**{update['title']}** tertinggal dari sumber RAW.\n"
+                    "Buat tugas jika chapter baru akan dikerjakan."
                 ),
                 color=discord.Color.blurple(),
             )
             embed.add_field(name="Sumber", value=update['source'].title(), inline=True)
-            embed.add_field(name="Chapter Baru", value=f"Ch. {chapter}", inline=True)
-            embed.set_footer(text="Project RAW Watch • hanya dikirim saat ada chapter baru")
+            embed.add_field(name="RAW Terbaru", value=f"Ch. {raw_chapter}", inline=True)
+            embed.add_field(name="Ryukomik Saat Ini", value=f"Ch. {project_chapter}", inline=True)
+            embed.set_footer(text="Project RAW Watch • satu notifikasi untuk setiap chapter RAW baru")
             view = discord.ui.View(timeout=None)
             view.add_item(discord.ui.Button(
                 label="Buka Buat Tugas", style=discord.ButtonStyle.link,

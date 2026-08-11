@@ -433,6 +433,9 @@ async def setup_scout_tables() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_raw_watch_title ON raw_chapter_watches(scout_title_id, source);
         """)
+        columns = {str(row['name']) for row in await (await db.execute("PRAGMA table_info(raw_chapter_watches)")).fetchall()}
+        if 'last_notified_project_chapter' not in columns:
+            await db.execute("ALTER TABLE raw_chapter_watches ADD COLUMN last_notified_project_chapter REAL")
         await db.commit()
     finally:
         await db.close()
@@ -647,44 +650,38 @@ async def _discover_project_raw(title: str) -> Optional[tuple[str, str]]:
     return source, str(item['id'])
 
 
-async def _active_ryukomik_project_titles() -> set[str]:
-    """Read the public Ryukomik catalogue, excluding dropped/cancelled work."""
+async def _active_ryukomik_projects() -> dict[str, dict[str, Any]]:
+    """Read the public Ryukomik catalogue once, excluding inactive work."""
     timeout = aiohttp.ClientTimeout(total=15)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         payload = await _request_json(session, PROJECT_CATALOG_URL)
-    return {
-        normalize_title(str(item.get('title') or ''))
-        for item in _catalog_rows(payload)
-        if normalize_title(str(item.get('title') or ''))
-        and str(item.get('status') or '').casefold() not in {'dropped', 'cancelled'}
-    }
+    projects: dict[str, dict[str, Any]] = {}
+    for item in _catalog_rows(payload):
+        title = str(item.get('title') or '').strip()
+        normalized = normalize_title(title)
+        chapter = _chapter_number(item.get('chapter_terbaru'))
+        if (
+            normalized
+            and chapter is not None
+            and str(item.get('status') or '').casefold() not in {'dropped', 'cancelled'}
+        ):
+            projects[normalized] = {'title': title, 'chapter': chapter}
+    return projects
 
 
 async def poll_active_raw_updates() -> list[dict[str, Any]]:
-    """Watch only manga that have actually been assigned by Ryukomik.
+    """Alert once when a RAW source gets ahead of a real Ryukomik project.
 
-    Project Scout is deliberately not consulted here. The first observation
-    for a task title only establishes a baseline, avoiding historical spam.
+    Project Scout and Supabase are not used. One small public catalogue
+    response supplies every local project chapter for the whole check.
     """
-    active_titles = await _active_ryukomik_project_titles()
-    if not active_titles:
+    projects = await _active_ryukomik_projects()
+    if not projects:
         return []
 
-    db = await db_module.get_db()
-    try:
-        project_rows = await (await db.execute(
-            """SELECT DISTINCT TRIM(manga) AS manga FROM assignments
-                 WHERE manga IS NOT NULL AND TRIM(manga) <> ''
-                   AND status IN ('claimed','submitted','revision','approved','paid')"""
-        )).fetchall()
-    finally:
-        await db.close()
-
     events: list[dict[str, Any]] = []
-    for project_row in project_rows:
-        title = str(project_row['manga'])
-        if normalize_title(title) not in active_titles:
-            continue
+    for project in projects.values():
+        title, project_chapter = str(project['title']), float(project['chapter'])
         db = await db_module.get_db()
         try:
             watch = await (await db.execute(
@@ -729,25 +726,38 @@ async def poll_active_raw_updates() -> list[dict[str, Any]]:
         db = await db_module.get_db()
         try:
             if not watch:
-                await db.execute(
+                cursor = await db.execute(
                     """INSERT INTO raw_chapter_watches
                        (scout_title_id,source,source_id,manga_title,last_seen_chapter,last_notified_chapter)
                        VALUES(0,?,?,?,?,?)""",
-                    (source, source_id, title, latest, latest),
+                    (source, source_id, title, latest, None),
                 )
+                watch_id = int(cursor.lastrowid)
+                last_notified = None
+                last_project_chapter = None
             else:
-                previous = float(watch['last_notified_chapter'] or watch['last_seen_chapter'] or 0)
+                watch_id = int(watch['id'])
+                last_notified = watch['last_notified_chapter']
+                last_project_chapter = watch['last_notified_project_chapter']
                 await db.execute(
                     "UPDATE raw_chapter_watches SET last_seen_chapter=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                    (latest, int(watch['id'])),
+                    (latest, watch_id),
                 )
-                if latest > previous:
-                    await db.execute(
-                        """UPDATE raw_chapter_watches
-                           SET last_notified_chapter=?,last_notified_at=CURRENT_TIMESTAMP WHERE id=?""",
-                        (latest, int(watch['id'])),
-                    )
-                    events.append({'watch_id': int(watch['id']), 'title': title, 'source': source, 'chapter': latest})
+            should_notify = latest > project_chapter and (
+                last_project_chapter is None or latest > float(last_notified or 0)
+            )
+            await db.execute(
+                """UPDATE raw_chapter_watches
+                   SET last_notified_chapter=?,last_notified_project_chapter=?,
+                       last_notified_at=CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE last_notified_at END
+                   WHERE id=?""",
+                (latest, project_chapter, should_notify, watch_id),
+            )
+            if should_notify:
+                events.append({
+                    'watch_id': watch_id, 'title': title, 'source': source,
+                    'raw_chapter': latest, 'project_chapter': project_chapter,
+                })
             await db.commit()
         except Exception:
             await db.rollback()
