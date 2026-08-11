@@ -14,6 +14,7 @@ from urllib.parse import quote, urlparse
 import aiohttp
 
 import database as db_module
+from raw_downloader import get_downloader
 from raw_downloader import (
     asura_downloader,
     doujiva_downloader,
@@ -410,6 +411,20 @@ async def setup_scout_tables() -> None:
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
             CREATE INDEX IF NOT EXISTS idx_scout_status_scan ON scout_titles(scout_status,last_scanned_at DESC);
+            CREATE TABLE IF NOT EXISTS raw_chapter_watches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scout_title_id INTEGER NOT NULL,
+                source TEXT NOT NULL,
+                source_id TEXT NOT NULL,
+                manga_title TEXT NOT NULL,
+                last_seen_chapter REAL,
+                last_notified_chapter REAL,
+                last_notified_at DATETIME,
+                notification_message_id TEXT,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(scout_title_id, source, source_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_raw_watch_title ON raw_chapter_watches(scout_title_id, source);
         """)
         await db.commit()
     finally:
@@ -601,3 +616,91 @@ async def decide(scout_id: int, admin_id: int, action: str, notes: str = "") -> 
     finally:
         await db.close()
     return await get_scout_title(scout_id)
+
+
+async def poll_active_raw_updates() -> list[dict[str, Any]]:
+    """Return only genuinely newer RAW chapters for tracked Ryukomik projects.
+
+    The first observation establishes a baseline. This prevents old catalogues
+    from filling #staff-mod when the watcher is first enabled.
+    """
+    db = await db_module.get_db()
+    try:
+        rows = await (await db.execute(
+            """SELECT t.id AS scout_title_id, t.canonical_title, e.source,
+                      COALESCE(NULLIF(e.slug, ''), e.source_id) AS source_id
+                 FROM scout_titles t
+                 JOIN scout_source_entries e ON e.scout_title_id=t.id
+                WHERE t.scout_status IN ('adopted', 'ryukomik_project')
+                  AND e.source_group='raw'
+                  AND COALESCE(NULLIF(e.slug, ''), e.source_id) IS NOT NULL"""
+        )).fetchall()
+    finally:
+        await db.close()
+
+    events: list[dict[str, Any]] = []
+    for row in rows:
+        source, source_id = str(row['source']), str(row['source_id'])
+        try:
+            chapters = await get_downloader(source).get_chapter_list(source_id)
+        except Exception as error:
+            print(f'[RAW WATCH] {source}:{source_id} skipped: {error}')
+            continue
+        numbers = [
+            _chapter_number(item.get('title') or item.get('id'))
+            for item in chapters
+        ]
+        latest = max((number for number in numbers if number is not None), default=None)
+        if latest is None:
+            continue
+
+        db = await db_module.get_db()
+        try:
+            watch = await (await db.execute(
+                """SELECT * FROM raw_chapter_watches
+                     WHERE scout_title_id=? AND source=? AND source_id=?""",
+                (int(row['scout_title_id']), source, source_id),
+            )).fetchone()
+            if not watch:
+                await db.execute(
+                    """INSERT INTO raw_chapter_watches
+                       (scout_title_id,source,source_id,manga_title,last_seen_chapter,last_notified_chapter)
+                       VALUES(?,?,?,?,?,?)""",
+                    (int(row['scout_title_id']), source, source_id, str(row['canonical_title']), latest, latest),
+                )
+            else:
+                previous = float(watch['last_notified_chapter'] or watch['last_seen_chapter'] or 0)
+                await db.execute(
+                    "UPDATE raw_chapter_watches SET last_seen_chapter=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (latest, int(watch['id'])),
+                )
+                if latest > previous:
+                    await db.execute(
+                        """UPDATE raw_chapter_watches
+                           SET last_notified_chapter=?,last_notified_at=CURRENT_TIMESTAMP
+                           WHERE id=?""",
+                        (latest, int(watch['id'])),
+                    )
+                    events.append({
+                        'watch_id': int(watch['id']), 'title': str(row['canonical_title']),
+                        'source': source, 'chapter': latest,
+                    })
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+        finally:
+            await db.close()
+    return events
+
+
+async def record_raw_update_message(watch_id: int, message_id: int) -> None:
+    db = await db_module.get_db()
+    try:
+        await db.execute(
+            "UPDATE raw_chapter_watches SET notification_message_id=? WHERE id=?",
+            (str(message_id), watch_id),
+        )
+        await db.commit()
+    finally:
+        await db.close()

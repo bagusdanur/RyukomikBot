@@ -125,6 +125,8 @@ class RyukomikBot(commands.Bot):
             notification_outbox_loop.start()
         if not project_event_sync_loop.is_running():
             project_event_sync_loop.start()
+        if not raw_chapter_watch_loop.is_running():
+            raw_chapter_watch_loop.start()
         if not daily_backup_loop.is_running():
             daily_backup_loop.start()
         if not weekly_vacuum_loop.is_running():
@@ -477,6 +479,44 @@ async def project_event_sync_loop():
 
 @project_event_sync_loop.before_loop
 async def before_project_event_sync_loop():
+    await bot.wait_until_ready()
+
+
+@tasks.loop(minutes=30)
+async def raw_chapter_watch_loop():
+    """Notify #staff-mod only when a tracked RAW project has a new chapter."""
+    try:
+        guild = bot.get_guild(GUILD_ID)
+        channel = guild.get_channel(STAFF_LOG_CHANNEL_ID) if guild else None
+        if channel is None:
+            return
+        updates = await scout_service.poll_active_raw_updates()
+        for update in updates:
+            chapter = f"{update['chapter']:g}"
+            embed = discord.Embed(
+                title="RAW Baru Terdeteksi",
+                description=(
+                    f"**{update['title']}** memiliki chapter RAW baru.\n"
+                    "Buat tugas jika chapter ini akan dikerjakan."
+                ),
+                color=discord.Color.blurple(),
+            )
+            embed.add_field(name="Sumber", value=update['source'].title(), inline=True)
+            embed.add_field(name="Chapter Baru", value=f"Ch. {chapter}", inline=True)
+            embed.set_footer(text="Project RAW Watch • hanya dikirim saat ada chapter baru")
+            view = discord.ui.View(timeout=None)
+            view.add_item(discord.ui.Button(
+                label="Buka Buat Tugas", style=discord.ButtonStyle.link,
+                url=f"{DASHBOARD_URL}/?page=tasks",
+            ))
+            message = await channel.send(embed=embed, view=view)
+            await scout_service.record_raw_update_message(update['watch_id'], message.id)
+    except Exception as error:
+        print(f"[RAW WATCH] gagal: {error}", flush=True)
+
+
+@raw_chapter_watch_loop.before_loop
+async def before_raw_chapter_watch_loop():
     await bot.wait_until_ready()
 
 
