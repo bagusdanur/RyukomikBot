@@ -28,6 +28,9 @@ from raw_downloader.resolver import normalize_title
 
 
 API_BASE = os.getenv("SCOUT_API_BASE", "https://api.ryukomik.web.id").rstrip("/")
+PROJECT_CATALOG_URL = os.getenv(
+    "PROJECT_CATALOG_URL", "https://ryukomik.my.id/api/project/pustaka?limit=100"
+)
 INDONESIAN_SOURCES = ("komiku", "kiryuu", "ikiru", "sekte", "doujindesu", "komikid")
 RAW_DOWNLOADERS = {
     "asura": asura_downloader,
@@ -644,12 +647,29 @@ async def _discover_project_raw(title: str) -> Optional[tuple[str, str]]:
     return source, str(item['id'])
 
 
+async def _active_ryukomik_project_titles() -> set[str]:
+    """Read the public Ryukomik catalogue, excluding dropped/cancelled work."""
+    timeout = aiohttp.ClientTimeout(total=15)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        payload = await _request_json(session, PROJECT_CATALOG_URL)
+    return {
+        normalize_title(str(item.get('title') or ''))
+        for item in _catalog_rows(payload)
+        if normalize_title(str(item.get('title') or ''))
+        and str(item.get('status') or '').casefold() not in {'dropped', 'cancelled'}
+    }
+
+
 async def poll_active_raw_updates() -> list[dict[str, Any]]:
     """Watch only manga that have actually been assigned by Ryukomik.
 
     Project Scout is deliberately not consulted here. The first observation
     for a task title only establishes a baseline, avoiding historical spam.
     """
+    active_titles = await _active_ryukomik_project_titles()
+    if not active_titles:
+        return []
+
     db = await db_module.get_db()
     try:
         project_rows = await (await db.execute(
@@ -663,6 +683,8 @@ async def poll_active_raw_updates() -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     for project_row in project_rows:
         title = str(project_row['manga'])
+        if normalize_title(title) not in active_titles:
+            continue
         db = await db_module.get_db()
         try:
             watch = await (await db.execute(
