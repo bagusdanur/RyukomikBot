@@ -74,6 +74,8 @@ async def ensure_raw_watch_channel(guild: discord.Guild) -> discord.TextChannel 
             topic="Notifikasi chapter RAW baru untuk project Ryukomik aktif. Admin only.",
             reason="Memisahkan notifikasi RAW Watch dari staff-mod",
         )
+    elif channel.name != RAW_WATCH_CHANNEL_NAME:
+        await channel.edit(name=RAW_WATCH_CHANNEL_NAME, reason="Menyamakan nama channel RAW Watch")
     try:
         await channel.edit(position=admin_channel.position + 1, reason="Menempatkan RAW Watch di samping staff-mod")
     except discord.HTTPException:
