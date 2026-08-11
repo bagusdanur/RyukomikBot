@@ -703,6 +703,17 @@ async def poll_active_raw_updates() -> list[dict[str, Any]]:
             if not discovered:
                 continue
             source, source_id = discovered
+            # Title history can have spelling variants while still resolving
+            # to one identical source slug. Reuse that technical watch row.
+            db = await db_module.get_db()
+            try:
+                watch = await (await db.execute(
+                    """SELECT * FROM raw_chapter_watches
+                         WHERE scout_title_id=0 AND source=? AND source_id=?""",
+                    (source, source_id),
+                )).fetchone()
+            finally:
+                await db.close()
         try:
             chapters = await get_downloader(source).get_chapter_list(source_id)
         except Exception as error:
