@@ -727,7 +727,7 @@ async def update_payrate_command(
     embed.set_footer(text="Tugas lama dan manual override tidak berubah.")
     await interaction.followup.send(embed=embed, ephemeral=True)
 
-async def search_manga_command(interaction: discord.Interaction, query: str, source: str = "asura"):
+async def search_manga_command(interaction: discord.Interaction, query: str, source: str = "asura", raw_mode: Literal['editor_safe', 'original'] = 'editor_safe'):
     """Search for manga on one validated RAW source."""
     if not is_admin(interaction.user):
         return await interaction.response.send_message(
@@ -761,7 +761,7 @@ async def search_manga_command(interaction: discord.Interaction, query: str, sou
             inline=False
         )
     
-    await interaction.followup.send(embed=embed, view=RawSearchView(source, results), ephemeral=False)
+    await interaction.followup.send(embed=embed, view=RawSearchView(source, results, raw_mode=raw_mode), ephemeral=False)
 
 
 def raw_progress_embed(title: str, source: str, chapter: str, message: str) -> discord.Embed:
@@ -860,8 +860,14 @@ async def scout_project_command(
 
 @bot.tree.command(name="raw-search", description="Cari komik RAW dari semua sumber")
 @discord.app_commands.describe(query="Judul atau kata kunci komik", source="Sumber RAW")
-async def raw_search_command(interaction: discord.Interaction, query: str, source: Literal["asura", "omega", "doujiva", "evascan", "thunder", "qimanga", "demon"] = "asura"):
-    await search_manga_command(interaction, query, source)
+@discord.app_commands.describe(raw_mode="editor_safe = aman untuk editor; original = tanpa resize")
+async def raw_search_command(
+    interaction: discord.Interaction,
+    query: str,
+    source: Literal["asura", "omega", "doujiva", "evascan", "thunder", "qimanga", "demon"] = "asura",
+    raw_mode: Literal['editor_safe', 'original'] = 'editor_safe',
+):
+    await search_manga_command(interaction, query, source, raw_mode)
 
 
 @bot.tree.command(name="status-bot", description="Cek kesehatan database, Discord, dan API RAW")
