@@ -14,6 +14,7 @@ from config import (
     PROJECT_DROP_CHANNEL_ID,
     ROLE_ADMIN_ID,
     ROLE_STAFF_ID,
+    RAW_WATCH_CHANNEL_NAME,
     STAFF_LOG_CHANNEL_ID,
     STAFF_TASKS_CHANNEL_ID,
     UPDATE_PROJECT_CHANNEL_ID,
@@ -57,6 +58,27 @@ def _find_text_channel(
         if any(name == normalized or name in normalized for name in wanted):
             return channel
     return None
+
+
+async def ensure_raw_watch_channel(guild: discord.Guild) -> discord.TextChannel | None:
+    """Create one admin-only RAW update channel next to #staff-mod."""
+    admin_channel = _find_text_channel(guild, channel_id=STAFF_LOG_CHANNEL_ID)
+    if not admin_channel:
+        return None
+    channel = _find_text_channel(guild, names=(RAW_WATCH_CHANNEL_NAME,))
+    if channel is None:
+        channel = await guild.create_text_channel(
+            RAW_WATCH_CHANNEL_NAME,
+            category=admin_channel.category,
+            overwrites=dict(admin_channel.overwrites),
+            topic="Notifikasi chapter RAW baru untuk project Ryukomik aktif. Admin only.",
+            reason="Memisahkan notifikasi RAW Watch dari staff-mod",
+        )
+    try:
+        await channel.edit(position=admin_channel.position + 1, reason="Menempatkan RAW Watch di samping staff-mod")
+    except discord.HTTPException:
+        pass
+    return channel
 
 
 def build_welcome_embed(member: discord.Member) -> discord.Embed:
@@ -307,11 +329,14 @@ async def apply_server_housekeeping(guild: discord.Guild) -> dict[str, bool]:
         "topics": False,
         "review_cleanup": False,
         "welcome_history": False,
+        "raw_watch": False,
     }
     print(f"[SERVER] Starting safe housekeeping for {guild.name}", flush=True)
     me = guild.me
     if me is None:
         return result
+
+    result["raw_watch"] = bool(await ensure_raw_watch_channel(guild))
 
     result["project_layout"] = await apply_project_layout(guild)
 

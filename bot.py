@@ -52,7 +52,7 @@ from views.pair_views import (
 import pair_workflow as pair_service
 import project_scout as scout_service
 import database as db
-from server_management import apply_server_housekeeping, send_goodbye, send_welcome
+from server_management import apply_server_housekeeping, ensure_raw_watch_channel, send_goodbye, send_welcome
 
 
 # Discord gateway intents required by prefix commands, role checks, and tickets.
@@ -484,10 +484,10 @@ async def before_project_event_sync_loop():
 
 @tasks.loop(minutes=30)
 async def raw_chapter_watch_loop():
-    """Notify #staff-mod only when a tracked RAW project has a new chapter."""
+    """Notify the dedicated RAW Watch channel about new tracked chapters."""
     try:
         guild = bot.get_guild(GUILD_ID)
-        channel = guild.get_channel(STAFF_LOG_CHANNEL_ID) if guild else None
+        channel = await ensure_raw_watch_channel(guild) if guild else None
         if channel is None:
             return
         updates = await scout_service.poll_active_raw_updates()
