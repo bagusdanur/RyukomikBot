@@ -622,55 +622,85 @@ async def decide(scout_id: int, admin_id: int, action: str, notes: str = "") -> 
     return await get_scout_title(scout_id)
 
 
-async def poll_active_raw_updates() -> list[dict[str, Any]]:
-    """Return only genuinely newer RAW chapters for tracked Ryukomik projects.
+async def _discover_project_raw(title: str) -> Optional[tuple[str, str]]:
+    """Find one best RAW source for a real Ryukomik project title."""
+    async def search(source: str) -> tuple[str, Optional[dict[str, Any]]]:
+        try:
+            rows = await RAW_DOWNLOADERS[source].search_manga(title)
+        except Exception:
+            return source, None
+        best = max(rows, key=lambda item: _title_score(title, str(item.get('title') or '')), default=None)
+        return source, best
 
-    The first observation establishes a baseline. This prevents old catalogues
-    from filling #staff-mod when the watcher is first enabled.
+    found = await asyncio.gather(*(search(source) for source in RAW_DOWNLOADERS))
+    ranked = [
+        (source, item, _title_score(title, str(item.get('title') or '')))
+        for source, item in found if item and item.get('id')
+    ]
+    ranked = [item for item in ranked if item[2] >= 80]
+    if not ranked:
+        return None
+    source, item, _score = max(ranked, key=lambda entry: entry[2])
+    return source, str(item['id'])
+
+
+async def poll_active_raw_updates() -> list[dict[str, Any]]:
+    """Watch only manga that have actually been assigned by Ryukomik.
+
+    Project Scout is deliberately not consulted here. The first observation
+    for a task title only establishes a baseline, avoiding historical spam.
     """
     db = await db_module.get_db()
     try:
-        rows = await (await db.execute(
-            """SELECT t.id AS scout_title_id, t.canonical_title, e.source,
-                      COALESCE(NULLIF(e.slug, ''), e.source_id) AS source_id
-                 FROM scout_titles t
-                 JOIN scout_source_entries e ON e.scout_title_id=t.id
-                WHERE t.scout_status IN ('adopted', 'ryukomik_project')
-                  AND e.source_group='raw'
-                  AND COALESCE(NULLIF(e.slug, ''), e.source_id) IS NOT NULL"""
+        project_rows = await (await db.execute(
+            """SELECT DISTINCT TRIM(manga) AS manga FROM assignments
+                 WHERE manga IS NOT NULL AND TRIM(manga) <> ''
+                   AND status IN ('claimed','submitted','revision','approved','paid')"""
         )).fetchall()
     finally:
         await db.close()
 
     events: list[dict[str, Any]] = []
-    for row in rows:
-        source, source_id = str(row['source']), str(row['source_id'])
+    for project_row in project_rows:
+        title = str(project_row['manga'])
+        db = await db_module.get_db()
+        try:
+            watch = await (await db.execute(
+                """SELECT * FROM raw_chapter_watches
+                     WHERE scout_title_id=0 AND manga_title=?
+                     ORDER BY id DESC LIMIT 1""",
+                (title,),
+            )).fetchone()
+        finally:
+            await db.close()
+
+        if watch:
+            source, source_id = str(watch['source']), str(watch['source_id'])
+        else:
+            discovered = await _discover_project_raw(title)
+            if not discovered:
+                continue
+            source, source_id = discovered
         try:
             chapters = await get_downloader(source).get_chapter_list(source_id)
         except Exception as error:
             print(f'[RAW WATCH] {source}:{source_id} skipped: {error}')
             continue
-        numbers = [
-            _chapter_number(item.get('title') or item.get('id'))
-            for item in chapters
-        ]
-        latest = max((number for number in numbers if number is not None), default=None)
+        latest = max((
+            number for number in (_chapter_number(item.get('title') or item.get('id')) for item in chapters)
+            if number is not None
+        ), default=None)
         if latest is None:
             continue
 
         db = await db_module.get_db()
         try:
-            watch = await (await db.execute(
-                """SELECT * FROM raw_chapter_watches
-                     WHERE scout_title_id=? AND source=? AND source_id=?""",
-                (int(row['scout_title_id']), source, source_id),
-            )).fetchone()
             if not watch:
                 await db.execute(
                     """INSERT INTO raw_chapter_watches
                        (scout_title_id,source,source_id,manga_title,last_seen_chapter,last_notified_chapter)
-                       VALUES(?,?,?,?,?,?)""",
-                    (int(row['scout_title_id']), source, source_id, str(row['canonical_title']), latest, latest),
+                       VALUES(0,?,?,?,?,?)""",
+                    (source, source_id, title, latest, latest),
                 )
             else:
                 previous = float(watch['last_notified_chapter'] or watch['last_seen_chapter'] or 0)
@@ -681,14 +711,10 @@ async def poll_active_raw_updates() -> list[dict[str, Any]]:
                 if latest > previous:
                     await db.execute(
                         """UPDATE raw_chapter_watches
-                           SET last_notified_chapter=?,last_notified_at=CURRENT_TIMESTAMP
-                           WHERE id=?""",
+                           SET last_notified_chapter=?,last_notified_at=CURRENT_TIMESTAMP WHERE id=?""",
                         (latest, int(watch['id'])),
                     )
-                    events.append({
-                        'watch_id': int(watch['id']), 'title': str(row['canonical_title']),
-                        'source': source, 'chapter': latest,
-                    })
+                    events.append({'watch_id': int(watch['id']), 'title': title, 'source': source, 'chapter': latest})
             await db.commit()
         except Exception:
             await db.rollback()
