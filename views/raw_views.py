@@ -239,6 +239,7 @@ async def create_filebin_download(
 
 class RawSearchModal(discord.ui.Modal, title="Cari dan Download RAW"):
     query = discord.ui.TextInput(label="Judul Komik", placeholder="Contoh: Solo Leveling", min_length=2, max_length=100)
+    raw_mode = discord.ui.TextInput(label="Mode RAW", placeholder="editor_safe atau original", default="editor_safe", required=False, max_length=20)
 
     def __init__(self, initial_query: str = ""):
         super().__init__()
@@ -248,6 +249,9 @@ class RawSearchModal(discord.ui.Modal, title="Cari dan Download RAW"):
     async def on_submit(self, interaction):
         if not (is_staff(interaction.user) or is_admin(interaction.user)):
             return await interaction.response.send_message("Hanya staff atau administrator yang dapat download RAW.")
+        mode = self.raw_mode.value.strip().casefold() or "editor_safe"
+        if mode not in {"editor_safe", "original"}:
+            return await interaction.response.send_message("Mode RAW hanya `editor_safe` atau `original`.", ephemeral=True)
         await interaction.response.defer()
         searches = await asyncio.gather(
             *(get_downloader(source).search_manga(self.query.value) for source in SOURCE_ORDER),
@@ -261,7 +265,7 @@ class RawSearchModal(discord.ui.Modal, title="Cari dan Download RAW"):
         if not combined:
             return await interaction.followup.send("Komik tidak ditemukan di Asura, Omega, maupun Doujiva. Coba judul yang lebih singkat.")
         embed = discord.Embed(title="Hasil Pencarian RAW", description=f"Hasil **{self.query.value}** sudah digabung tanpa judul duplikat. Pilih komik yang benar.", color=discord.Color.blue())
-        await interaction.followup.send(embed=embed, view=RawSearchView("auto", combined))
+        await interaction.followup.send(embed=embed, view=RawSearchView("auto", combined, raw_mode=mode))
 
 
 class RawAssignmentView(discord.ui.View):
