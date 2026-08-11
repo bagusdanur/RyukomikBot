@@ -20,6 +20,8 @@ from raw_downloader import (
     doujiva_downloader,
     evascan_downloader,
     omega_downloader,
+    qimanga_downloader,
+    demon_downloader,
     thunder_downloader,
 )
 from raw_downloader.resolver import normalize_title
@@ -33,6 +35,8 @@ RAW_DOWNLOADERS = {
     "doujiva": doujiva_downloader,
     "evascan": evascan_downloader,
     "thunder": thunder_downloader,
+    "qimanga": qimanga_downloader,
+    "demon": demon_downloader,
 }
 CACHE_HOURS = max(1, int(os.getenv("SCOUT_CACHE_HOURS", "24")))
 MAX_CONCURRENCY = max(1, min(10, int(os.getenv("SCOUT_MAX_CONCURRENCY", "5"))))
