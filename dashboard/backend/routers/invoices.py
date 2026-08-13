@@ -193,8 +193,20 @@ async def create_invoice(payload: InvoiceCreate, user=Depends(admin_user)):
             raise HTTPException(status_code=409, detail="Salah satu tugas sudah masuk invoice lain. Muat ulang data.")
     finally:
         await connection.close()
+    # Invoice manual must follow the exact same payment queue as scheduled and
+    # instant payouts.  Without this, an issued invoice exists but has no
+    # actionable transfer entry on the Permintaan Gaji page.
+    try:
+        payout_id = await payout_service.ensure_payout_for_invoice(invoice_id)
+    except Exception as error:
+        # The invoice has already been committed.  Report an actionable error
+        # rather than silently leaving it outside the transfer queue.
+        raise HTTPException(
+            status_code=500,
+            detail="Invoice berhasil dibuat, tetapi gagal masuk antrean transfer. Coba muat ulang atau hubungi administrator.",
+        ) from error
     await audit(user["id"], "invoice.create", "invoice", invoice_id, after={"invoice_number": invoice_number})
-    return {"id": invoice_id, "invoice_number": invoice_number}
+    return {"id": invoice_id, "invoice_number": invoice_number, "payout_id": payout_id}
 
 
 @router.post("/{invoice_id}/refresh")
