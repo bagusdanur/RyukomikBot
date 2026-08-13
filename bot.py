@@ -52,7 +52,7 @@ from views.pair_views import (
 import pair_workflow as pair_service
 import project_scout as scout_service
 import database as db
-from server_management import apply_server_housekeeping, ensure_project_scout_channel, ensure_raw_watch_channel, send_goodbye, send_welcome
+from server_management import apply_server_housekeeping, ensure_raw_watch_channel, send_goodbye, send_welcome
 
 
 # Discord gateway intents required by prefix commands, role checks, and tickets.
@@ -127,8 +127,6 @@ class RyukomikBot(commands.Bot):
             project_event_sync_loop.start()
         if not raw_chapter_watch_loop.is_running():
             raw_chapter_watch_loop.start()
-        if not automatic_revival_scout_loop.is_running():
-            automatic_revival_scout_loop.start()
         if not daily_backup_loop.is_running():
             daily_backup_loop.start()
         if not weekly_vacuum_loop.is_running():
@@ -521,41 +519,6 @@ async def raw_chapter_watch_loop():
 
 @raw_chapter_watch_loop.before_loop
 async def before_raw_chapter_watch_loop():
-    await bot.wait_until_ready()
-
-
-@tasks.loop(hours=3)
-async def automatic_revival_scout_loop():
-    """Slowly discover old Indonesian series that RAW sources still continue."""
-    try:
-        discovered = await scout_service.run_automatic_revival_scout()
-        if not discovered:
-            return
-        guild = bot.get_guild(GUILD_ID)
-        channel = await ensure_project_scout_channel(guild) if guild else None
-        if channel is None:
-            return
-        lines = [
-            f"• **{item['canonical_title']}** — RAW Ch. {item.get('raw_latest_chapter') or '—'} "
-            f"vs Indonesia Ch. {item.get('indonesia_latest_chapter') or '—'}\n"
-            f"  Update Indonesia terakhir: **{item.get('indonesia_last_update') or 'tidak diketahui'}**"
-            for item in discovered[:5]
-        ]
-        embed = discord.Embed(
-            title="Kandidat Project Lanjutan Ditemukan",
-            description="\n".join(lines),
-            color=discord.Color.gold(),
-        )
-        embed.set_footer(text="Auto Revival Scout • hanya judul yang tidak update Indonesia ≥30 hari")
-        view = discord.ui.View()
-        view.add_item(discord.ui.Button(label="Buka Project Scout", style=discord.ButtonStyle.link, url=f"{DASHBOARD_URL}/?page=scout"))
-        await channel.send(embed=embed, view=view)
-    except Exception as error:
-        print(f"[AUTO SCOUT] gagal: {error}", flush=True)
-
-
-@automatic_revival_scout_loop.before_loop
-async def before_automatic_revival_scout_loop():
     await bot.wait_until_ready()
 
 
