@@ -26,6 +26,7 @@ const labels: Record<string, string> = {
   ryukomik_project: "Project Ryukomik",
   candidate: "Kandidat",
   adopted: "Diambil",
+  active_indonesia: "Masih aktif Indonesia",
   ignored: "Diabaikan",
 };
 const severity = (value: string) =>
@@ -116,7 +117,7 @@ onMounted(load);
       <option value="">Semua status</option><option value="untranslated">Belum ditemukan</option>
       <option value="lagging">Tertinggal</option><option value="ambiguous">Perlu dicek</option>
       <option value="available">Sudah tersedia</option><option value="ryukomik_project">Project Ryukomik</option>
-      <option value="candidate">Kandidat</option><option value="adopted">Diambil</option><option value="ignored">Diabaikan</option>
+      <option value="candidate">Kandidat</option><option value="adopted">Diambil</option><option value="active_indonesia">Masih aktif Indonesia</option><option value="ignored">Diabaikan</option>
     </select>
     <Button label="Tampilkan" icon="pi pi-filter" severity="secondary" @click="page=1;load()" />
   </section>

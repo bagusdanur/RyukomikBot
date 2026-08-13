@@ -33,7 +33,7 @@ async def scout_titles(
 ):
     allowed = {
         "", "untranslated", "lagging", "available", "ambiguous", "ryukomik_project",
-        "candidate", "adopted", "ignored",
+        "candidate", "adopted", "ignored", "active_indonesia",
     }
     if status not in allowed:
         raise HTTPException(status_code=422, detail="Status Project Scout tidak dikenal.")

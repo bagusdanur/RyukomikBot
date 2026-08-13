@@ -52,7 +52,7 @@ from views.pair_views import (
 import pair_workflow as pair_service
 import project_scout as scout_service
 import database as db
-from server_management import apply_server_housekeeping, ensure_raw_watch_channel, send_goodbye, send_welcome
+from server_management import apply_server_housekeeping, ensure_project_scout_channel, ensure_raw_watch_channel, send_goodbye, send_welcome
 
 
 # Discord gateway intents required by prefix commands, role checks, and tickets.
@@ -532,12 +532,13 @@ async def automatic_revival_scout_loop():
         if not discovered:
             return
         guild = bot.get_guild(GUILD_ID)
-        channel = await ensure_raw_watch_channel(guild) if guild else None
+        channel = await ensure_project_scout_channel(guild) if guild else None
         if channel is None:
             return
         lines = [
             f"• **{item['canonical_title']}** — RAW Ch. {item.get('raw_latest_chapter') or '—'} "
-            f"vs Indonesia Ch. {item.get('indonesia_latest_chapter') or '—'}"
+            f"vs Indonesia Ch. {item.get('indonesia_latest_chapter') or '—'}\n"
+            f"  Update Indonesia terakhir: **{item.get('indonesia_last_update') or 'tidak diketahui'}**"
             for item in discovered[:5]
         ]
         embed = discord.Embed(
@@ -545,7 +546,7 @@ async def automatic_revival_scout_loop():
             description="\n".join(lines),
             color=discord.Color.gold(),
         )
-        embed.set_footer(text="Auto Revival Scout • kandidat disimpan di Project Scout untuk ditinjau")
+        embed.set_footer(text="Auto Revival Scout • hanya judul yang tidak update Indonesia ≥30 hari")
         view = discord.ui.View()
         view.add_item(discord.ui.Button(label="Buka Project Scout", style=discord.ButtonStyle.link, url=f"{DASHBOARD_URL}/?page=scout"))
         await channel.send(embed=embed, view=view)

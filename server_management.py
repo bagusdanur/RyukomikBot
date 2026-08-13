@@ -15,6 +15,7 @@ from config import (
     ROLE_ADMIN_ID,
     ROLE_STAFF_ID,
     RAW_WATCH_CHANNEL_NAME,
+    PROJECT_SCOUT_CHANNEL_NAME,
     STAFF_LOG_CHANNEL_ID,
     STAFF_TASKS_CHANNEL_ID,
     UPDATE_PROJECT_CHANNEL_ID,
@@ -78,6 +79,29 @@ async def ensure_raw_watch_channel(guild: discord.Guild) -> discord.TextChannel 
         await channel.edit(name=RAW_WATCH_CHANNEL_NAME, reason="Menyamakan nama channel RAW Watch")
     try:
         await channel.edit(position=admin_channel.position + 1, reason="Menempatkan RAW Watch di samping staff-mod")
+    except discord.HTTPException:
+        pass
+    return channel
+
+
+async def ensure_project_scout_channel(guild: discord.Guild) -> discord.TextChannel | None:
+    """Create one admin-only channel for automatic revival candidates."""
+    admin_channel = _find_text_channel(guild, channel_id=STAFF_LOG_CHANNEL_ID)
+    if not admin_channel:
+        return None
+    channel = _find_text_channel(guild, names=(PROJECT_SCOUT_CHANNEL_NAME,))
+    if channel is None:
+        channel = await guild.create_text_channel(
+            PROJECT_SCOUT_CHANNEL_NAME,
+            category=admin_channel.category,
+            overwrites=dict(admin_channel.overwrites),
+            topic="Kandidat project Indonesia lama yang RAW-nya masih lanjut. Admin only.",
+            reason="Membuat channel khusus Auto Revival Scout",
+        )
+    elif channel.name != PROJECT_SCOUT_CHANNEL_NAME:
+        await channel.edit(name=PROJECT_SCOUT_CHANNEL_NAME, reason="Menyamakan nama channel Project Scout")
+    try:
+        await channel.edit(position=admin_channel.position + 2, reason="Menempatkan Project Scout setelah RAW Watch")
     except discord.HTTPException:
         pass
     return channel
@@ -332,6 +356,7 @@ async def apply_server_housekeeping(guild: discord.Guild) -> dict[str, bool]:
         "review_cleanup": False,
         "welcome_history": False,
         "raw_watch": False,
+        "project_scout": False,
     }
     print(f"[SERVER] Starting safe housekeeping for {guild.name}", flush=True)
     me = guild.me
@@ -339,6 +364,7 @@ async def apply_server_housekeeping(guild: discord.Guild) -> dict[str, bool]:
         return result
 
     result["raw_watch"] = bool(await ensure_raw_watch_channel(guild))
+    result["project_scout"] = bool(await ensure_project_scout_channel(guild))
 
     result["project_layout"] = await apply_project_layout(guild)
 

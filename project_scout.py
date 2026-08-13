@@ -44,6 +44,7 @@ RAW_DOWNLOADERS = {
 CACHE_HOURS = max(1, int(os.getenv("SCOUT_CACHE_HOURS", "24")))
 MAX_CONCURRENCY = max(1, min(10, int(os.getenv("SCOUT_MAX_CONCURRENCY", "5"))))
 AUTO_SCOUT_TITLES_PER_RUN = max(1, min(5, int(os.getenv("AUTO_SCOUT_TITLES_PER_RUN", "3"))))
+AUTO_SCOUT_MIN_STALE_DAYS = max(7, int(os.getenv("AUTO_SCOUT_MIN_STALE_DAYS", "30")))
 
 
 def _json(value: Any) -> str:
@@ -133,6 +134,25 @@ def _latest_chapter(item: dict[str, Any], detail: Optional[dict[str, Any]] = Non
             if number is not None:
                 return number
     return None
+
+
+def _relative_age_hours(value: Any) -> Optional[int]:
+    """Parse public catalogue labels such as '2 hari lalu' conservatively."""
+    text = str(value or '').strip().casefold()
+    if not text:
+        return None
+    if 'baru saja' in text:
+        return 0
+    match = re.search(r'(\d+)\s*(menit|minute|jam|hour|hari|day|minggu|week|bulan|month|tahun|year)', text)
+    if not match:
+        return None
+    amount, unit = int(match.group(1)), match.group(2)
+    multiplier = {
+        'menit': 1 / 60, 'minute': 1 / 60, 'jam': 1, 'hour': 1,
+        'hari': 24, 'day': 24, 'minggu': 24 * 7, 'week': 24 * 7,
+        'bulan': 24 * 30, 'month': 24 * 30, 'tahun': 24 * 365, 'year': 24 * 365,
+    }[unit]
+    return int(amount * multiplier)
 
 
 def _title_score(query: str, title: str, aliases: Optional[list[str]] = None) -> int:
@@ -580,7 +600,14 @@ async def run_automatic_revival_scout() -> list[dict[str, Any]]:
     for item in batch:
         title = str(item.get('title') or '').strip()
         indo_latest = _latest_chapter(item)
-        if len(title) < 2 or indo_latest is None:
+        last_update = str(item.get('info') or item.get('updated_at') or item.get('date') or '').strip()
+        stale_hours = _relative_age_hours(last_update)
+        if (
+            len(title) < 2
+            or indo_latest is None
+            or stale_hours is None
+            or stale_hours < AUTO_SCOUT_MIN_STALE_DAYS * 24
+        ):
             continue
         raw_entries = await _search_raw(title, "all")
         if not raw_entries:
@@ -600,6 +627,8 @@ async def run_automatic_revival_scout() -> list[dict[str, Any]]:
             await db.close()
         result = await scan_title(title, "all", force=True)
         if result.get('scout_status') == 'lagging' and not known:
+            result['indonesia_last_update'] = last_update
+            result['indonesia_stale_days'] = stale_hours // 24
             discovered.append(result)
 
     db = await db_module.get_db()
