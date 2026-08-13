@@ -524,7 +524,7 @@ async def before_raw_chapter_watch_loop():
     await bot.wait_until_ready()
 
 
-@tasks.loop(hours=6)
+@tasks.loop(hours=3)
 async def automatic_revival_scout_loop():
     """Slowly discover old Indonesian series that RAW sources still continue."""
     try:

@@ -43,7 +43,7 @@ RAW_DOWNLOADERS = {
 }
 CACHE_HOURS = max(1, int(os.getenv("SCOUT_CACHE_HOURS", "24")))
 MAX_CONCURRENCY = max(1, min(10, int(os.getenv("SCOUT_MAX_CONCURRENCY", "5"))))
-AUTO_SCOUT_TITLES_PER_RUN = max(1, min(5, int(os.getenv("AUTO_SCOUT_TITLES_PER_RUN", "3"))))
+AUTO_SCOUT_TITLES_PER_RUN = max(1, min(5, int(os.getenv("AUTO_SCOUT_TITLES_PER_RUN", "5"))))
 AUTO_SCOUT_MIN_STALE_DAYS = max(7, int(os.getenv("AUTO_SCOUT_MIN_STALE_DAYS", "30")))
 
 
