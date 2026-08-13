@@ -43,6 +43,7 @@ RAW_DOWNLOADERS = {
 }
 CACHE_HOURS = max(1, int(os.getenv("SCOUT_CACHE_HOURS", "24")))
 MAX_CONCURRENCY = max(1, min(10, int(os.getenv("SCOUT_MAX_CONCURRENCY", "5"))))
+AUTO_SCOUT_TITLES_PER_RUN = max(1, min(5, int(os.getenv("AUTO_SCOUT_TITLES_PER_RUN", "3"))))
 
 
 def _json(value: Any) -> str:
@@ -418,6 +419,14 @@ async def setup_scout_tables() -> None:
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
             CREATE INDEX IF NOT EXISTS idx_scout_status_scan ON scout_titles(scout_status,last_scanned_at DESC);
+            CREATE TABLE IF NOT EXISTS scout_auto_state (
+                id INTEGER PRIMARY KEY CHECK (id=1),
+                source_index INTEGER NOT NULL DEFAULT 0,
+                page INTEGER NOT NULL DEFAULT 1,
+                row_offset INTEGER NOT NULL DEFAULT 0,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            INSERT OR IGNORE INTO scout_auto_state(id) VALUES(1);
             CREATE TABLE IF NOT EXISTS raw_chapter_watches (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 scout_title_id INTEGER NOT NULL,
@@ -539,6 +548,75 @@ async def scan_title(query: str, raw_source: str = "all", *, force: bool = False
     detail = await get_scout_title(scout_id)
     detail["cached"] = False
     return detail
+
+
+async def run_automatic_revival_scout() -> list[dict[str, Any]]:
+    """Gradually discover Indonesian series whose RAW is far ahead.
+
+    One public Indonesian catalogue page is read per run. At most a few titles
+    are then compared with RAW, so the crawler is predictable and low-egress.
+    """
+    db = await db_module.get_db()
+    try:
+        state = await (await db.execute("SELECT * FROM scout_auto_state WHERE id=1")).fetchone()
+        source_index, page, offset = int(state['source_index']), int(state['page']), int(state['row_offset'])
+    finally:
+        await db.close()
+    source = INDONESIAN_SOURCES[source_index % len(INDONESIAN_SOURCES)]
+    timeout = aiohttp.ClientTimeout(total=15)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        payload = await _request_json(session, f"{API_BASE}/{source}/pustaka?page={page}")
+    rows = _catalog_rows(payload)
+    if not rows:
+        source_index, page, offset = (source_index + 1) % len(INDONESIAN_SOURCES), 1, 0
+        rows = []
+
+    batch = rows[offset:offset + AUTO_SCOUT_TITLES_PER_RUN]
+    next_source, next_page, next_offset = source_index, page, offset + len(batch)
+    if not batch or next_offset >= len(rows):
+        next_source, next_page, next_offset = (source_index + 1) % len(INDONESIAN_SOURCES), page + 1, 0
+
+    discovered: list[dict[str, Any]] = []
+    for item in batch:
+        title = str(item.get('title') or '').strip()
+        indo_latest = _latest_chapter(item)
+        if len(title) < 2 or indo_latest is None:
+            continue
+        raw_entries = await _search_raw(title, "all")
+        if not raw_entries:
+            continue
+        best_raw = max(raw_entries, key=lambda entry: entry.get('match_score', 0), default=None)
+        if not best_raw or int(best_raw.get('match_score') or 0) < 90:
+            continue
+        raw_latest = best_raw.get('latest_chapter')
+        if raw_latest is None or float(raw_latest) - float(indo_latest) < 3:
+            continue
+        db = await db_module.get_db()
+        try:
+            known = await (await db.execute(
+                "SELECT id FROM scout_titles WHERE normalized_title=?", (normalize_title(title),)
+            )).fetchone()
+        finally:
+            await db.close()
+        result = await scan_title(title, "all", force=True)
+        if result.get('scout_status') == 'lagging' and not known:
+            discovered.append(result)
+
+    db = await db_module.get_db()
+    try:
+        await db.execute(
+            """UPDATE scout_auto_state SET source_index=?,page=?,row_offset=?,updated_at=CURRENT_TIMESTAMP WHERE id=1""",
+            (next_source, next_page, next_offset),
+        )
+        await db.execute(
+            """INSERT INTO scout_scan_runs(scan_type,query,source,status,titles_checked,matches_found,finished_at)
+               VALUES('automatic',NULL,?,'completed',?,?,CURRENT_TIMESTAMP)""",
+            (source, len(batch), len(discovered)),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+    return discovered
 
 
 def _title_row(row: Any) -> dict[str, Any]:
