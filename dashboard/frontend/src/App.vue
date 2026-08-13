@@ -645,7 +645,13 @@ async function createInvoice(item: Recap) {
   try {
     loading.value = true;
     await api.createInvoice(item.staff_id, period.value);
-    success.value = `Invoice ${item.staff_name} berhasil diterbitkan.`;
+    // An invoice is only a billing document. Take the administrator straight
+    // to its actionable payout queue so the transfer destination is never
+    // missed after issuing it.
+    page.value = "payouts";
+    payoutStatus.value = "";
+    payoutPage.value = 1;
+    success.value = `Invoice ${item.staff_name} diterbitkan dan masuk Permintaan Gaji. Buka Detail untuk melihat tujuan transfer.`;
     await loadPage();
   } catch (e) {
     error.value = e instanceof Error ? e.message : "Gagal membuat invoice.";
