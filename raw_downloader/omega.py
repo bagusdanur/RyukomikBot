@@ -57,7 +57,7 @@ class OmegaDownloader:
                 stage="search",
                 params={"q": query},
                 timeout=4,
-                validator=lambda item: bool(item.get("data")),
+                validator=lambda item: item.get("success") is True or bool(item.get("data")),
             )
         if not payload:
             return []

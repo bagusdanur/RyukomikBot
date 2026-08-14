@@ -41,7 +41,7 @@ class AsuraDownloader:
 
     async def search_manga(self, query: str) -> List[Dict[str, Any]]:
         async with _create_session() as session:
-            payload = await get_json(session, f"{self.api_url}/search", source="asura", stage="search", params={"q": query}, timeout=4, validator=lambda item: bool(item.get("data", item.get("results", []))))
+            payload = await get_json(session, f"{self.api_url}/search", source="asura", stage="search", params={"q": query}, timeout=4, validator=lambda item: item.get("success") is True or bool(item.get("data", item.get("results"))))
             if not payload:
                 return []
             results = payload.get("data", payload.get("results", []))

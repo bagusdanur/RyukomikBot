@@ -81,7 +81,7 @@ class DoujivaDownloader:
     async def search_manga(self, query: str) -> List[Dict[str, Any]]:
         """Search for manga by title."""
         async with _create_session() as session:
-            data = await get_json(session, f"{self.api_url}/search", source="doujiva", stage="search", params={"q": query}, timeout=4, validator=lambda item: bool(item.get("data")))
+            data = await get_json(session, f"{self.api_url}/search", source="doujiva", stage="search", params={"q": query}, timeout=4, validator=lambda item: item.get("success") is True or bool(item.get("data")))
             if data:
                 results = data.get("data", [])
                 normalized = []
