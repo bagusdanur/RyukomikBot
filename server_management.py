@@ -29,6 +29,7 @@ APPRECIATION_NAMES = ("apresiasi-staff",)
 RULES_NAMES = ("rules", "peraturan")
 ROLE_NAMES = ("ambil-role", "roles", "pilih-role")
 RECRUITMENT_NAMES = ("staff-rekrutmen", "rekrutmen", "recruitment")
+WEBSITE_INFO_NAMES = ("info-website", "status-website")
 MEMBER_MENTION_PATTERN = re.compile(r"<@!?(\d+)>")
 
 PROJECT_CHANNELS = (
@@ -140,6 +141,31 @@ def build_goodbye_embed(member: discord.Member) -> discord.Embed:
     return embed
 
 
+def build_website_embed() -> discord.Embed:
+    """Public directory card for the Ryukomik website."""
+    embed = discord.Embed(
+        title="Ryukomik Website",
+        description=(
+            "Pilih layanan Ryukomik yang ingin kamu buka. Semua tautan di bawah "
+            "mengarah langsung ke website resmi."
+        ),
+        color=discord.Color.blurple(),
+    )
+    embed.add_field(name="Komik", value="Baca koleksi manga dan manhwa Ryukomik.", inline=False)
+    embed.add_field(name="Anime", value="Lihat katalog dan informasi anime.", inline=False)
+    embed.add_field(name="Donghua", value="Lihat katalog dan informasi donghua.", inline=False)
+    embed.set_footer(text="Ryukomik Official • Bookmark channel ini untuk akses cepat")
+    return embed
+
+
+def build_website_view() -> discord.ui.View:
+    view = discord.ui.View(timeout=None)
+    view.add_item(discord.ui.Button(label="Buka Komik", emoji="📚", style=discord.ButtonStyle.link, url="https://ryukomik.my.id/"))
+    view.add_item(discord.ui.Button(label="Buka Anime", emoji="🎬", style=discord.ButtonStyle.link, url="https://ryukomik.my.id/anime"))
+    view.add_item(discord.ui.Button(label="Buka Donghua", emoji="🐉", style=discord.ButtonStyle.link, url="https://ryukomik.my.id/donghua"))
+    return view
+
+
 def build_trakteer_embed() -> discord.Embed:
     embed = discord.Embed(
         title="💜 Dukung Ryukomik di Trakteer",
@@ -242,6 +268,7 @@ async def _upsert_bot_embed(
     title: str,
     embed: discord.Embed,
     pin: bool = True,
+    view: discord.ui.View | None = None,
 ) -> discord.Message:
     current: discord.Message | None = None
     async for message in channel.history(limit=100):
@@ -251,9 +278,9 @@ async def _upsert_bot_embed(
             current = message
             break
     if current:
-        await current.edit(embed=embed)
+        await current.edit(embed=embed, view=view)
     else:
-        current = await channel.send(embed=embed)
+        current = await channel.send(embed=embed, view=view)
     if pin and not current.pinned:
         await current.pin(reason="Pesan informasi utama Ryukomik")
     return current
@@ -357,6 +384,7 @@ async def apply_server_housekeeping(guild: discord.Guild) -> dict[str, bool]:
         "welcome_history": False,
         "raw_watch": False,
         "project_scout": False,
+        "website_info": False,
     }
     print(f"[SERVER] Starting safe housekeeping for {guild.name}", flush=True)
     me = guild.me
@@ -452,6 +480,24 @@ async def apply_server_housekeeping(guild: discord.Guild) -> dict[str, bool]:
             )
         result["rules"] = True
         print("[SERVER] Rules permissions, content, and pin checked", flush=True)
+
+    website_channel = _find_text_channel(guild, names=WEBSITE_INFO_NAMES)
+    if website_channel:
+        changes = {}
+        if website_channel.name != "・info-website":
+            changes["name"] = "・info-website"
+        website_topic = "Tautan resmi Ryukomik: Komik, Anime, dan Donghua."
+        if website_channel.topic != website_topic:
+            changes["topic"] = website_topic
+        if changes:
+            await website_channel.edit(reason="Mengganti Status Website menjadi Info Website", **changes)
+        await _upsert_bot_embed(
+            website_channel,
+            title="Ryukomik Website",
+            embed=build_website_embed(),
+            view=build_website_view(),
+        )
+        result["website_info"] = True
 
     welcome_channel = _find_text_channel(guild, names=WELCOME_NAMES)
     if welcome_channel:
