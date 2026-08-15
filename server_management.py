@@ -147,7 +147,9 @@ def build_website_embed() -> discord.Embed:
         title="Ryukomik Website",
         description=(
             "Pilih layanan Ryukomik yang ingin kamu buka. Semua tautan di bawah "
-            "mengarah langsung ke website resmi."
+            "mengarah langsung ke website resmi.\n\n"
+            "Channel ini hanya untuk informasi. Gunakan **Follow Channel** pada menu "
+            "channel untuk mengikuti pengumuman Ryukomik."
         ),
         color=discord.Color.blurple(),
     )
@@ -491,12 +493,53 @@ async def apply_server_housekeeping(guild: discord.Guild) -> dict[str, bool]:
             changes["topic"] = website_topic
         if changes:
             await website_channel.edit(reason="Mengganti Status Website menjadi Info Website", **changes)
-        await _upsert_bot_embed(
+        if website_channel.type != discord.ChannelType.news:
+            try:
+                website_channel = await website_channel.edit(
+                    type=discord.ChannelType.news,
+                    reason="Menjadikan Info Website sebagai Announcement Channel",
+                )
+            except discord.HTTPException:
+                log.exception("Unable to convert website channel to announcement channel: channel=%s", website_channel.id)
+
+        await website_channel.set_permissions(
+            guild.default_role,
+            view_channel=True,
+            read_message_history=True,
+            send_messages=False,
+            reason="Info Website hanya dapat ditulis administrator",
+        )
+        if admin_role:
+            await website_channel.set_permissions(
+                admin_role,
+                view_channel=True,
+                read_message_history=True,
+                send_messages=True,
+                reason="Administrator mengelola Info Website",
+            )
+        await website_channel.set_permissions(
+            me,
+            view_channel=True,
+            read_message_history=True,
+            send_messages=True,
+            manage_messages=True,
+            reason="Yuki mengelola card Info Website",
+        )
+        website_panel = await _upsert_bot_embed(
             website_channel,
             title="Ryukomik Website",
             embed=build_website_embed(),
             view=build_website_view(),
         )
+        # Keep the channel as a clean information board: one pinned card only.
+        async for message in website_channel.history(limit=None):
+            if message.id != website_panel.id:
+                await message.delete()
+        if website_channel.type == discord.ChannelType.news:
+            try:
+                await website_panel.publish()
+            except discord.HTTPException:
+                log.exception("Unable to publish website announcement: message=%s", website_panel.id)
         result["website_info"] = True
 
     welcome_channel = _find_text_channel(guild, names=WELCOME_NAMES)
