@@ -288,6 +288,28 @@ async def _upsert_bot_embed(
     return current
 
 
+async def cleanup_website_info_history(guild: discord.Guild) -> None:
+    """Delete every legacy website message outside startup's short timeout."""
+    channel = _find_text_channel(guild, names=WEBSITE_INFO_NAMES)
+    if channel is None:
+        return
+    panel: discord.Message | None = None
+    async for message in channel.history(limit=100):
+        if message.author.id == guild.me.id and message.embeds and message.embeds[0].title == "Ryukomik Website":
+            panel = message
+            break
+    if panel is None:
+        log.warning("Website information card not found for cleanup: channel=%s", channel.id)
+        return
+    deleted = await channel.purge(limit=None, check=lambda message: message.id != panel.id, bulk=True)
+    if channel.type == discord.ChannelType.news:
+        try:
+            await panel.publish()
+        except discord.HTTPException:
+            log.exception("Unable to publish website announcement: message=%s", panel.id)
+    log.info("Website information history cleaned: channel=%s deleted=%s", channel.id, len(deleted))
+
+
 async def _repair_welcome_history(
     channel: discord.TextChannel,
     bot_member: discord.Member,
@@ -531,15 +553,6 @@ async def apply_server_housekeeping(guild: discord.Guild) -> dict[str, bool]:
             embed=build_website_embed(),
             view=build_website_view(),
         )
-        # Keep the channel as a clean information board: one pinned card only.
-        async for message in website_channel.history(limit=None):
-            if message.id != website_panel.id:
-                await message.delete()
-        if website_channel.type == discord.ChannelType.news:
-            try:
-                await website_panel.publish()
-            except discord.HTTPException:
-                log.exception("Unable to publish website announcement: message=%s", website_panel.id)
         result["website_info"] = True
 
     welcome_channel = _find_text_channel(guild, names=WELCOME_NAMES)

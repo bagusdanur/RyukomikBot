@@ -52,7 +52,7 @@ from views.pair_views import (
 import pair_workflow as pair_service
 import project_scout as scout_service
 import database as db
-from server_management import apply_server_housekeeping, ensure_raw_watch_channel, send_goodbye, send_welcome
+from server_management import apply_server_housekeeping, cleanup_website_info_history, ensure_raw_watch_channel, send_goodbye, send_welcome
 
 
 # Discord gateway intents required by prefix commands, role checks, and tickets.
@@ -82,6 +82,7 @@ class RyukomikBot(commands.Bot):
         self.admin_panel_synced = False
         self.payrate_panel_synced = False
         self.pair_panels_reconciled = False
+        self.website_cleanup_started = False
     
     async def setup_hook(self):
         """Called when the bot is starting up."""
@@ -170,6 +171,10 @@ class RyukomikBot(commands.Bot):
                     )
                     self.server_housekeeping_done = True
                     print("[OK] Server housekeeping applied without changing layout", flush=True)
+                    if not self.website_cleanup_started:
+                        self.website_cleanup_started = True
+                        asyncio.create_task(cleanup_website_info_history(target_guild))
+                        print("[INFO] Info Website history cleanup started in background", flush=True)
             except asyncio.TimeoutError:
                 print("[ERROR] Server housekeeping timed out after 45 seconds", flush=True)
             except Exception as exc:
