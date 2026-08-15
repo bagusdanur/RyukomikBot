@@ -305,7 +305,9 @@ async def cleanup_website_info_history(guild: discord.Guild) -> None:
     if channel.type == discord.ChannelType.news:
         try:
             await panel.publish()
-        except discord.HTTPException:
+        except discord.HTTPException as error:
+            if error.code == 40033:  # Message was already crossposted.
+                return
             log.exception("Unable to publish website announcement: message=%s", panel.id)
     log.info("Website information history cleaned: channel=%s deleted=%s", channel.id, len(deleted))
 
