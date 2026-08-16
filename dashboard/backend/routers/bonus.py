@@ -8,7 +8,12 @@ from pydantic import BaseModel, Field, field_validator
 import performance_bonus as bonus_service
 from dashboard.backend.deps import admin_user, audit, dashboard_db, DEV_BYPASS
 from enums import AssignmentStatus, PayoutStatus, BonusStatus
-from dashboard.backend.helpers import discord_api, enrich_staff
+from dashboard.backend.helpers import (
+    discord_api,
+    enrich_staff,
+    resolve_staff_id_with_fallback,
+    staff_directory,
+)
 
 router = APIRouter(prefix="/api", tags=["bonus"])
 
@@ -163,9 +168,17 @@ async def create_manual_bonus_route(payload: ManualBonusCreateRequest, user=Depe
     clean_period = payload.period.strip() if payload.period and payload.period.strip() else None
     if clean_period and not re.match(r"^\d{4}-\d{2}$", clean_period):
         clean_period = None
+    requested_staff_id = payload.staff_id.strip()
+    profiles = {str(profile["id"]): profile for profile in await staff_directory()}
+    staff_id = await resolve_staff_id_with_fallback(requested_staff_id, profiles)
+    if not staff_id:
+        raise HTTPException(
+            status_code=422,
+            detail="Staff tidak ditemukan. Pilih ulang staff dari daftar Discord, jangan masukkan ID manual.",
+        )
     try:
         result = await bonus_service.create_manual_bonus(
-            staff_id=payload.staff_id.strip(),
+            staff_id=staff_id,
             amount=payload.amount,
             reason=payload.reason.strip(),
             created_by=user["id"],
@@ -174,7 +187,7 @@ async def create_manual_bonus_route(payload: ManualBonusCreateRequest, user=Depe
         connection = await dashboard_db()
         try:
             row = await (await connection.execute("""SELECT ticket_channel_id FROM assignments
-                WHERE staff_id=? AND ticket_channel_id IS NOT NULL ORDER BY id DESC LIMIT 1""", (payload.staff_id.strip(),))).fetchone()
+                WHERE staff_id=? AND ticket_channel_id IS NOT NULL ORDER BY id DESC LIMIT 1""", (staff_id,))).fetchone()
             if row and row["ticket_channel_id"]:
                 message = {
                     "embeds": [{
