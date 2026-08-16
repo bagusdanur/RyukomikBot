@@ -144,7 +144,13 @@ async def enrich_staff(rows):
     enriched = []
     for row in rows:
         item = dict(row)
-        profile = profiles.get(str(item.get("staff_id")), {})
+        staff_key = str(item.get("staff_id")) if item.get("staff_id") is not None else None
+        profile = profiles.get(staff_key, {}) if staff_key else {}
+        if not profile and staff_key:
+            for pid, pdata in profiles.items():
+                if pid[:14] == staff_key[:14]:
+                    profile = pdata
+                    break
         item["staff_name"] = profile.get("username") or f"Staff {item.get('staff_id') or 'belum dipilih'}"
         item["staff_avatar"] = profile.get("avatar")
         if item.get("staff_id") is not None:

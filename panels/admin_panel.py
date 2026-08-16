@@ -146,7 +146,17 @@ class AdminPanelView(discord.ui.View):
         embed.set_footer(text="Urutan paling dekat ditampilkan terlebih dahulu.")
         await interaction.followup.send(embed=embed)
 
-    @discord.ui.button(label="Panduan", emoji="📚", style=discord.ButtonStyle.secondary, custom_id="admin_guide")
+    @discord.ui.button(label="Bonus Manual", emoji="🎁", style=discord.ButtonStyle.success, custom_id="admin_manual_bonus", row=1)
+    async def manual_bonus_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        from modals.bonus_modal import ManualBonusStaffView
+        embed = discord.Embed(
+            title="🎁 Beri Bonus Manual",
+            description="Pilih staff yang akan diberikan bonus manual. Kamu dapat menentukan jumlah dan alasan bonus bebas batasan tier.",
+            color=discord.Color.green(),
+        )
+        await interaction.response.send_message(embed=embed, view=ManualBonusStaffView(), ephemeral=False)
+
+    @discord.ui.button(label="Panduan", emoji="📚", style=discord.ButtonStyle.secondary, custom_id="admin_guide", row=1)
     async def guide_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(embed=build_guide_embed("admin"), ephemeral=False)
 

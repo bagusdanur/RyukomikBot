@@ -543,11 +543,11 @@ async def _wrap_existing_invoice(staff_id, method, cycle_key, start, end):
              method_snapshot_encrypted,chapter_count,total_amount,status)
             VALUES(?,'scheduled',?,?,?,?,?,?,?,?,?)""", (
                 staff_id, cycle_key, str(start), str(end), invoice["id"], method["id"] if method else None,
-                encrypt_value(json.dumps(snapshot)), totals["chapters"], totals["total"] + bonus_total, status,
+                encrypt_value(json.dumps(snapshot)), totals["chapters"], totals["total"] + bonus_total + manual_bonus_total, status,
             ))
         await connection.commit()
         return {"id": cursor.lastrowid, "invoice_id": invoice["id"], "invoice_number": invoice["invoice_number"],
-                "chapter_count": totals["chapters"], "total_amount": totals["total"] + bonus_total, "staff_id": staff_id,
+                "chapter_count": totals["chapters"], "total_amount": totals["total"] + bonus_total + manual_bonus_total, "staff_id": staff_id,
                 "cycle_key": cycle_key, "status": status}
     except Exception:
         await connection.rollback()

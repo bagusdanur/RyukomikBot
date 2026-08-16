@@ -1799,8 +1799,12 @@ async def _replace_invoice_items(connection, invoice, items, actor_id: int):
     bonus_total = int((await (await connection.execute(
         "SELECT COALESCE(SUM(amount),0) total FROM dashboard_invoice_bonus_items WHERE invoice_id=?",
         (invoice["id"],))).fetchone())["total"])
-    if not items and not bonus_total:
-        raise HTTPException(status_code=422, detail="Tidak ada tugas approved yang dapat dimasukkan ke invoice.")
+    manual_bonus_total = int((await (await connection.execute(
+        "SELECT COALESCE(SUM(amount),0) total FROM dashboard_invoice_manual_bonus_items WHERE invoice_id=?",
+        (invoice["id"],))).fetchone())["total"])
+    total_bonuses = bonus_total + manual_bonus_total
+    if not items and not total_bonuses:
+        raise HTTPException(status_code=422, detail="Tidak ada tugas approved atau bonus yang dapat dimasukkan ke invoice.")
     old_ids = [row["assignment_id"] for row in await (await connection.execute(
         "SELECT assignment_id FROM dashboard_invoice_items WHERE invoice_id=?", (invoice["id"],)
     )).fetchall()]
@@ -1818,7 +1822,7 @@ async def _replace_invoice_items(connection, invoice, items, actor_id: int):
         raise HTTPException(status_code=409, detail="Salah satu tugas sudah ditagihkan pada invoice lain.")
     await connection.execute("""UPDATE dashboard_invoices SET chapter_count=?,total_amount=?,
         revised_at=CURRENT_TIMESTAMP,revised_by=? WHERE id=?""",
-        (sum(item["chapter_count"] or 1 for item in items), sum(item["final_rate"] for item in items) + bonus_total, actor_id, invoice["id"]))
+        (sum(item["chapter_count"] or 1 for item in items), sum(item["final_rate"] for item in items) + total_bonuses, actor_id, invoice["id"]))
     return old_ids
 
 

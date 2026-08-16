@@ -4,6 +4,7 @@ import secrets
 
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 
 import payment_service as payout_service
 import performance_bonus as bonus_service
@@ -36,8 +37,12 @@ async def _replace_invoice_items(connection, invoice, items, actor_id: int):
     bonus_total = int((await (await connection.execute(
         "SELECT COALESCE(SUM(amount),0) total FROM dashboard_invoice_bonus_items WHERE invoice_id=?",
         (invoice["id"],))).fetchone())["total"])
-    if not items and not bonus_total:
-        raise HTTPException(status_code=422, detail="Tidak ada tugas approved yang dapat dimasukkan ke invoice.")
+    manual_bonus_total = int((await (await connection.execute(
+        "SELECT COALESCE(SUM(amount),0) total FROM dashboard_invoice_manual_bonus_items WHERE invoice_id=?",
+        (invoice["id"],))).fetchone())["total"])
+    total_bonuses = bonus_total + manual_bonus_total
+    if not items and not total_bonuses:
+        raise HTTPException(status_code=422, detail="Tidak ada tugas approved atau bonus yang dapat dimasukkan ke invoice.")
     old_ids = [row["assignment_id"] for row in await (await connection.execute(
         "SELECT assignment_id FROM dashboard_invoice_items WHERE invoice_id=?", (invoice["id"],)
     )).fetchall()]
@@ -62,7 +67,7 @@ async def _replace_invoice_items(connection, invoice, items, actor_id: int):
         """UPDATE dashboard_invoices SET chapter_count=?,total_amount=?,
         revised_at=CURRENT_TIMESTAMP,revised_by=? WHERE id=?""",
         (sum(item["chapter_count"] or 1 for item in items),
-         sum(item["final_rate"] for item in items) + bonus_total, actor_id, invoice["id"]),
+         sum(item["final_rate"] for item in items) + total_bonuses, actor_id, invoice["id"]),
     )
     return old_ids
 
@@ -70,10 +75,6 @@ async def _replace_invoice_items(connection, invoice, items, actor_id: int):
 # ---------------------------------------------------------------------------
 # Pydantic model (mirrors app.py InvoiceCreate)
 # ---------------------------------------------------------------------------
-
-from pydantic import BaseModel, Field
-from typing import Literal
-
 
 class InvoiceCreate(BaseModel):
     staff_id: str
@@ -116,7 +117,6 @@ async def invoice_detail(invoice_id: int, _user=Depends(admin_user)):
         """, (invoice_id,))).fetchall()
         bonus_items = await bonus_service.invoice_bonus_items(connection, invoice_id)
         manual_bonus_items = await bonus_service.invoice_manual_bonus_items(connection, invoice_id)
-        bonus_items.extend(manual_bonus_items)
         if not items:
             status_clause = "paid_period=?" if invoice["status"] == "paid" else "status='approved' AND approved_at LIKE ?"
             items = await (await connection.execute(f"""
@@ -129,8 +129,13 @@ async def invoice_detail(invoice_id: int, _user=Depends(admin_user)):
             "assignment_id": None, "item_type": "performance_bonus", "manga": "Bonus Performa",
             "chapter": item["period"], "role": "BONUS", "amount": item["amount"],
             "chapter_count": 0, "rate_per_chapter": item["amount"], "assigned_at": None,
-            "approved_at": None, "score": item["total_score"], "percentage": item["percentage"],
-        } for item in bonus_items]
+            "approved_at": None, "score": item.get("total_score"), "percentage": item.get("percentage"),
+        } for item in bonus_items] + [{
+            "assignment_id": None, "item_type": "manual_bonus", "manga": f"Bonus Manual: {item['reason']}",
+            "chapter": item.get("period") or "-", "role": "BONUS", "amount": item["amount"],
+            "chapter_count": 0, "rate_per_chapter": item["amount"], "assigned_at": None,
+            "approved_at": None, "score": None, "percentage": None,
+        } for item in manual_bonus_items]
         dates = [item["assigned_at"] for item in items if item["assigned_at"]]
         approved = [item["approved_at"] for item in items if item["approved_at"]]
         result["work_started_at"] = min(dates) if dates else None
@@ -156,8 +161,13 @@ async def create_invoice(payload: InvoiceCreate, user=Depends(admin_user)):
             WHERE staff_id=? AND status='approved' AND invoice_id IS NULL AND proposed_amount>0""",
             (str(payload.staff_id),),
         )).fetchall()
-        if not items and not bonus_rows:
-            raise HTTPException(status_code=422, detail="Tidak ada tugas approved yang belum dibayar pada periode ini.")
+        manual_rows = await (await connection.execute(
+            """SELECT id FROM manual_bonuses
+            WHERE staff_id=? AND status='approved' AND invoice_id IS NULL AND amount>0""",
+            (str(payload.staff_id),),
+        )).fetchall()
+        if not items and not bonus_rows and not manual_rows:
+            raise HTTPException(status_code=422, detail="Tidak ada tugas approved atau bonus yang belum dibayar pada periode ini.")
         chapter_count = sum(item["chapter_count"] or 1 for item in items)
         total_amount = sum(item["final_rate"] for item in items)
         invoice_number = f"RYU-{payload.period.replace('-', '')}-{payload.staff_id}-{secrets.token_hex(2).upper()}"

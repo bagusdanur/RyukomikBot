@@ -25,7 +25,7 @@ async def staff(
     connection = await dashboard_db()
     try:
         rows = await (await connection.execute("""
-            SELECT staff_id,
+            SELECT CAST(staff_id AS TEXT) staff_id,
                    COUNT(*) task_count,
                    SUM(CASE WHEN status IN ('claimed','submitted','revision','pair_waiting') THEN 1 ELSE 0 END) active_count,
                    SUM(CASE WHEN status='approved' THEN final_rate ELSE 0 END) approved_amount,
@@ -38,12 +38,13 @@ async def staff(
     directory = await staff_directory()
     result = []
     for profile in directory:
-        staff_id = profile["id"]
+        staff_id = str(profile["id"])
+        s_stats = stats.get(staff_id, {"task_count": 0, "active_count": 0, "approved_amount": 0, "paid_amount": 0})
         result.append({
             **profile,
-            "id": str(staff_id),
-            "staff_id": str(staff_id),
-            **stats.get(staff_id, {"task_count": 0, "active_count": 0, "approved_amount": 0, "paid_amount": 0}),
+            **s_stats,
+            "id": staff_id,
+            "staff_id": staff_id,
         })
     if paginated:
         start = (page - 1) * page_size
