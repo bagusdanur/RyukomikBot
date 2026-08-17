@@ -36,11 +36,13 @@ const ConverterPage = defineAsyncComponent(() => import("./pages/ConverterPage.v
 const OcrPage = defineAsyncComponent(() => import("./pages/OcrPage.vue"));
 const NotificationPrefsPage = defineAsyncComponent(() => import("./pages/NotificationPrefsPage.vue"));
 const WorkloadPage = defineAsyncComponent(() => import("./pages/WorkloadPage.vue"));
+const QcViewerPage = defineAsyncComponent(() => import("./pages/QcViewerPage.vue"));
 const user = ref<User | null>(null),
   authChecked = ref(false),
   loading = ref(false),
   error = ref(""),
   success = ref(""),
+  activeQcTaskId = ref<number | null>(null),
   page = ref<Page>("overview");
 const overview = ref({
     counts: {} as Record<string, number>,
@@ -309,9 +311,26 @@ async function handleAction(item: ActionItem) {
     if (payout) await openPayout(payout);
     return;
   }
+  if (item.action_type === "review") {
+    openQc(item.id);
+    return;
+  }
   page.value = "tasks";
   status.value = item.action_type === "review" ? "submitted" : "";
   search.value = item.title.split(" • ")[0];
+  await loadPage();
+}
+function openQc(taskId: number) {
+  activeQcTaskId.value = taskId;
+}
+async function handleQcApproved(taskId: number) {
+  activeQcTaskId.value = null;
+  success.value = `Tugas #${taskId} berhasil disetujui melalui QC Viewer.`;
+  await loadPage();
+}
+async function handleQcRevised(taskId: number) {
+  activeQcTaskId.value = null;
+  success.value = `Catatan revisi untuk tugas #${taskId} telah dikirim ke tiket staff.`;
   await loadPage();
 }
 async function openQris(item: PayoutDetail) {
@@ -1213,6 +1232,14 @@ onMounted(async () => {
               ><Column header="Hasil / Review"
                 ><template #body="{ data }"
                   ><div class="button-row">
+                    <Button
+                      v-if="['submitted', 'revision', 'approved'].includes(data.status)"
+                      label="QC Viewer"
+                      icon="pi pi-search"
+                      size="small"
+                      severity="info"
+                      @click="openQc(data.id)"
+                    />
                     <a
                       v-if="data.gdrive_link"
                       :href="data.gdrive_link"
@@ -1897,5 +1924,13 @@ onMounted(async () => {
         </div>
       </form>
     </div>
+    <Suspense v-if="activeQcTaskId">
+      <QcViewerPage
+        :assignment-id="activeQcTaskId"
+        @close="activeQcTaskId = null"
+        @approved="handleQcApproved"
+        @revised="handleQcRevised"
+      />
+    </Suspense>
   </div>
 </template>

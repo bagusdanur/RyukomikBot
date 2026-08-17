@@ -79,6 +79,7 @@ from dashboard.backend.routers.payrate import router as payrate_router
 from dashboard.backend.routers.operations import router as operations_router
 from dashboard.backend.routers.notifications import router as notifications_router
 from dashboard.backend.routers.projects import router as projects_router
+from dashboard.backend.routers.qc import router as qc_router
 
 
 async def setup_dashboard_tables():
@@ -328,6 +329,7 @@ app.include_router(payrate_router)
 app.include_router(operations_router)
 app.include_router(notifications_router)
 app.include_router(projects_router)
+app.include_router(qc_router)
 
 _rate_windows: dict[str, deque] = defaultdict(deque)
 MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}

@@ -321,6 +321,27 @@ export type ProjectRawChaptersResponse = {
   chapters: ProjectRawChapter[];
 };
 
+export type QcPageAnnotation = {
+  page: number;
+  comment: string;
+};
+
+export type QcDetailResponse = {
+  assignment: Assignment;
+  raw_pages: string[];
+  raw_source: string | null;
+  raw_page_count: number;
+  gdrive_link: string;
+  gdrive_folder_id: string | null;
+  gdrive_embed_url: string | null;
+  submission_pages: string[];
+};
+
+export type QcRevisePayload = {
+  notes?: string;
+  page_notes?: QcPageAnnotation[];
+};
+
 let csrfToken = "";
 export function getCsrfToken(): string { return csrfToken; }
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -558,6 +579,17 @@ const liveApi = {
     request<ProjectRawChaptersResponse>(
       `/api/projects/${encodeURIComponent(slugOrTitle)}/raw-chapters`,
     ),
+  qcDetail: (assignmentId: number) =>
+    request<QcDetailResponse>(`/api/qc/${assignmentId}`),
+  qcApprove: (assignmentId: number) =>
+    request<{ ok: boolean; notified: boolean }>(`/api/qc/${assignmentId}/approve`, {
+      method: "POST",
+    }),
+  qcRevise: (assignmentId: number, payload: QcRevisePayload) =>
+    request<{ ok: boolean; notified: boolean }>(`/api/qc/${assignmentId}/revise`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   audit: () =>
     request<Array<Record<string, string | number | null>>>("/api/audit"),
   auditPage: (page = 1, pageSize = 20) =>
@@ -953,6 +985,21 @@ const demoApi = {
       { id: "chapter-4", title: "Chapter 4", date: "2 hari lalu" },
     ],
   }),
+  qcDetail: async (assignmentId: number): Promise<QcDetailResponse> => ({
+    assignment: (await demoApi.assignments()).find((a) => a.id === assignmentId) || (await demoApi.assignments())[0],
+    raw_pages: [
+      "https://storage.ryukomik.my.id/covers/get-out/cover.jpg",
+      "https://storage.ryukomik.my.id/covers/get-out/cover.jpg",
+    ],
+    raw_source: "omega",
+    raw_page_count: 2,
+    gdrive_link: "https://drive.google.com/drive/folders/demo123",
+    gdrive_folder_id: "demo123",
+    gdrive_embed_url: "https://drive.google.com/embeddedfolderview?id=demo123#grid",
+    submission_pages: [],
+  }),
+  qcApprove: async () => ({ ok: true, notified: true }),
+  qcRevise: async () => ({ ok: true, notified: true }),
   audit: async () => [
     {
       id: 1,
