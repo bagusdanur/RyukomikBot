@@ -141,6 +141,7 @@ async def ensure_giveaway_channel(guild: discord.Guild) -> discord.TextChannel |
                 read_message_history=True,
                 send_messages=True,
                 manage_messages=True,
+                mention_everyone=True,
                 embed_links=True,
                 attach_files=True,
             )
@@ -151,6 +152,7 @@ async def ensure_giveaway_channel(guild: discord.Guild) -> discord.TextChannel |
                 read_message_history=True,
                 send_messages=True,
                 manage_messages=True,
+                mention_everyone=True,
                 embed_links=True,
                 attach_files=True,
             )
@@ -197,6 +199,7 @@ async def ensure_giveaway_channel(guild: discord.Guild) -> discord.TextChannel |
                     read_message_history=True,
                     send_messages=True,
                     manage_messages=True,
+                    mention_everyone=True,
                     embed_links=True,
                     attach_files=True,
                     reason="Administrator mengelola giveaway",
@@ -209,6 +212,7 @@ async def ensure_giveaway_channel(guild: discord.Guild) -> discord.TextChannel |
                     read_message_history=True,
                     send_messages=True,
                     manage_messages=True,
+                    mention_everyone=True,
                     embed_links=True,
                     attach_files=True,
                     reason="Bot mengelola card giveaway dan pemenang",

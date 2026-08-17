@@ -1191,6 +1191,7 @@ async def giveaway_setup_command(interaction: discord.Interaction):
     prize="Nama hadiah (contoh: Ryukomik Premium 7 Hari, 5x Premium 30 Hari, atau ketik hadiah custom)",
     duration="Durasi giveaway dalam Bahasa Indonesia (contoh: 2 jam, 30 menit, 1 hari, 7 hari, 1 minggu)",
     winners="Jumlah pemenang / kuota hadiah (contoh: 1, 3, 5, 10)",
+    mention_everyone="Tag @everyone agar semua member server mendapat notifikasi (default: True)",
     channel="Channel tempat giveaway dikirim (opsional, default: #・giveaway)",
     role_requirement="Role yang wajib dimiliki untuk bisa ikut (opsional)",
     description="Deskripsi / ketentuan tambahan giveaway (opsional)",
@@ -1200,6 +1201,7 @@ async def giveaway_start_command(
     prize: str,
     duration: str,
     winners: int = 1,
+    mention_everyone: bool = True,
     channel: discord.TextChannel | None = None,
     role_requirement: discord.Role | None = None,
     description: str | None = None,
@@ -1256,19 +1258,25 @@ async def giveaway_start_command(
     embed = giveaway_svc.build_giveaway_embed(giveaway_data, 0, interaction.guild)
     view = GiveawayView(giveaway_id)
 
-    # Send announcement in target channel
-    announcement_msg = f"🎉 **GIVEAWAY BARU DIMULAI!** {('@everyone' if seconds >= 86400 else '')}".strip()
+    durasi_id = giveaway_svc.format_duration_id(seconds)
+    prize_title = giveaway_svc.format_prize_title(prize, winners)
+
+    # Send announcement in target channel with @everyone tag
+    if mention_everyone:
+        announcement_msg = f"🎉 **GIVEAWAY RESMI RYUKOMIK DIMULAI!** @everyone\n🎁 Rebut hadiah **{prize_title}**! Klik tombol di bawah untuk berpartisipasi:"
+    else:
+        announcement_msg = f"🎉 **GIVEAWAY RESMI RYUKOMIK DIMULAI!**\n🎁 Rebut hadiah **{prize_title}**! Klik tombol di bawah untuk berpartisipasi:"
+
     message = await target_channel.send(
-        content=announcement_msg if announcement_msg else None,
+        content=announcement_msg,
         embed=embed,
         view=view,
+        allowed_mentions=discord.AllowedMentions(everyone=mention_everyone, users=True, roles=True),
     )
 
     # Store message ID in DB
     await db.set_giveaway_message_id(giveaway_id, message.id)
 
-    durasi_id = giveaway_svc.format_duration_id(seconds)
-    prize_title = giveaway_svc.format_prize_title(prize, winners)
     await interaction.followup.send(
         f"✅ Giveaway **{prize_title}** ({durasi_id}, `{winners}` pemenang) berhasil dimulai di {target_channel.mention} (ID: #{giveaway_id})!",
         ephemeral=True,
@@ -1310,6 +1318,7 @@ async def giveaway_duration_autocomplete(interaction: discord.Interaction, curre
     prize="Pilih paket hadiah Ryukomik",
     winners="Jumlah pemenang / hadiah yang dibagikan",
     duration="Durasi giveaway",
+    mention_everyone="Tag @everyone untuk notifikasi server (default: True)",
     channel="Channel tujuan (opsional, default: #・giveaway)",
     role_requirement="Role syarat khusus (opsional)",
 )
@@ -1343,6 +1352,7 @@ async def giveaway_quick_command(
     prize: str,
     winners: int = 1,
     duration: str = "2 jam",
+    mention_everyone: bool = True,
     channel: discord.TextChannel | None = None,
     role_requirement: discord.Role | None = None,
 ):
@@ -1352,6 +1362,7 @@ async def giveaway_quick_command(
         prize=prize,
         duration=duration,
         winners=winners,
+        mention_everyone=mention_everyone,
         channel=channel,
         role_requirement=role_requirement,
         description=None,
