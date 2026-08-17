@@ -16,6 +16,8 @@ from config import (
     ROLE_STAFF_ID,
     RAW_WATCH_CHANNEL_NAME,
     PROJECT_SCOUT_CHANNEL_NAME,
+    GIVEAWAY_CHANNEL_NAME,
+    GIVEAWAY_CHANNEL_ID,
     STAFF_LOG_CHANNEL_ID,
     STAFF_TASKS_CHANNEL_ID,
     UPDATE_PROJECT_CHANNEL_ID,
@@ -30,6 +32,7 @@ RULES_NAMES = ("rules", "peraturan")
 ROLE_NAMES = ("ambil-role", "roles", "pilih-role")
 RECRUITMENT_NAMES = ("staff-rekrutmen", "rekrutmen", "recruitment")
 WEBSITE_INFO_NAMES = ("info-website", "status-website")
+GIVEAWAY_NAMES = ("giveaway", "giveaways", "bagi-bagi-hadiah", "event")
 MEMBER_MENTION_PATTERN = re.compile(r"<@!?(\d+)>")
 
 PROJECT_CHANNELS = (
@@ -105,6 +108,104 @@ async def ensure_project_scout_channel(guild: discord.Guild) -> discord.TextChan
         await channel.edit(position=admin_channel.position + 2, reason="Menempatkan Project Scout setelah RAW Watch")
     except discord.HTTPException:
         pass
+    return channel
+
+
+async def ensure_giveaway_channel(guild: discord.Guild) -> discord.TextChannel | None:
+    """Create or configure the public giveaway channel with secure read-only permissions for everyone."""
+    channel = _find_text_channel(guild, channel_id=GIVEAWAY_CHANNEL_ID, names=GIVEAWAY_NAMES)
+    admin_role = guild.get_role(ROLE_ADMIN_ID)
+    me = guild.me
+    if channel is None:
+        category = guild.get_channel(PROJECT_CATEGORY_ID) if PROJECT_CATEGORY_ID else None
+        if not isinstance(category, discord.CategoryChannel):
+            category = None
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(
+                view_channel=True,
+                read_messages=True,
+                read_message_history=True,
+                send_messages=False,
+                add_reactions=True,
+            ),
+        }
+        if admin_role:
+            overwrites[admin_role] = discord.PermissionOverwrite(
+                view_channel=True,
+                read_messages=True,
+                read_message_history=True,
+                send_messages=True,
+                manage_messages=True,
+                embed_links=True,
+                attach_files=True,
+            )
+        if me:
+            overwrites[me] = discord.PermissionOverwrite(
+                view_channel=True,
+                read_messages=True,
+                read_message_history=True,
+                send_messages=True,
+                manage_messages=True,
+                embed_links=True,
+                attach_files=True,
+            )
+        channel = await guild.create_text_channel(
+            GIVEAWAY_CHANNEL_NAME,
+            category=category,
+            overwrites=overwrites,
+            topic="🎉 Giveaway Resmi Ryukomik! Ikuti event & menangkan akses Premium gratis.",
+            reason="Membuat channel giveaway otomatis lewat Discord API",
+        )
+    else:
+        changes = {}
+        if channel.name != GIVEAWAY_CHANNEL_NAME:
+            changes["name"] = GIVEAWAY_CHANNEL_NAME
+        expected_topic = "🎉 Giveaway Resmi Ryukomik! Ikuti event & menangkan akses Premium gratis."
+        if not channel.topic:
+            changes["topic"] = expected_topic
+        if changes:
+            try:
+                await channel.edit(reason="Menyesuaikan nama/topic channel giveaway", **changes)
+            except discord.HTTPException:
+                pass
+
+        try:
+            await channel.set_permissions(
+                guild.default_role,
+                view_channel=True,
+                read_messages=True,
+                read_message_history=True,
+                send_messages=False,
+                add_reactions=True,
+                reason="Member hanya boleh melihat dan klik tombol di channel giveaway",
+            )
+            if admin_role:
+                await channel.set_permissions(
+                    admin_role,
+                    view_channel=True,
+                    read_messages=True,
+                    read_message_history=True,
+                    send_messages=True,
+                    manage_messages=True,
+                    embed_links=True,
+                    attach_files=True,
+                    reason="Administrator mengelola giveaway",
+                )
+            if me:
+                await channel.set_permissions(
+                    me,
+                    view_channel=True,
+                    read_messages=True,
+                    read_message_history=True,
+                    send_messages=True,
+                    manage_messages=True,
+                    embed_links=True,
+                    attach_files=True,
+                    reason="Bot mengelola card giveaway dan pemenang",
+                )
+        except discord.HTTPException:
+            pass
+
     return channel
 
 
@@ -410,6 +511,7 @@ async def apply_server_housekeeping(guild: discord.Guild) -> dict[str, bool]:
         "welcome_history": False,
         "raw_watch": False,
         "project_scout": False,
+        "giveaway": False,
         "website_info": False,
     }
     print(f"[SERVER] Starting safe housekeeping for {guild.name}", flush=True)
@@ -419,6 +521,7 @@ async def apply_server_housekeeping(guild: discord.Guild) -> dict[str, bool]:
 
     result["raw_watch"] = bool(await ensure_raw_watch_channel(guild))
     result["project_scout"] = bool(await ensure_project_scout_channel(guild))
+    result["giveaway"] = bool(await ensure_giveaway_channel(guild))
 
     result["project_layout"] = await apply_project_layout(guild)
 

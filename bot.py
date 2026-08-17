@@ -1,10 +1,10 @@
-﻿import discord
+import discord
 from discord.ext import commands, tasks
 import asyncio
 import os
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from typing import Literal
 
@@ -51,8 +51,17 @@ from views.pair_views import (
 )
 import pair_workflow as pair_service
 import project_scout as scout_service
+import giveaway_service as giveaway_svc
+from views.giveaway_views import GiveawayJoinDynamic, GiveawayView
 import database as db
-from server_management import apply_server_housekeeping, cleanup_website_info_history, ensure_raw_watch_channel, send_goodbye, send_welcome
+from server_management import (
+    apply_server_housekeeping,
+    cleanup_website_info_history,
+    ensure_raw_watch_channel,
+    ensure_giveaway_channel,
+    send_goodbye,
+    send_welcome,
+)
 
 
 # Discord gateway intents required by prefix commands, role checks, and tickets.
@@ -113,6 +122,7 @@ class RyukomikBot(commands.Bot):
             PayPayoutDynamic, ConfirmPayPayoutDynamic,
             RejectPayoutDynamic, RetryInvoiceDynamic,
         )
+        self.add_dynamic_items(GiveawayJoinDynamic)
         open_assignments = await get_assignments_by_status("open")
         for assignment in open_assignments:
             if assignment.get("message_id"):
@@ -128,6 +138,8 @@ class RyukomikBot(commands.Bot):
             project_event_sync_loop.start()
         if not raw_chapter_watch_loop.is_running():
             raw_chapter_watch_loop.start()
+        if not giveaway_expiration_loop.is_running():
+            giveaway_expiration_loop.start()
         if not daily_backup_loop.is_running():
             daily_backup_loop.start()
         if not weekly_vacuum_loop.is_running():
@@ -580,6 +592,20 @@ async def weekly_vacuum_loop():
 
 @weekly_vacuum_loop.before_loop
 async def before_weekly_vacuum_loop():
+    await bot.wait_until_ready()
+
+
+@tasks.loop(seconds=15)
+async def giveaway_expiration_loop():
+    """Conclude active giveaways whose duration has expired."""
+    try:
+        await giveaway_svc.process_due_giveaways(bot)
+    except Exception as error:
+        print(f"[GIVEAWAY] Loop error: {error}", flush=True)
+
+
+@giveaway_expiration_loop.before_loop
+async def before_giveaway_expiration_loop():
     await bot.wait_until_ready()
 
 
@@ -1133,6 +1159,253 @@ async def on_member_remove(member: discord.Member):
         await send_goodbye(member)
     except discord.HTTPException as exc:
         print(f"[ERROR] Failed to send goodbye for {member.id}: {exc}")
+
+
+# ==================== GIVEAWAY COMMANDS ====================
+
+giveaway_group = discord.app_commands.Group(
+    name="giveaway",
+    description="Sistem pengelolaan giveaway dan hadiah Ryukomik",
+)
+
+
+@giveaway_group.command(name="setup", description="Buat atau verifikasi channel giveaway via Discord API")
+async def giveaway_setup_command(interaction: discord.Interaction):
+    """Create or configure the dedicated giveaway channel."""
+    if not is_admin(interaction.user):
+        return await interaction.response.send_message("Hanya administrator yang dapat mengatur channel giveaway.", ephemeral=True)
+
+    if not interaction.guild:
+        return await interaction.response.send_message("Command ini hanya dapat dijalankan di dalam server.", ephemeral=True)
+
+    await interaction.response.defer(ephemeral=True)
+    channel = await ensure_giveaway_channel(interaction.guild)
+    if channel:
+        await interaction.followup.send(f"✅ Channel giveaway berhasil disiapkan di {channel.mention} dengan izin yang aman.")
+    else:
+        await interaction.followup.send("❌ Gagal membuat/menyiapkan channel giveaway.")
+
+
+@giveaway_group.command(name="start", description="Mulai giveaway baru untuk member Ryukomik")
+@discord.app_commands.describe(
+    prize="Nama hadiah (contoh: Ryukomik Premium 30 Hari, atau ketik hadiah custom)",
+    duration="Durasi giveaway (contoh: 30s, 10m, 2h, 3d, 7d, 30d, 1w)",
+    winners="Jumlah pemenang yang akan dipilih (default: 1)",
+    channel="Channel tempat giveaway dikirim (opsional, default: #・giveaway)",
+    role_requirement="Role yang wajib dimiliki untuk bisa ikut (opsional)",
+    description="Deskripsi / ketentuan tambahan giveaway (opsional)",
+)
+@discord.app_commands.choices(prize=[
+    discord.app_commands.Choice(name="🌟 Ryukomik Premium 3 Hari", value=giveaway_svc.PREMIUM_3D),
+    discord.app_commands.Choice(name="💎 Ryukomik Premium 7 Hari (1 Minggu)", value=giveaway_svc.PREMIUM_7D),
+    discord.app_commands.Choice(name="👑 Ryukomik Premium 30 Hari (1 Bulan)", value=giveaway_svc.PREMIUM_30D),
+])
+async def giveaway_start_command(
+    interaction: discord.Interaction,
+    prize: str,
+    duration: str,
+    winners: int = 1,
+    channel: discord.TextChannel | None = None,
+    role_requirement: discord.Role | None = None,
+    description: str | None = None,
+):
+    """Start a new giveaway in the specified or default channel."""
+    if not is_admin(interaction.user):
+        return await interaction.response.send_message("Hanya administrator yang dapat membuat giveaway.", ephemeral=True)
+
+    if not interaction.guild:
+        return await interaction.response.send_message("Command ini hanya dapat dijalankan di server.", ephemeral=True)
+
+    if winners < 1:
+        return await interaction.response.send_message("Jumlah pemenang minimal 1 orang.", ephemeral=True)
+
+    seconds = giveaway_svc.parse_duration(duration)
+    if seconds < 10:
+        return await interaction.response.send_message(
+            "❌ Format durasi tidak valid atau terlalu pendek (minimal 10 detik).\n"
+            "Format yang didukung: `30s`, `10m`, `2h`, `3d`, `7d`, `30d`, `1w`.",
+            ephemeral=True,
+        )
+
+    # Determine target channel
+    target_channel = channel
+    if target_channel is None:
+        target_channel = await ensure_giveaway_channel(interaction.guild)
+    if target_channel is None or not isinstance(target_channel, discord.TextChannel):
+        target_channel = interaction.channel if isinstance(interaction.channel, discord.TextChannel) else None
+
+    if target_channel is None:
+        return await interaction.response.send_message("❌ Channel giveaway tidak ditemukan.", ephemeral=True)
+
+    await interaction.response.defer(ephemeral=True)
+
+    # Calculate end datetime in UTC ISO format
+    now_utc = datetime.now(timezone.utc)
+    ends_at_dt = now_utc + timedelta(seconds=seconds)
+    ends_at_iso = ends_at_dt.isoformat()
+
+    # Create giveaway DB record
+    giveaway_id = await db.create_giveaway(
+        guild_id=interaction.guild.id,
+        channel_id=target_channel.id,
+        host_id=interaction.user.id,
+        prize=prize,
+        ends_at=ends_at_iso,
+        description=description,
+        winner_count=winners,
+        requirement_role_id=role_requirement.id if role_requirement else None,
+    )
+
+    giveaway_data = await db.get_giveaway(giveaway_id)
+    embed = giveaway_svc.build_giveaway_embed(giveaway_data, 0, interaction.guild)
+    view = GiveawayView(giveaway_id)
+
+    # Send announcement in target channel
+    announcement_msg = f"🎉 **GIVEAWAY BARU DIMULAI!** {('@everyone' if seconds >= 86400 else '')}".strip()
+    message = await target_channel.send(
+        content=announcement_msg if announcement_msg else None,
+        embed=embed,
+        view=view,
+    )
+
+    # Store message ID in DB
+    await db.set_giveaway_message_id(giveaway_id, message.id)
+
+    await interaction.followup.send(
+        f"✅ Giveaway **{prize}** berhasil dimulai di {target_channel.mention} (ID: #{giveaway_id})!",
+        ephemeral=True,
+    )
+
+
+@giveaway_group.command(name="end", description="Akhiri giveaway aktif lebih awal dan pilih pemenang")
+@discord.app_commands.describe(
+    giveaway_id="ID giveaway yang ingin diakhiri",
+)
+async def giveaway_end_command(interaction: discord.Interaction, giveaway_id: int):
+    """Conclude an active giveaway immediately."""
+    if not is_admin(interaction.user):
+        return await interaction.response.send_message("Hanya administrator yang dapat mengakhiri giveaway.", ephemeral=True)
+
+    await interaction.response.defer(ephemeral=True)
+    giveaway = await db.get_giveaway(giveaway_id)
+    if not giveaway:
+        return await interaction.followup.send(f"❌ Giveaway #{giveaway_id} tidak ditemukan.")
+
+    if giveaway["status"] != "active":
+        return await interaction.followup.send(f"⚠️ Giveaway #{giveaway_id} statusnya sudah **{giveaway['status']}**.")
+
+    success, winners = await giveaway_svc.end_giveaway_and_announce(bot, giveaway)
+    if success:
+        if winners:
+            winners_str = ", ".join(f"<@{uid}>" for uid in winners)
+            await interaction.followup.send(f"✅ Giveaway #{giveaway_id} berhasil diakhiri! Pemenang: {winners_str}")
+        else:
+            await interaction.followup.send(f"ℹ️ Giveaway #{giveaway_id} diakhiri, tetapi tidak ada peserta yang terdaftar.")
+    else:
+        await interaction.followup.send(f"❌ Gagal mengakhiri giveaway #{giveaway_id}.")
+
+
+@giveaway_group.command(name="reroll", description="Undi ulang pemenang baru untuk giveaway yang sudah selesai")
+@discord.app_commands.describe(
+    giveaway_id="ID giveaway yang ingin di-reroll",
+    winners="Jumlah pemenang baru yang ingin diundi (default: 1)",
+)
+async def giveaway_reroll_command(interaction: discord.Interaction, giveaway_id: int, winners: int = 1):
+    """Reroll new winner(s) from an existing giveaway."""
+    if not is_admin(interaction.user):
+        return await interaction.response.send_message("Hanya administrator yang dapat melakukan reroll.", ephemeral=True)
+
+    if winners < 1:
+        return await interaction.response.send_message("Jumlah pemenang reroll minimal 1.", ephemeral=True)
+
+    await interaction.response.defer(ephemeral=True)
+    success, message, new_winners = await giveaway_svc.reroll_giveaway(bot, giveaway_id, winners)
+    if success:
+        winners_str = ", ".join(f"<@{uid}>" for uid in new_winners)
+        await interaction.followup.send(f"🎉 **Reroll Sukses!** Pemenang baru #{giveaway_id}: {winners_str}")
+    else:
+        await interaction.followup.send(f"❌ {message}")
+
+
+@giveaway_group.command(name="cancel", description="Batalkan giveaway aktif tanpa memilih pemenang")
+@discord.app_commands.describe(
+    giveaway_id="ID giveaway yang ingin dibatalkan",
+)
+async def giveaway_cancel_command(interaction: discord.Interaction, giveaway_id: int):
+    """Cancel an active giveaway."""
+    if not is_admin(interaction.user):
+        return await interaction.response.send_message("Hanya administrator yang dapat membatalkan giveaway.", ephemeral=True)
+
+    await interaction.response.defer(ephemeral=True)
+    giveaway = await db.get_giveaway(giveaway_id)
+    if not giveaway:
+        return await interaction.followup.send(f"❌ Giveaway #{giveaway_id} tidak ditemukan.")
+
+    if giveaway["status"] != "active":
+        return await interaction.followup.send(f"⚠️ Giveaway #{giveaway_id} sudah **{giveaway['status']}**.")
+
+    cancelled = await db.cancel_giveaway(giveaway_id)
+    if cancelled:
+        channel_id = giveaway["channel_id"]
+        message_id = giveaway.get("message_id")
+        channel = bot.get_channel(channel_id)
+        if isinstance(channel, discord.TextChannel) and message_id:
+            try:
+                msg = await channel.fetch_message(message_id)
+                cancel_embed = discord.Embed(
+                    title=f"❌ GIVEAWAY DIBATALKAN: {giveaway['prize']}",
+                    description=f"Giveaway #{giveaway['id']} ini telah **dibatalkan** oleh Administrator.",
+                    color=discord.Color.red(),
+                )
+                await msg.edit(embed=cancel_embed, view=None)
+            except Exception:
+                pass
+        await interaction.followup.send(f"✅ Giveaway #{giveaway_id} berhasil dibatalkan.")
+    else:
+        await interaction.followup.send(f"❌ Gagal membatalkan giveaway #{giveaway_id}.")
+
+
+@giveaway_group.command(name="list", description="Lihat daftar giveaway aktif dan riwayat giveaway")
+async def giveaway_list_command(interaction: discord.Interaction):
+    """Display active giveaways and recent history."""
+    if not is_admin(interaction.user) and not is_staff(interaction.user):
+        return await interaction.response.send_message("Command ini hanya untuk Staff & Admin.", ephemeral=True)
+
+    await interaction.response.defer(ephemeral=True)
+    active_giveaways = await db.get_active_giveaways(interaction.guild_id if interaction.guild else None)
+    recent_giveaways = await db.get_recent_giveaways(interaction.guild_id if interaction.guild else None, limit=5)
+
+    embed = discord.Embed(
+        title="🎁 Daftar Giveaway Ryukomik",
+        color=discord.Color.blurple(),
+    )
+
+    if active_giveaways:
+        active_lines = []
+        for g in active_giveaways[:10]:
+            unix = giveaway_svc.parse_iso_to_unix(g["ends_at"])
+            count = await db.get_giveaway_entry_count(g["id"])
+            active_lines.append(
+                f"• **#{g['id']}** — **{g['prize']}** (<#{g['channel_id']}>)\n"
+                f"  Berakhir: <t:{unix}:R> | Peserta: `{count}` | Pemenang: `{g['winner_count']}`"
+            )
+        embed.add_field(name="🟢 Giveaway Aktif", value="\n".join(active_lines), inline=False)
+    else:
+        embed.add_field(name="🟢 Giveaway Aktif", value="*Tidak ada giveaway yang sedang aktif saat ini.*", inline=False)
+
+    past = [g for g in recent_giveaways if g["status"] != "active"]
+    if past:
+        past_lines = []
+        for g in past[:5]:
+            status_icon = "✅" if g["status"] == "ended" else "❌"
+            past_lines.append(f"{status_icon} **#{g['id']}** — {g['prize']} ({g['status']})")
+        embed.add_field(name="📜 Riwayat Terakhir", value="\n".join(past_lines), inline=False)
+
+    embed.set_footer(text="Gunakan /giveaway start untuk membuat giveaway baru")
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+bot.tree.add_command(giveaway_group)
 
 
 @bot.tree.error

@@ -135,6 +135,40 @@ async def setup_database():
             ON recruitment_submissions(applicant_id)
             WHERE status = 'submitted'
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS giveaways (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL,
+                message_id INTEGER,
+                host_id INTEGER NOT NULL,
+                prize TEXT NOT NULL,
+                description TEXT,
+                winner_count INTEGER NOT NULL DEFAULT 1,
+                status TEXT NOT NULL DEFAULT 'active',
+                requirement_role_id INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                ends_at DATETIME NOT NULL,
+                ended_at DATETIME,
+                winners_json TEXT
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS giveaway_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                giveaway_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(giveaway_id, user_id),
+                FOREIGN KEY(giveaway_id) REFERENCES giveaways(id) ON DELETE CASCADE
+            )
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_giveaways_status ON giveaways(status)
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_giveaway_entries_lookup ON giveaway_entries(giveaway_id, user_id)
+        """)
         await db.executemany(
             "INSERT OR IGNORE INTO payrates (role, base_rate) VALUES (?, ?)",
             (("TL", 4000), ("TS", 5000), ("TL+TS", 9000)),
@@ -1010,3 +1044,245 @@ async def get_notif_channel(staff_id: int, notif_type: str) -> str | None:
         return row["channel"] if row else "ticket"  # default to ticket
     finally:
         await db.close()
+
+
+# ==================== GIVEAWAYS ====================
+
+async def create_giveaway(
+    guild_id: int,
+    channel_id: int,
+    host_id: int,
+    prize: str,
+    ends_at: str,
+    description: str | None = None,
+    winner_count: int = 1,
+    requirement_role_id: int | None = None,
+    message_id: int | None = None,
+) -> int:
+    """Create a new giveaway entry and return its ID."""
+    db = await get_db()
+    try:
+        cursor = await db.execute("""
+            INSERT INTO giveaways (
+                guild_id, channel_id, message_id, host_id, prize,
+                description, winner_count, requirement_role_id, ends_at, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
+        """, (
+            guild_id, channel_id, message_id, host_id, prize,
+            description, winner_count, requirement_role_id, ends_at
+        ))
+        await db.commit()
+        return cursor.lastrowid
+    finally:
+        await db.close()
+
+
+async def set_giveaway_message_id(giveaway_id: int, message_id: int) -> bool:
+    """Associate Discord message ID with a giveaway record."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "UPDATE giveaways SET message_id=? WHERE id=?",
+            (message_id, giveaway_id)
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+    finally:
+        await db.close()
+
+
+async def get_giveaway(giveaway_id: int) -> dict | None:
+    """Retrieve giveaway details by primary ID."""
+    db = await get_db()
+    try:
+        row = await (await db.execute(
+            "SELECT * FROM giveaways WHERE id=?", (giveaway_id,)
+        )).fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def get_giveaway_by_message(message_id: int) -> dict | None:
+    """Retrieve giveaway details by Discord message ID."""
+    db = await get_db()
+    try:
+        row = await (await db.execute(
+            "SELECT * FROM giveaways WHERE message_id=?", (message_id,)
+        )).fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def get_active_giveaways(guild_id: int | None = None) -> list[dict]:
+    """Retrieve list of active giveaways."""
+    db = await get_db()
+    try:
+        if guild_id:
+            rows = await (await db.execute(
+                "SELECT * FROM giveaways WHERE status='active' AND guild_id=? ORDER BY ends_at ASC",
+                (guild_id,)
+            )).fetchall()
+        else:
+            rows = await (await db.execute(
+                "SELECT * FROM giveaways WHERE status='active' ORDER BY ends_at ASC"
+            )).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        await db.close()
+
+
+async def get_recent_giveaways(guild_id: int | None = None, limit: int = 10) -> list[dict]:
+    """Retrieve recent giveaways for history display."""
+    db = await get_db()
+    try:
+        if guild_id:
+            rows = await (await db.execute(
+                "SELECT * FROM giveaways WHERE guild_id=? ORDER BY id DESC LIMIT ?",
+                (guild_id, limit)
+            )).fetchall()
+        else:
+            rows = await (await db.execute(
+                "SELECT * FROM giveaways ORDER BY id DESC LIMIT ?",
+                (limit,)
+            )).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        await db.close()
+
+
+async def get_due_giveaways() -> list[dict]:
+    """Retrieve active giveaways whose end timestamp has arrived or passed."""
+    db = await get_db()
+    try:
+        rows = await (await db.execute("""
+            SELECT * FROM giveaways
+            WHERE status='active' AND (ends_at <= CURRENT_TIMESTAMP OR datetime(ends_at) <= datetime('now'))
+            ORDER BY ends_at ASC
+        """)).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        await db.close()
+
+
+async def toggle_giveaway_entry(giveaway_id: int, user_id: int) -> tuple[bool, int]:
+    """
+    Toggle a user's participation in a giveaway.
+    Returns (joined: bool, total_entries: int).
+    If user was not entered -> joins (returns True, count).
+    If user was already entered -> leaves (returns False, count).
+    """
+    db = await get_db()
+    try:
+        # Check if already joined
+        row = await (await db.execute(
+            "SELECT id FROM giveaway_entries WHERE giveaway_id=? AND user_id=?",
+            (giveaway_id, user_id)
+        )).fetchone()
+        if row:
+            await db.execute(
+                "DELETE FROM giveaway_entries WHERE giveaway_id=? AND user_id=?",
+                (giveaway_id, user_id)
+            )
+            joined = False
+        else:
+            await db.execute(
+                "INSERT INTO giveaway_entries (giveaway_id, user_id) VALUES (?, ?)",
+                (giveaway_id, user_id)
+            )
+            joined = True
+        await db.commit()
+
+        count_row = await (await db.execute(
+            "SELECT COUNT(*) AS total FROM giveaway_entries WHERE giveaway_id=?",
+            (giveaway_id,)
+        )).fetchone()
+        total_entries = count_row["total"] if count_row else 0
+        return (joined, total_entries)
+    finally:
+        await db.close()
+
+
+async def is_user_in_giveaway(giveaway_id: int, user_id: int) -> bool:
+    """Check if a user is currently registered in a giveaway."""
+    db = await get_db()
+    try:
+        row = await (await db.execute(
+            "SELECT 1 FROM giveaway_entries WHERE giveaway_id=? AND user_id=?",
+            (giveaway_id, user_id)
+        )).fetchone()
+        return bool(row)
+    finally:
+        await db.close()
+
+
+async def get_giveaway_entries(giveaway_id: int) -> list[int]:
+    """Get list of user IDs registered for a giveaway."""
+    db = await get_db()
+    try:
+        rows = await (await db.execute(
+            "SELECT user_id FROM giveaway_entries WHERE giveaway_id=? ORDER BY id ASC",
+            (giveaway_id,)
+        )).fetchall()
+        return [row["user_id"] for row in rows]
+    finally:
+        await db.close()
+
+
+async def get_giveaway_entry_count(giveaway_id: int) -> int:
+    """Get total number of participants for a giveaway."""
+    db = await get_db()
+    try:
+        row = await (await db.execute(
+            "SELECT COUNT(*) AS total FROM giveaway_entries WHERE giveaway_id=?",
+            (giveaway_id,)
+        )).fetchone()
+        return row["total"] if row else 0
+    finally:
+        await db.close()
+
+
+async def end_giveaway(giveaway_id: int, winner_ids: list[int]) -> bool:
+    """Mark a giveaway as ended with the final list of winner IDs."""
+    db = await get_db()
+    try:
+        cursor = await db.execute("""
+            UPDATE giveaways
+            SET status='ended', ended_at=CURRENT_TIMESTAMP, winners_json=?
+            WHERE id=? AND status='active'
+        """, (json.dumps(winner_ids), giveaway_id))
+        await db.commit()
+        return cursor.rowcount > 0
+    finally:
+        await db.close()
+
+
+async def cancel_giveaway(giveaway_id: int) -> bool:
+    """Cancel an active giveaway."""
+    db = await get_db()
+    try:
+        cursor = await db.execute("""
+            UPDATE giveaways
+            SET status='cancelled', ended_at=CURRENT_TIMESTAMP
+            WHERE id=? AND status='active'
+        """, (giveaway_id,))
+        await db.commit()
+        return cursor.rowcount > 0
+    finally:
+        await db.close()
+
+
+async def update_giveaway_winners(giveaway_id: int, winner_ids: list[int]) -> bool:
+    """Update winner list for a giveaway (used during reroll)."""
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "UPDATE giveaways SET winners_json=? WHERE id=?",
+            (json.dumps(winner_ids), giveaway_id)
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+    finally:
+        await db.close()
+
