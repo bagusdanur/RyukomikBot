@@ -26,7 +26,7 @@ import {
 } from "./api";
 
 type Page =
-  "overview" | "actions" | "projects" | "tasks" | "staff" | "payrates" | "recruitment" | "scout" | "deadlines" | "recap" | "payouts" | "bonuses" | "operations" | "audit" | "converter" | "ocr" | "notifications" | "workload";
+  "overview" | "actions" | "projects" | "tasks" | "qc" | "staff" | "payrates" | "recruitment" | "scout" | "deadlines" | "recap" | "payouts" | "bonuses" | "operations" | "audit" | "converter" | "ocr" | "notifications" | "workload";
 const ProjectsPage = defineAsyncComponent(() => import("./pages/ProjectsPage.vue"));
 const OperationsPage = defineAsyncComponent(() => import("./pages/OperationsPage.vue"));
 const ActionCenterPage = defineAsyncComponent(() => import("./pages/ActionCenterPage.vue"));
@@ -37,6 +37,7 @@ const OcrPage = defineAsyncComponent(() => import("./pages/OcrPage.vue"));
 const NotificationPrefsPage = defineAsyncComponent(() => import("./pages/NotificationPrefsPage.vue"));
 const WorkloadPage = defineAsyncComponent(() => import("./pages/WorkloadPage.vue"));
 const QcViewerPage = defineAsyncComponent(() => import("./pages/QcViewerPage.vue"));
+const QcStudioPage = defineAsyncComponent(() => import("./pages/QcStudioPage.vue"));
 const user = ref<User | null>(null),
   authChecked = ref(false),
   loading = ref(false),
@@ -109,6 +110,9 @@ const navItems = computed(() => [
     ? [{ id: "actions", label: "Perlu Tindakan", icon: "pi pi-bell" }]
     : []),
   { id: "tasks", label: "Tugas", icon: "pi pi-list-check" },
+  ...(user.value?.role === "admin"
+    ? [{ id: "qc", label: "Studio QC", icon: "pi pi-search" }]
+    : []),
   ...(user.value?.role === "admin"
     ? [
         { id: "staff", label: "Tim Staff", icon: "pi pi-users" },
@@ -322,6 +326,8 @@ async function handleAction(item: ActionItem) {
 }
 function openQc(taskId: number) {
   activeQcTaskId.value = taskId;
+  page.value = "qc";
+  window.scrollTo({ top: 0, behavior: "smooth" });
 }
 async function handleQcApproved(taskId: number) {
   activeQcTaskId.value = null;
@@ -1111,7 +1117,15 @@ onMounted(async () => {
         <template #fallback><div class="operations-skeleton"><span v-for="n in 4" :key="n"></span></div></template>
       </Suspense>
       <Suspense v-if="page === 'projects'">
-        <ProjectsPage @create-task="handleCreateTaskFromProject" />
+        <ProjectsPage @create-task="handleCreateTaskFromProject" @open-qc="openQc" />
+        <template #fallback><div class="operations-skeleton"><span v-for="n in 4" :key="n"></span></div></template>
+      </Suspense>
+      <Suspense v-if="page === 'qc'">
+        <QcStudioPage
+          :initial-assignment-id="activeQcTaskId"
+          @task-approved="handleQcApproved"
+          @task-revised="handleQcRevised"
+        />
         <template #fallback><div class="operations-skeleton"><span v-for="n in 4" :key="n"></span></div></template>
       </Suspense>
       <Suspense v-if="page === 'operations'">

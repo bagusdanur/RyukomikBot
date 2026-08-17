@@ -15,6 +15,7 @@ import {
 
 const emit = defineEmits<{
   (e: "create-task", payload: { manga: string; chapter: string }): void;
+  (e: "open-qc", taskId: number): void;
 }>();
 
 const rows = ref<ProjectTrackerItem[]>([]);
@@ -460,9 +461,12 @@ onMounted(load);
                 v-for="task in item.active_tasks"
                 :key="task.id"
                 class="active-task-chip"
-                :title="`Tugas #${task.id}: ${task.role} • ${task.staff_name}`"
+                :title="`Klik untuk buka QC Studio Tugas #${task.id}`"
+                style="cursor: pointer;"
+                @click="emit('open-qc', task.id)"
               >
                 Ch. {{ task.chapter }} ({{ task.role }}) · {{ task.staff_name }}
+                <i class="pi pi-search" style="font-size: 10px; margin-left: 4px; color: #38bdf8;"></i>
               </span>
             </div>
           </div>
@@ -504,6 +508,15 @@ onMounted(load);
                 size="small"
                 @click="openRawChapters(item)"
                 title="Lihat Semua Chapter RAW"
+              />
+              <Button
+                v-if="item.active_tasks && item.active_tasks.length"
+                icon="pi pi-search"
+                severity="info"
+                text
+                size="small"
+                @click="emit('open-qc', item.active_tasks[0].id)"
+                title="Buka Studio QC Tugas Ini"
               />
               <Button
                 icon="pi pi-cog"
