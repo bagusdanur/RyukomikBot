@@ -160,6 +160,15 @@ function setCustomImageUrl() {
   success.value = `URL gambar Halaman ${activePage.value} diterapkan.`;
 }
 
+function handleImageError(event: Event, originalUrl: string) {
+  const img = event.target as HTMLImageElement;
+  if (!img || !originalUrl) return;
+  const proxyUrl = `/api/qc/proxy-image?url=${encodeURIComponent(originalUrl)}`;
+  if (img.src !== proxyUrl && !img.src.includes("/api/qc/proxy-image")) {
+    img.src = proxyUrl;
+  }
+}
+
 async function approveAssignment() {
   if (!confirm(`Setujui tugas #${props.assignmentId} (${data.value?.assignment.manga} Ch. ${data.value?.assignment.chapter})?`)) return;
   actionLoading.value = true;
@@ -331,6 +340,16 @@ onMounted(() => {
                 >
                   <div class="slice-marker">
                     <span>Hal. {{ idx + 1 }}</span>
+                    <a
+                      :href="rawUrl"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="slice-direct-link"
+                      title="Buka gambar RAW asli di tab baru"
+                      @click.stop
+                    >
+                      <i class="pi pi-external-link"></i>
+                    </a>
                     <button
                       type="button"
                       title="Beri catatan pada halaman ini"
@@ -343,7 +362,10 @@ onMounted(() => {
                     :src="rawUrl"
                     :alt="`RAW Hal ${idx + 1}`"
                     class="webtoon-slice-img"
+                    referrerpolicy="no-referrer"
+                    crossorigin="anonymous"
                     loading="lazy"
+                    @error="handleImageError($event, rawUrl)"
                   />
                 </div>
               </div>
@@ -443,11 +465,29 @@ onMounted(() => {
               >
                 <div class="slice-marker">
                   <span>Halaman {{ idx + 1 }}</span>
+                  <a
+                    :href="rawUrl"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="slice-direct-link"
+                    title="Buka gambar RAW asli di tab baru"
+                    @click.stop
+                  >
+                    <i class="pi pi-external-link"></i>
+                  </a>
                   <button type="button" @click.stop="activePage = idx + 1">
                     <i class="pi pi-pencil"></i> Beri Catatan
                   </button>
                 </div>
-                <img :src="rawUrl" :alt="`RAW Hal ${idx + 1}`" class="webtoon-slice-img" loading="lazy" />
+                <img
+                  :src="rawUrl"
+                  :alt="`RAW Hal ${idx + 1}`"
+                  class="webtoon-slice-img"
+                  referrerpolicy="no-referrer"
+                  crossorigin="anonymous"
+                  loading="lazy"
+                  @error="handleImageError($event, rawUrl)"
+                />
               </div>
             </div>
           </div>
@@ -848,6 +888,21 @@ onMounted(() => {
 .slice-marker.edit {
   color: #a78bfa;
   border-color: rgba(167, 139, 250, 0.3);
+}
+
+.slice-direct-link {
+  color: #38bdf8;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  text-decoration: none;
+  opacity: 0.8;
+  transition: opacity 0.15s;
+}
+
+.slice-direct-link:hover {
+  opacity: 1;
+  color: #fff;
 }
 
 .webtoon-slice-wrapper:hover .slice-marker {

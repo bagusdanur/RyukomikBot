@@ -1,4 +1,4 @@
-const CACHE = 'ryukomik-staff-shell-v8'
+const CACHE = 'ryukomik-staff-shell-v9'
 const SHELL = ['/', '/manifest.webmanifest?v=staff-20260804-2', '/icons/ryukomik-staff-20260804.png?v=staff-2']
 
 self.addEventListener('install', (event) => {

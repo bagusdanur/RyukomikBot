@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 import aiohttp
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 import database as db_module
@@ -212,3 +213,38 @@ async def qc_revise(
     return await dashboard_revision_assignment(
         assignment_id, revision_payload, user=user
     )
+
+
+@router.get("/proxy-image")
+async def proxy_qc_image(url: str, user=Depends(current_user)):
+    """Proxy RAW image if direct hotlink is blocked by origin CDN referer protection."""
+    if not url.startswith("http://") and not url.startswith("https://"):
+        raise HTTPException(status_code=400, detail="Invalid URL protocol.")
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+    }
+
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+        try:
+            async with session.get(url, headers=headers) as resp:
+                if resp.status != 200:
+                    raise HTTPException(
+                        status_code=resp.status,
+                        detail="Gagal mengambil gambar dari sumber.",
+                    )
+                content_type = resp.headers.get("Content-Type", "image/jpeg")
+                content = await resp.read()
+                return Response(
+                    content=content,
+                    media_type=content_type,
+                    headers={
+                        "Cache-Control": "public, max-age=86400",
+                    },
+                )
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Proxy error: {e}")
