@@ -64,7 +64,7 @@ class VortexDownloader:
                 source="vortex",
                 stage="search",
                 params={"q": query},
-                timeout=4,
+                timeout=6,
                 validator=lambda p: isinstance(p.get("data"), list),
             )
         if not data:
@@ -91,7 +91,7 @@ class VortexDownloader:
                 f"{self.api_url}/detail/{clean_manga}",
                 source="vortex",
                 stage=f"detail:{clean_manga}",
-                timeout=5,
+                timeout=6,
                 validator=lambda p: bool((p.get("data") or {}).get("chapters")),
             )
         return data.get("data") if data else None
