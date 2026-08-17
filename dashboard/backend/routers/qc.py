@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 from typing import Any, Dict, List, Optional
@@ -134,6 +135,126 @@ def _parse_gdrive_folder_id(link: str) -> Optional[str]:
     return None
 
 
+def _natural_sort_key(s: str) -> list:
+    """Helper for natural alphanumeric sorting (e.g. '01.png', '2.png', '10.png')."""
+    return [int(text) if text.isdigit() else text.lower() for text in re.split(r"(\d+)", s)]
+
+
+async def _extract_gdrive_folder_images(folder_id: str) -> List[Dict[str, str]]:
+    """Extract image file list and direct view URLs from a public Google Drive folder."""
+    if not folder_id:
+        return []
+    url = f"https://drive.google.com/drive/folders/{folder_id}"
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    }
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8)) as session:
+        try:
+            async with session.get(url, headers=headers) as resp:
+                if resp.status != 200:
+                    return []
+                html = await resp.text()
+
+                ivd_match = re.search(r"window\['_DRIVE_ivd'\]\s*=\s*'([^']*)'", html)
+                if not ivd_match:
+                    return []
+
+                raw = ivd_match.group(1)
+                decoded_json_str = bytes(raw, "utf-8").decode("unicode_escape")
+                data = json.loads(decoded_json_str)
+
+                files = []
+
+                def walk(obj):
+                    if isinstance(obj, list):
+                        if (
+                            len(obj) >= 4
+                            and isinstance(obj[0], str)
+                            and len(obj[0]) in range(25, 45)
+                            and isinstance(obj[2], str)
+                        ):
+                            name = obj[2]
+                            mime = obj[3] if len(obj) > 3 else ""
+                            if (
+                                any(name.lower().endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".webp", ".gif"))
+                                or "image" in str(mime).lower()
+                            ):
+                                file_id = obj[0]
+                                files.append({
+                                    "id": file_id,
+                                    "name": name,
+                                    "url": f"https://lh3.googleusercontent.com/d/{file_id}",
+                                })
+                        for child in obj:
+                            walk(child)
+
+                walk(data)
+                return sorted(files, key=lambda x: _natural_sort_key(x["name"]))
+        except Exception as error:
+            print(f"[QC] Failed to extract Google Drive images from folder {folder_id}: {error}", flush=True)
+            return []
+
+
+async def _extract_filebin_images(bin_id: str) -> List[Dict[str, str]]:
+    """Extract image file list from Filebin URL."""
+    if not bin_id:
+        return []
+    url = f"https://filebin.net/api/bins/{bin_id}"
+    headers = {"Accept": "application/json"}
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8)) as session:
+        try:
+            async with session.get(url, headers=headers) as resp:
+                if resp.status != 200:
+                    return []
+                data = await resp.json()
+                files = []
+                for item in data.get("files", []):
+                    fname = item.get("filename", "")
+                    if any(fname.lower().endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".webp", ".gif")):
+                        files.append({
+                            "id": fname,
+                            "name": fname,
+                            "url": f"https://filebin.net/{bin_id}/{fname}",
+                        })
+                return sorted(files, key=lambda x: _natural_sort_key(x["name"]))
+        except Exception as error:
+            print(f"[QC] Failed to extract Filebin images from {bin_id}: {error}", flush=True)
+            return []
+
+
+async def _extract_submission_images(link: str) -> List[Dict[str, str]]:
+    """Extract ordered image list from Google Drive or Filebin submission links."""
+    if not link:
+        return []
+    link = link.strip()
+
+    # 1. Google Drive Folder
+    folder_id = _parse_gdrive_folder_id(link)
+    if folder_id:
+        return await _extract_gdrive_folder_images(folder_id)
+
+    # 2. Google Drive Single File
+    single_file_match = re.search(r"file/d/([a-zA-Z0-9_-]+)", link) or re.search(r"[?&]id=([a-zA-Z0-9_-]+)", link)
+    if single_file_match and "folders" not in link:
+        file_id = single_file_match.group(1)
+        return [{
+            "id": file_id,
+            "name": "Hasil Staff",
+            "url": f"https://lh3.googleusercontent.com/d/{file_id}",
+        }]
+
+    # 3. Filebin Link
+    filebin_match = re.search(r"filebin\.net/([a-zA-Z0-9_-]+)", link)
+    if filebin_match:
+        return await _extract_filebin_images(filebin_match.group(1))
+
+    return []
+
+
 @router.get("/{assignment_id}")
 async def get_qc_details(assignment_id: int, user=Depends(current_user)):
     """Fetch assignment data, RAW images, and submission details for QC inspection."""
@@ -159,17 +280,22 @@ async def get_qc_details(assignment_id: int, user=Depends(current_user)):
 
     manga_title = assignment.get("manga", "")
     chapter = assignment.get("chapter", "")
-
-    # Fetch RAW images
-    raw_images, raw_source = await _resolve_raw_images(manga_title, chapter)
-
     gdrive_link = assignment.get("gdrive_link") or ""
+
+    # Fetch RAW images and Staff Submission images concurrently
+    (raw_images, raw_source), submission_files = await asyncio.gather(
+        _resolve_raw_images(manga_title, chapter),
+        _extract_submission_images(gdrive_link),
+    )
+
     gdrive_folder_id = _parse_gdrive_folder_id(gdrive_link)
     gdrive_embed_url = (
         f"https://drive.google.com/embeddedfolderview?id={gdrive_folder_id}#grid"
         if gdrive_folder_id
         else None
     )
+
+    submission_pages = [item["url"] for item in submission_files] if submission_files else []
 
     return {
         "assignment": assignment,
@@ -179,7 +305,9 @@ async def get_qc_details(assignment_id: int, user=Depends(current_user)):
         "gdrive_link": gdrive_link,
         "gdrive_folder_id": gdrive_folder_id,
         "gdrive_embed_url": gdrive_embed_url,
-        "submission_pages": [],  # Direct images if available
+        "submission_pages": submission_pages,
+        "submission_files": submission_files,
+        "submission_count": len(submission_pages),
     }
 
 

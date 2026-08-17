@@ -53,7 +53,10 @@ let isSyncingScroll = false;
 const totalPages = computed(() => {
   if (!data.value) return 1;
   const rawCount = data.value.raw_pages.length;
-  const subCount = Object.keys(localSubmissionPages.value).length;
+  const subCount = Math.max(
+    data.value.submission_pages.length,
+    Object.keys(localSubmissionPages.value).length,
+  );
   return Math.max(rawCount, subCount, 1);
 });
 
@@ -409,12 +412,27 @@ onMounted(() => {
                 >
                   <div class="slice-marker edit">
                     <span>Edit Hal. {{ idx + 1 }}</span>
+                    <a
+                      v-if="localSubmissionPages[idx + 1] || data.submission_pages[idx]"
+                      :href="localSubmissionPages[idx + 1] || data.submission_pages[idx]"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="slice-direct-link"
+                      title="Buka gambar hasil staff di tab baru"
+                      @click.stop
+                    >
+                      <i class="pi pi-external-link"></i>
+                    </a>
                   </div>
                   <img
                     v-if="localSubmissionPages[idx + 1] || data.submission_pages[idx]"
                     :src="localSubmissionPages[idx + 1] || data.submission_pages[idx]"
                     :alt="`Edit Hal ${idx + 1}`"
                     class="webtoon-slice-img"
+                    referrerpolicy="no-referrer"
+                    crossorigin="anonymous"
+                    loading="lazy"
+                    @error="handleImageError($event, localSubmissionPages[idx + 1] || data.submission_pages[idx])"
                   />
                   <div v-else class="slice-empty-placeholder">
                     <span>Halaman {{ idx + 1 }} belum ditempel</span>

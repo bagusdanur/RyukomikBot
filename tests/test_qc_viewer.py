@@ -51,11 +51,18 @@ def test_qc_details_and_actions(monkeypatch):
         finally:
             await db.close()
 
-        # Mock RAW image resolver
+        # Mock RAW image resolver and Submission images extractor
         import dashboard.backend.routers.qc as qc_mod
         async def mock_raw_images(manga_title, chapter):
             return ["https://storage.ryukomik.my.id/page1.jpg", "https://storage.ryukomik.my.id/page2.jpg"], "omega"
         monkeypatch.setattr(qc_mod, "_resolve_raw_images", mock_raw_images)
+
+        async def mock_extract_submission(link):
+            return [
+                {"id": "file1", "name": "01.png", "url": "https://lh3.googleusercontent.com/d/file1"},
+                {"id": "file2", "name": "02.png", "url": "https://lh3.googleusercontent.com/d/file2"},
+            ]
+        monkeypatch.setattr(qc_mod, "_extract_submission_images", mock_extract_submission)
 
         # 1. Fetch QC Details
         detail = await get_qc_details(task_id, user={"id": "1", "role": "admin"})
@@ -67,6 +74,11 @@ def test_qc_details_and_actions(monkeypatch):
         ]
         assert detail["raw_source"] == "omega"
         assert detail["gdrive_folder_id"] == "test-folder-123"
+        assert detail["submission_pages"] == [
+            "https://lh3.googleusercontent.com/d/file1",
+            "https://lh3.googleusercontent.com/d/file2",
+        ]
+        assert detail["submission_count"] == 2
 
         # 2. Request Revision with Page Annotations
         revise_payload = QcReviseRequest(
