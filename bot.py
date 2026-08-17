@@ -1188,18 +1188,13 @@ async def giveaway_setup_command(interaction: discord.Interaction):
 
 @giveaway_group.command(name="start", description="Mulai giveaway baru untuk member Ryukomik")
 @discord.app_commands.describe(
-    prize="Nama hadiah (contoh: Ryukomik Premium 30 Hari, atau ketik hadiah custom)",
-    duration="Durasi giveaway (contoh: 30s, 10m, 2h, 3d, 7d, 30d, 1w)",
-    winners="Jumlah pemenang yang akan dipilih (default: 1)",
+    prize="Nama hadiah (contoh: Ryukomik Premium 7 Hari, 5x Premium 30 Hari, atau ketik hadiah custom)",
+    duration="Durasi giveaway dalam Bahasa Indonesia (contoh: 2 jam, 30 menit, 1 hari, 7 hari, 1 minggu)",
+    winners="Jumlah pemenang / kuota hadiah (contoh: 1, 3, 5, 10)",
     channel="Channel tempat giveaway dikirim (opsional, default: #・giveaway)",
     role_requirement="Role yang wajib dimiliki untuk bisa ikut (opsional)",
     description="Deskripsi / ketentuan tambahan giveaway (opsional)",
 )
-@discord.app_commands.choices(prize=[
-    discord.app_commands.Choice(name="🌟 Ryukomik Premium 3 Hari", value=giveaway_svc.PREMIUM_3D),
-    discord.app_commands.Choice(name="💎 Ryukomik Premium 7 Hari (1 Minggu)", value=giveaway_svc.PREMIUM_7D),
-    discord.app_commands.Choice(name="👑 Ryukomik Premium 30 Hari (1 Bulan)", value=giveaway_svc.PREMIUM_30D),
-])
 async def giveaway_start_command(
     interaction: discord.Interaction,
     prize: str,
@@ -1223,7 +1218,8 @@ async def giveaway_start_command(
     if seconds < 10:
         return await interaction.response.send_message(
             "❌ Format durasi tidak valid atau terlalu pendek (minimal 10 detik).\n"
-            "Format yang didukung: `30s`, `10m`, `2h`, `3d`, `7d`, `30d`, `1w`.",
+            "Contoh durasi Bahasa Indonesia: `30 menit`, `1 jam`, `2 jam`, `1 hari`, `3 hari`, `7 hari`, `1 minggu`\n"
+            "Atau kode singkat: `30m`, `2h`, `1d`, `7d`, `1w`.",
             ephemeral=True,
         )
 
@@ -1271,9 +1267,94 @@ async def giveaway_start_command(
     # Store message ID in DB
     await db.set_giveaway_message_id(giveaway_id, message.id)
 
+    durasi_id = giveaway_svc.format_duration_id(seconds)
+    prize_title = giveaway_svc.format_prize_title(prize, winners)
     await interaction.followup.send(
-        f"✅ Giveaway **{prize}** berhasil dimulai di {target_channel.mention} (ID: #{giveaway_id})!",
+        f"✅ Giveaway **{prize_title}** ({durasi_id}, `{winners}` pemenang) berhasil dimulai di {target_channel.mention} (ID: #{giveaway_id})!",
         ephemeral=True,
+    )
+
+
+@giveaway_start_command.autocomplete("prize")
+async def giveaway_prize_autocomplete(interaction: discord.Interaction, current: str) -> list[discord.app_commands.Choice[str]]:
+    suggestions = list(giveaway_svc.SUGGESTED_PRIZES)
+    if current:
+        filtered = [s for s in suggestions if current.casefold() in s.casefold()]
+        choices = [discord.app_commands.Choice(name=f"✍️ {current}", value=current)]
+        for s in filtered:
+            if s != current and len(choices) < 25:
+                choices.append(discord.app_commands.Choice(name=s, value=s))
+        return choices[:25]
+    return [discord.app_commands.Choice(name=s, value=s) for s in suggestions[:25]]
+
+
+@giveaway_start_command.autocomplete("duration")
+async def giveaway_duration_autocomplete(interaction: discord.Interaction, current: str) -> list[discord.app_commands.Choice[str]]:
+    presets = list(giveaway_svc.DURATION_PRESETS)
+    if current:
+        parsed = giveaway_svc.parse_duration(current)
+        choices = []
+        if parsed >= 10:
+            formatted = giveaway_svc.format_duration_id(parsed)
+            choices.append(discord.app_commands.Choice(name=f"⏱️ {formatted} ({current})", value=current))
+        filtered = [p for p in presets if current.casefold() in p[0].casefold() or current.casefold() in p[1].casefold()]
+        for label, val in filtered:
+            if not any(c.value == val for c in choices) and len(choices) < 25:
+                choices.append(discord.app_commands.Choice(name=label, value=val))
+        return choices[:25]
+    return [discord.app_commands.Choice(name=label, value=val) for label, val in presets[:25]]
+
+
+@giveaway_group.command(name="quick", description="Mulai giveaway cepat dengan pilihan preset hadiah & durasi")
+@discord.app_commands.describe(
+    prize="Pilih paket hadiah Ryukomik",
+    winners="Jumlah pemenang / hadiah yang dibagikan",
+    duration="Durasi giveaway",
+    channel="Channel tujuan (opsional, default: #・giveaway)",
+    role_requirement="Role syarat khusus (opsional)",
+)
+@discord.app_commands.choices(
+    prize=[
+        discord.app_commands.Choice(name="💎 Ryukomik Premium 7 Hari", value=giveaway_svc.PREMIUM_7D),
+        discord.app_commands.Choice(name="👑 Ryukomik Premium 30 Hari (1 Bulan)", value=giveaway_svc.PREMIUM_30D),
+        discord.app_commands.Choice(name="🌟 Ryukomik Premium 3 Hari", value=giveaway_svc.PREMIUM_3D),
+    ],
+    winners=[
+        discord.app_commands.Choice(name="👤 1 Pemenang", value=1),
+        discord.app_commands.Choice(name="👥 2 Pemenang", value=2),
+        discord.app_commands.Choice(name="👥 3 Pemenang", value=3),
+        discord.app_commands.Choice(name="🎉 5 Pemenang", value=5),
+        discord.app_commands.Choice(name="🔥 10 Pemenang", value=10),
+    ],
+    duration=[
+        discord.app_commands.Choice(name="⏱️ 30 Menit", value="30 menit"),
+        discord.app_commands.Choice(name="⏱️ 1 Jam", value="1 jam"),
+        discord.app_commands.Choice(name="⏱️ 2 Jam", value="2 jam"),
+        discord.app_commands.Choice(name="⏱️ 6 Jam", value="6 jam"),
+        discord.app_commands.Choice(name="⏱️ 12 Jam", value="12 jam"),
+        discord.app_commands.Choice(name="⏱️ 1 Hari (24 Jam)", value="1 hari"),
+        discord.app_commands.Choice(name="⏱️ 2 Hari", value="2 hari"),
+        discord.app_commands.Choice(name="⏱️ 3 Hari", value="3 hari"),
+        discord.app_commands.Choice(name="⏱️ 7 Hari (1 Minggu)", value="7 hari"),
+    ],
+)
+async def giveaway_quick_command(
+    interaction: discord.Interaction,
+    prize: str,
+    winners: int = 1,
+    duration: str = "2 jam",
+    channel: discord.TextChannel | None = None,
+    role_requirement: discord.Role | None = None,
+):
+    """Launch a preset giveaway with streamlined options."""
+    await giveaway_start_command(
+        interaction=interaction,
+        prize=prize,
+        duration=duration,
+        winners=winners,
+        channel=channel,
+        role_requirement=role_requirement,
+        description=None,
     )
 
 

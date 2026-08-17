@@ -26,6 +26,30 @@ class GiveawayServiceUnitTests(unittest.TestCase):
         self.assertEqual(gservice.parse_duration("30d"), 30 * 86400)
         self.assertEqual(gservice.parse_duration("1w"), 7 * 86400)
 
+    def test_parse_duration_indonesian(self):
+        self.assertEqual(gservice.parse_duration("2 jam"), 7200)
+        self.assertEqual(gservice.parse_duration("30 menit"), 1800)
+        self.assertEqual(gservice.parse_duration("1 hari"), 86400)
+        self.assertEqual(gservice.parse_duration("7 hari"), 7 * 86400)
+        self.assertEqual(gservice.parse_duration("1 minggu"), 7 * 86400)
+        self.assertEqual(gservice.parse_duration("1 bulan"), 30 * 86400)
+        self.assertEqual(gservice.parse_duration("1 hari 2 jam 30 menit"), 86400 + 7200 + 1800)
+        self.assertEqual(gservice.parse_duration("2 jam dan 15 menit"), 7200 + 900)
+        self.assertEqual(gservice.parse_duration("45 detik"), 45)
+        self.assertEqual(gservice.parse_duration("15 mnt"), 900)
+
+    def test_format_duration_id(self):
+        self.assertEqual(gservice.format_duration_id(7200), "2 Jam")
+        self.assertEqual(gservice.format_duration_id(1800), "30 Menit")
+        self.assertEqual(gservice.format_duration_id(86400), "1 Hari")
+        self.assertEqual(gservice.format_duration_id(604800), "1 Minggu (7 Hari)")
+        self.assertEqual(gservice.format_duration_id(90000), "1 Hari 1 Jam")
+
+    def test_format_prize_title(self):
+        self.assertEqual(gservice.format_prize_title("Ryukomik Premium 7 Hari", 1), "Ryukomik Premium 7 Hari")
+        self.assertEqual(gservice.format_prize_title("Ryukomik Premium 7 Hari", 5), "5x Ryukomik Premium 7 Hari")
+        self.assertEqual(gservice.format_prize_title("5x Ryukomik Premium 7 Hari", 5), "5x Ryukomik Premium 7 Hari")
+
     def test_parse_duration_combined_and_case(self):
         self.assertEqual(gservice.parse_duration("1d 2h 30m"), 86400 + 7200 + 1800)
         self.assertEqual(gservice.parse_duration("7D"), 7 * 86400)
