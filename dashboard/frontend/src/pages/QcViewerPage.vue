@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import Button from "primevue/button";
 import Tag from "primevue/tag";
 import InputText from "primevue/inputtext";
@@ -25,22 +25,30 @@ const error = ref("");
 const success = ref("");
 const data = ref<QcDetailResponse | null>(null);
 
-// Inspection Modes: "side-by-side" | "slider" | "webtoon"
-const viewMode = ref<"side-by-side" | "slider" | "webtoon">("side-by-side");
+// Layout Modes:
+// - "webtoon-dual": Dual continuous vertical strip (RAW kiri, Edit kanan) - DEFAULT
+// - "webtoon-single": Single continuous vertical strip
+// - "single-page": One page at a time with slider before/after
+const layoutMode = ref<"webtoon-dual" | "webtoon-single" | "single-page">("webtoon-dual");
 
-// Page Navigation
-const currentPage = ref(1);
-const zoomLevel = ref(100);
-const sliderPosition = ref(50); // 0 to 100%
+// Strip Width Configuration (for comfortable Webtoon reading)
+const stripWidth = ref(640); // in pixels
+const syncScroll = ref(true);
 
-// Custom/Local Submission Image Overrides (for private GDrive/files)
-const localSubmissionPages = ref<Record<number, string>>({});
-const customImageInput = ref("");
-
-// Revision & Annotations
+// Active Page & Annotations
+const activePage = ref(1);
 const generalNotes = ref("");
 const pageAnnotations = ref<QcPageAnnotation[]>([]);
 const newAnnotationComment = ref("");
+
+// Slices / Local Overrides
+const localSubmissionPages = ref<Record<number, string>>({});
+const customImageInput = ref("");
+
+// DOM element references for synchronized scrolling
+const rawScrollContainer = ref<HTMLElement | null>(null);
+const editScrollContainer = ref<HTMLElement | null>(null);
+let isSyncingScroll = false;
 
 const totalPages = computed(() => {
   if (!data.value) return 1;
@@ -49,30 +57,12 @@ const totalPages = computed(() => {
   return Math.max(rawCount, subCount, 1);
 });
 
-const currentRawImage = computed(() => {
-  if (!data.value || !data.value.raw_pages.length) return null;
-  const idx = currentPage.value - 1;
-  return data.value.raw_pages[idx] || null;
-});
-
-const currentSubmissionImage = computed(() => {
-  // Check local override first
-  if (localSubmissionPages.value[currentPage.value]) {
-    return localSubmissionPages.value[currentPage.value];
-  }
-  // Check backend submission pages
-  if (data.value && data.value.submission_pages.length) {
-    return data.value.submission_pages[currentPage.value - 1] || null;
-  }
-  return null;
-});
-
 async function loadQc() {
   loading.value = true;
   error.value = "";
   try {
     data.value = await api.qcDetail(props.assignmentId);
-    currentPage.value = 1;
+    activePage.value = 1;
   } catch (e) {
     error.value = e instanceof Error ? e.message : "Gagal memuat data QC.";
   } finally {
@@ -80,43 +70,36 @@ async function loadQc() {
   }
 }
 
-function prevPage() {
-  if (currentPage.value > 1) currentPage.value--;
+// Synchronized Webtoon Scrolling
+function onRawScroll() {
+  if (!syncScroll.value || isSyncingScroll || !rawScrollContainer.value || !editScrollContainer.value) return;
+  isSyncingScroll = true;
+  const rawElem = rawScrollContainer.value;
+  const editElem = editScrollContainer.value;
+  const scrollPercentage = rawElem.scrollTop / Math.max(rawElem.scrollHeight - rawElem.clientHeight, 1);
+  editElem.scrollTop = scrollPercentage * (editElem.scrollHeight - editElem.clientHeight);
+  requestAnimationFrame(() => {
+    isSyncingScroll = false;
+  });
 }
 
-function nextPage() {
-  if (currentPage.value < totalPages.value) currentPage.value++;
+function onEditScroll() {
+  if (!syncScroll.value || isSyncingScroll || !rawScrollContainer.value || !editScrollContainer.value) return;
+  isSyncingScroll = true;
+  const rawElem = rawScrollContainer.value;
+  const editElem = editScrollContainer.value;
+  const scrollPercentage = editElem.scrollTop / Math.max(editElem.scrollHeight - editElem.clientHeight, 1);
+  rawElem.scrollTop = scrollPercentage * (rawElem.scrollHeight - rawElem.clientHeight);
+  requestAnimationFrame(() => {
+    isSyncingScroll = false;
+  });
 }
 
-function zoomIn() {
-  if (zoomLevel.value < 250) zoomLevel.value += 15;
-}
-
-function zoomOut() {
-  if (zoomLevel.value > 50) zoomLevel.value -= 15;
-}
-
-function resetZoom() {
-  zoomLevel.value = 100;
-}
-
-function fitWidth() {
-  zoomLevel.value = 100;
-}
-
-function handleKeydown(e: KeyboardEvent) {
-  // Ignore when typing in inputs/textareas
-  if (["INPUT", "TEXTAREA"].includes((e.target as HTMLElement)?.tagName)) return;
-  if (e.key === "ArrowLeft") {
-    e.preventDefault();
-    prevPage();
-  } else if (e.key === "ArrowRight") {
-    e.preventDefault();
-    nextPage();
-  } else if (e.key === "+" || e.key === "=") {
-    zoomIn();
-  } else if (e.key === "-") {
-    zoomOut();
+function scrollToPage(pageNumber: number) {
+  activePage.value = pageNumber;
+  const elem = document.getElementById(`page-slice-${pageNumber}`);
+  if (elem) {
+    elem.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 }
 
@@ -131,13 +114,13 @@ function addPresetComment(tag: string) {
 function addAnnotation() {
   if (!newAnnotationComment.value.trim()) return;
   const existingIndex = pageAnnotations.value.findIndex(
-    (a) => a.page === currentPage.value,
+    (a) => a.page === activePage.value,
   );
   if (existingIndex >= 0) {
     pageAnnotations.value[existingIndex].comment = newAnnotationComment.value.trim();
   } else {
     pageAnnotations.value.push({
-      page: currentPage.value,
+      page: activePage.value,
       comment: newAnnotationComment.value.trim(),
     });
   }
@@ -149,7 +132,6 @@ function removeAnnotation(page: number) {
 }
 
 function handlePasteOrDrop(e: ClipboardEvent | DragEvent) {
-  // Check for image files pasted or dropped
   let files: FileList | null = null;
   if ("clipboardData" in e && e.clipboardData?.files.length) {
     files = e.clipboardData.files;
@@ -162,8 +144,8 @@ function handlePasteOrDrop(e: ClipboardEvent | DragEvent) {
       const reader = new FileReader();
       reader.onload = (event) => {
         if (event.target?.result) {
-          localSubmissionPages.value[currentPage.value] = String(event.target.result);
-          success.value = `Gambar hasil editan Halaman ${currentPage.value} berhasil ditempel.`;
+          localSubmissionPages.value[activePage.value] = String(event.target.result);
+          success.value = `Gambar editan Halaman ${activePage.value} berhasil dipasang.`;
         }
       };
       reader.readAsDataURL(file);
@@ -173,9 +155,9 @@ function handlePasteOrDrop(e: ClipboardEvent | DragEvent) {
 
 function setCustomImageUrl() {
   if (!customImageInput.value.trim()) return;
-  localSubmissionPages.value[currentPage.value] = customImageInput.value.trim();
+  localSubmissionPages.value[activePage.value] = customImageInput.value.trim();
   customImageInput.value = "";
-  success.value = `URL gambar Halaman ${currentPage.value} diterapkan.`;
+  success.value = `URL gambar Halaman ${activePage.value} diterapkan.`;
 }
 
 async function approveAssignment() {
@@ -214,11 +196,6 @@ async function requestRevision() {
 
 onMounted(() => {
   loadQc();
-  window.addEventListener("keydown", handleKeydown);
-});
-
-onUnmounted(() => {
-  window.removeEventListener("keydown", handleKeydown);
 });
 </script>
 
@@ -251,62 +228,60 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <!-- VIEW MODE SELECTOR -->
+        <!-- LAYOUT SWITCHER -->
         <div class="qc-mode-switch">
           <button
-            :class="{ active: viewMode === 'side-by-side' }"
-            title="Berdampingan (RAW kiri, Hasil kanan)"
-            @click="viewMode = 'side-by-side'"
+            :class="{ active: layoutMode === 'webtoon-dual' }"
+            title="Scroll Webtoon Berdampingan (RAW kiri, Edit kanan)"
+            @click="layoutMode = 'webtoon-dual'"
           >
             <i class="pi pi-columns"></i>
-            <span>Berdampingan</span>
+            <span>Webtoon Dual Strip</span>
           </button>
           <button
-            :class="{ active: viewMode === 'slider' }"
-            title="Curtain Slider (Sebelum & Sesudah)"
-            @click="viewMode = 'slider'"
-          >
-            <i class="pi pi-sliders-h"></i>
-            <span>Slider Geser</span>
-          </button>
-          <button
-            :class="{ active: viewMode === 'webtoon' }"
-            title="Webtoon (Scroll Vertikal)"
-            @click="viewMode = 'webtoon'"
+            :class="{ active: layoutMode === 'webtoon-single' }"
+            title="Scroll Webtoon Tunggal"
+            @click="layoutMode = 'webtoon-single'"
           >
             <i class="pi pi-bars"></i>
-            <span>Webtoon</span>
+            <span>Webtoon RAW</span>
           </button>
         </div>
 
-        <!-- ZOOM & NAVIGATION CONTROLS -->
+        <!-- STRIP WIDTH & CONTROLS -->
         <div class="qc-header-right">
-          <div class="qc-page-nav" v-if="viewMode !== 'webtoon'">
-            <Button
-              icon="pi pi-chevron-left"
-              size="small"
-              text
-              :disabled="currentPage <= 1"
-              @click="prevPage"
-            />
-            <span class="page-indicator">
-              <b>{{ currentPage }}</b> / {{ totalPages }}
-            </span>
-            <Button
-              icon="pi pi-chevron-right"
-              size="small"
-              text
-              :disabled="currentPage >= totalPages"
-              @click="nextPage"
-            />
+          <div class="strip-width-controls">
+            <span class="control-label"><i class="pi pi-arrows-h"></i> Lebar:</span>
+            <button
+              :class="{ active: stripWidth === 520 }"
+              @click="stripWidth = 520"
+            >
+              520px
+            </button>
+            <button
+              :class="{ active: stripWidth === 640 }"
+              @click="stripWidth = 640"
+            >
+              640px
+            </button>
+            <button
+              :class="{ active: stripWidth === 800 }"
+              @click="stripWidth = 800"
+            >
+              800px
+            </button>
+            <button
+              :class="{ active: stripWidth === 1000 }"
+              @click="stripWidth = 1000"
+            >
+              Lebar
+            </button>
           </div>
 
-          <div class="qc-zoom-controls">
-            <Button icon="pi pi-minus" size="small" text @click="zoomOut" title="Zoom Out (-)" />
-            <span class="zoom-level">{{ zoomLevel }}%</span>
-            <Button icon="pi pi-plus" size="small" text @click="zoomIn" title="Zoom In (+)" />
-            <Button icon="pi pi-refresh" size="small" text @click="resetZoom" title="Reset Zoom" />
-          </div>
+          <label v-if="layoutMode === 'webtoon-dual'" class="sync-checkbox" title="Kunci scroll agar bergerak bersamaan">
+            <input v-model="syncScroll" type="checkbox" />
+            <span>Sync Scroll</span>
+          </label>
         </div>
       </header>
 
@@ -322,148 +297,157 @@ onUnmounted(() => {
         <button @click="success = ''">×</button>
       </div>
 
-      <!-- MAIN CANVAS AREA -->
-      <main class="qc-main-canvas" :class="viewMode">
+      <!-- MAIN WEBTOON VIEWER CANVAS -->
+      <main class="qc-main-canvas">
         <div v-if="loading" class="qc-loading-state">
-          <i class="pi pi-spin pi-spinner" style="font-size: 2rem"></i>
-          <p>Mengambil halaman RAW dan data tugas...</p>
+          <i class="pi pi-spin pi-spinner" style="font-size: 2.2rem; color: #38bdf8;"></i>
+          <p>Memuat potongan gambar RAW Webtoon...</p>
         </div>
 
         <template v-else-if="data">
-          <!-- 1. SIDE-BY-SIDE MODE -->
-          <div v-if="viewMode === 'side-by-side'" class="qc-side-by-side-container">
-            <!-- Left Pane: RAW Image -->
-            <div class="qc-pane raw-pane">
-              <div class="pane-label">
-                <span class="badge raw">RAW Asli • Hal. {{ currentPage }}</span>
-                <small v-if="data.raw_source">{{ data.raw_source.toUpperCase() }}</small>
+          <!-- 1. DUAL-COLUMN CONTINUOUS WEBTOON SCROLL (DEFAULT) -->
+          <div v-if="layoutMode === 'webtoon-dual'" class="qc-webtoon-dual-layout">
+            <!-- Left Column: Full RAW Webtoon Strip -->
+            <div
+              ref="rawScrollContainer"
+              class="webtoon-column raw-column"
+              @scroll="onRawScroll"
+            >
+              <div class="column-sticky-header">
+                <span class="strip-badge raw">
+                  <i class="pi pi-image"></i> RAW ASLI ({{ data.raw_source?.toUpperCase() || 'Scraper' }})
+                </span>
+                <span class="strip-count">{{ data.raw_pages.length }} Potongan Halaman</span>
               </div>
-              <div class="pane-viewport">
-                <img
-                  v-if="currentRawImage"
-                  :src="currentRawImage"
-                  alt="RAW Page"
-                  :style="{ transform: `scale(${zoomLevel / 100})`, transformOrigin: 'top center' }"
-                  class="qc-image"
-                  loading="lazy"
-                />
-                <div v-else class="image-placeholder">
-                  <i class="pi pi-image"></i>
-                  <p>Halaman RAW {{ currentPage }} tidak ditemukan.</p>
+
+              <div class="webtoon-strip" :style="{ width: `${stripWidth}px` }">
+                <div
+                  v-for="(rawUrl, idx) in data.raw_pages"
+                  :id="`page-slice-${idx + 1}`"
+                  :key="idx"
+                  class="webtoon-slice-wrapper"
+                  :class="{ active: activePage === idx + 1 }"
+                  @click="activePage = idx + 1"
+                >
+                  <div class="slice-marker">
+                    <span>Hal. {{ idx + 1 }}</span>
+                    <button
+                      type="button"
+                      title="Beri catatan pada halaman ini"
+                      @click.stop="activePage = idx + 1"
+                    >
+                      <i class="pi pi-pencil"></i>
+                    </button>
+                  </div>
+                  <img
+                    :src="rawUrl"
+                    :alt="`RAW Hal ${idx + 1}`"
+                    class="webtoon-slice-img"
+                    loading="lazy"
+                  />
                 </div>
               </div>
             </div>
 
-            <!-- Right Pane: Submission Result -->
-            <div class="qc-pane submission-pane">
-              <div class="pane-label">
-                <span class="badge edit">Hasil Staff • Hal. {{ currentPage }}</span>
-                <div class="pane-actions">
+            <!-- Right Column: Staff Edit Webtoon Strip / Drive Embed -->
+            <div
+              ref="editScrollContainer"
+              class="webtoon-column edit-column"
+              @scroll="onEditScroll"
+            >
+              <div class="column-sticky-header">
+                <span class="strip-badge edit">
+                  <i class="pi pi-check-circle"></i> HASIL STAFF ({{ data.assignment.staff_name || 'Staff' }})
+                </span>
+                <div class="header-tools">
                   <a
                     v-if="data.gdrive_link"
                     :href="data.gdrive_link"
                     target="_blank"
                     rel="noopener"
-                    class="gdrive-quick-btn"
+                    class="gdrive-pill-link"
                   >
-                    <i class="pi pi-external-link"></i> Buka GDrive
+                    <i class="pi pi-external-link"></i> Buka Google Drive
                   </a>
                 </div>
               </div>
-              <div class="pane-viewport">
-                <img
-                  v-if="currentSubmissionImage"
-                  :src="currentSubmissionImage"
-                  alt="Hasil Staff"
-                  :style="{ transform: `scale(${zoomLevel / 100})`, transformOrigin: 'top center' }"
-                  class="qc-image"
-                />
-                <!-- Embed or Paste Placeholder when direct image isn't available -->
-                <div v-else-if="data.gdrive_embed_url" class="gdrive-embed-box">
-                  <iframe
-                    :src="data.gdrive_embed_url"
-                    title="Google Drive Submission Folder"
-                    class="gdrive-iframe"
-                    allowfullscreen
-                  ></iframe>
-                </div>
-                <div v-else class="image-drop-placeholder" @drop.prevent="handlePasteOrDrop" @dragover.prevent>
-                  <i class="pi pi-cloud-upload"></i>
-                  <p><b>Tempel (Ctrl+V) / Drag & Drop Gambar Hasil TS di sini</b></p>
-                  <small>Atau masukkan URL gambar langsung untuk Halaman {{ currentPage }}:</small>
-                  <div class="url-input-row">
-                    <InputText v-model="customImageInput" placeholder="https://..." size="small" @keyup.enter="setCustomImageUrl" />
-                    <Button label="Terapkan" size="small" @click="setCustomImageUrl" />
-                  </div>
-                  <a v-if="data.gdrive_link" :href="data.gdrive_link" target="_blank" rel="noopener" class="p-button p-button-sm p-button-secondary">
-                    Buka Link Folder GDrive Staff
-                  </a>
-                </div>
-              </div>
-            </div>
-          </div>
 
-          <!-- 2. SLIDER / CURTAIN MODE -->
-          <div v-else-if="viewMode === 'slider'" class="qc-slider-container">
-            <div class="slider-viewport" :style="{ width: `${zoomLevel}%` }">
-              <!-- Background Image: RAW -->
-              <img
-                v-if="currentRawImage"
-                :src="currentRawImage"
-                alt="RAW Background"
-                class="slider-bg-img"
-              />
-
-              <!-- Foreground Clip: Submission -->
+              <!-- When staff uploaded or local images are available -->
               <div
-                class="slider-fg-clip"
-                :style="{ clipPath: `inset(0 ${100 - sliderPosition}% 0 0)` }"
+                v-if="Object.keys(localSubmissionPages).length > 0 || data.submission_pages.length > 0"
+                class="webtoon-strip"
+                :style="{ width: `${stripWidth}px` }"
               >
-                <img
-                  v-if="currentSubmissionImage"
-                  :src="currentSubmissionImage"
-                  alt="Submission Foreground"
-                  class="slider-fg-img"
-                />
-                <div v-else-if="currentRawImage" class="slider-notice-overlay">
-                  <p>Tempel gambar hasil staff (Ctrl+V) untuk melihat overlay slider.</p>
+                <div
+                  v-for="(_, idx) in Array(totalPages)"
+                  :key="idx"
+                  class="webtoon-slice-wrapper"
+                  :class="{ active: activePage === idx + 1 }"
+                  @click="activePage = idx + 1"
+                >
+                  <div class="slice-marker edit">
+                    <span>Edit Hal. {{ idx + 1 }}</span>
+                  </div>
+                  <img
+                    v-if="localSubmissionPages[idx + 1] || data.submission_pages[idx]"
+                    :src="localSubmissionPages[idx + 1] || data.submission_pages[idx]"
+                    :alt="`Edit Hal ${idx + 1}`"
+                    class="webtoon-slice-img"
+                  />
+                  <div v-else class="slice-empty-placeholder">
+                    <span>Halaman {{ idx + 1 }} belum ditempel</span>
+                  </div>
                 </div>
               </div>
 
-              <!-- Draggable Divider Handle -->
-              <div class="slider-divider" :style="{ left: `${sliderPosition}%` }">
-                <div class="slider-handle">
-                  <i class="pi pi-arrows-h"></i>
+              <!-- Interactive Google Drive Embed View -->
+              <div v-else-if="data.gdrive_embed_url" class="gdrive-full-embed">
+                <div class="embed-top-bar">
+                  <span>Folder Google Drive Pengumpulan Staff:</span>
+                  <a :href="data.gdrive_link" target="_blank" rel="noopener">Tab Baru ↗</a>
                 </div>
+                <iframe
+                  :src="data.gdrive_embed_url"
+                  title="Google Drive Folder Preview"
+                  class="gdrive-iframe-view"
+                  allowfullscreen
+                ></iframe>
               </div>
 
-              <!-- Hidden Range Input for full interactive control -->
-              <input
-                v-model="sliderPosition"
-                type="range"
-                min="0"
-                max="100"
-                class="slider-range-input"
-              />
+              <!-- Drop & Paste Prompt Area -->
+              <div v-else class="webtoon-drop-zone" @drop.prevent="handlePasteOrDrop" @dragover.prevent>
+                <i class="pi pi-cloud-upload"></i>
+                <h3>Tempel / Drag & Drop Gambar Hasil Edit Staff</h3>
+                <p>Kamu bisa langsung tekan <b>Ctrl + V</b> untuk menempelkan gambar hasil TS halaman terpilih (Hal. {{ activePage }}).</p>
+                <div class="quick-url-input">
+                  <InputText v-model="customImageInput" placeholder="Atau paste URL gambar langsung..." size="small" @keyup.enter="setCustomImageUrl" />
+                  <Button label="Terapkan" size="small" @click="setCustomImageUrl" />
+                </div>
+                <a v-if="data.gdrive_link" :href="data.gdrive_link" target="_blank" rel="noopener" class="p-button p-button-sm p-button-secondary">
+                  Buka Folder Google Drive Staff
+                </a>
+              </div>
             </div>
           </div>
 
-          <!-- 3. WEBTOON CONTINUOUS SCROLL MODE -->
-          <div v-else-if="viewMode === 'webtoon'" class="qc-webtoon-container">
-            <div
-              v-for="(rawUrl, idx) in data.raw_pages"
-              :key="idx"
-              class="webtoon-page-row"
-            >
-              <div class="webtoon-page-meta">Halaman {{ idx + 1 }}</div>
-              <div class="webtoon-page-images">
-                <img :src="rawUrl" :alt="`RAW Hal ${idx + 1}`" class="webtoon-img" loading="lazy" />
-                <img
-                  v-if="localSubmissionPages[idx + 1]"
-                  :src="localSubmissionPages[idx + 1]"
-                  :alt="`Edit Hal ${idx + 1}`"
-                  class="webtoon-img"
-                />
+          <!-- 2. SINGLE COLUMN CONTINUOUS WEBTOON SCROLL -->
+          <div v-else-if="layoutMode === 'webtoon-single'" class="qc-webtoon-single-layout">
+            <div class="webtoon-strip" :style="{ width: `${stripWidth}px` }">
+              <div
+                v-for="(rawUrl, idx) in data.raw_pages"
+                :id="`page-slice-${idx + 1}`"
+                :key="idx"
+                class="webtoon-slice-wrapper"
+                :class="{ active: activePage === idx + 1 }"
+                @click="activePage = idx + 1"
+              >
+                <div class="slice-marker">
+                  <span>Halaman {{ idx + 1 }}</span>
+                  <button type="button" @click.stop="activePage = idx + 1">
+                    <i class="pi pi-pencil"></i> Beri Catatan
+                  </button>
+                </div>
+                <img :src="rawUrl" :alt="`RAW Hal ${idx + 1}`" class="webtoon-slice-img" loading="lazy" />
               </div>
             </div>
           </div>
@@ -472,27 +456,29 @@ onUnmounted(() => {
 
       <!-- BOTTOM REVIEW & DECISION PANEL -->
       <footer class="qc-footer">
-        <!-- Annotation Box for current page -->
+        <!-- Annotation Box for selected page -->
         <div class="qc-annotation-box">
           <div class="annotation-head">
-            <span class="page-tag">📝 Catatan Hal. {{ currentPage }}:</span>
+            <span class="page-tag">
+              <i class="pi pi-tag"></i> Catatan Halaman {{ activePage }}:
+            </span>
             <div class="preset-tags">
               <button type="button" @click="addPresetComment('Typo terjemahan')">Typo</button>
               <button type="button" @click="addPresetComment('Font tidak sesuai SOP')">Font Salah</button>
-              <button type="button" @click="addPresetComment('Balon narasi terlewat')">Balon Terlewat</button>
-              <button type="button" @click="addPresetComment('Redraw kurang rapi')">Redraw Kotor</button>
-              <button type="button" @click="addPresetComment('Ukuran font kekecilan')">Font Kekecilan</button>
+              <button type="button" @click="addPresetComment('Balon teks terlewat')">Balon Terlewat</button>
+              <button type="button" @click="addPresetComment('Redraw kotor/bocor')">Redraw Kotor</button>
+              <button type="button" @click="addPresetComment('Ukuran font kekecilan')">Font Kecil</button>
             </div>
           </div>
           <div class="annotation-input-row">
             <InputText
               v-model="newAnnotationComment"
-              placeholder="Contoh: Balon tengah ada typo 'meraka' -> 'mereka'"
+              :placeholder="`Contoh catatan untuk Hal. ${activePage}: Balon tengah typo 'meraka'`"
               size="small"
               @keyup.enter="addAnnotation"
             />
             <Button
-              label="Simpan di Hal Ini"
+              label="Tandai Hal. Ini"
               icon="pi pi-bookmark"
               size="small"
               severity="secondary"
@@ -506,7 +492,7 @@ onUnmounted(() => {
               v-for="note in pageAnnotations"
               :key="note.page"
               class="annotation-pill"
-              @click="currentPage = note.page"
+              @click="scrollToPage(note.page)"
             >
               <b>Hal. {{ note.page }}:</b> {{ note.comment }}
               <button type="button" @click.stop="removeAnnotation(note.page)">×</button>
@@ -518,7 +504,7 @@ onUnmounted(() => {
         <div class="qc-decision-box">
           <textarea
             v-model="generalNotes"
-            placeholder="Catatan umum untuk staff (opsional jika sudah ada catatan per halaman)..."
+            placeholder="Catatan umum tambahan untuk staff di Discord (opsional)..."
             class="qc-general-textarea"
             rows="2"
           ></textarea>
@@ -549,8 +535,8 @@ onUnmounted(() => {
 .qc-modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(4, 7, 18, 0.94);
-  backdrop-filter: blur(12px);
+  background: rgba(4, 7, 18, 0.96);
+  backdrop-filter: blur(14px);
   z-index: 9999;
   display: flex;
   flex-direction: column;
@@ -634,7 +620,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 12px;
+  padding: 6px 14px;
   background: transparent;
   border: none;
   color: #94a3b8;
@@ -650,48 +636,54 @@ onUnmounted(() => {
   color: #fff;
 }
 
-/* HEADER RIGHT */
+/* STRIP WIDTH CONTROLS */
 .qc-header-right {
   display: flex;
   align-items: center;
   gap: 16px;
 }
 
-.qc-page-nav {
+.strip-width-controls {
   display: flex;
   align-items: center;
   gap: 4px;
   background: rgba(0, 0, 0, 0.3);
-  padding: 2px 6px;
+  padding: 3px 6px;
   border-radius: 6px;
   border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-.page-indicator {
-  font-size: 13px;
+.control-label {
+  font-size: 11px;
   color: #94a3b8;
-  min-width: 60px;
-  text-align: center;
+  margin-right: 4px;
 }
 
-.page-indicator b {
+.strip-width-controls button {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.strip-width-controls button.active {
+  background: rgba(255, 255, 255, 0.15);
   color: #fff;
 }
 
-.qc-zoom-controls {
+.sync-checkbox {
   display: flex;
   align-items: center;
-  gap: 2px;
-  background: rgba(0, 0, 0, 0.3);
-  padding: 2px 6px;
-  border-radius: 6px;
-}
-
-.zoom-level {
+  gap: 6px;
   font-size: 12px;
   color: #94a3b8;
-  min-width: 45px;
-  text-align: center;
+  cursor: pointer;
+  user-select: none;
 }
 
 /* NOTICES */
@@ -729,7 +721,7 @@ onUnmounted(() => {
   flex: 1;
   overflow: hidden;
   position: relative;
-  background: #090d16;
+  background: #080c14;
 }
 
 .qc-loading-state {
@@ -738,235 +730,228 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   height: 100%;
-  gap: 12px;
+  gap: 14px;
   color: #94a3b8;
 }
 
-/* SIDE-BY-SIDE */
-.qc-side-by-side-container {
+/* DUAL WEBTOON LAYOUT */
+.qc-webtoon-dual-layout {
   display: grid;
   grid-template-columns: 1fr 1fr;
   height: 100%;
   gap: 2px;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.04);
 }
 
-.qc-pane {
+.webtoon-column {
+  height: 100%;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
-  height: 100%;
-  background: #090d16;
-  overflow: hidden;
+  align-items: center;
+  background: #080c14;
+  scroll-behavior: smooth;
 }
 
-.pane-label {
+.column-sticky-header {
+  position: sticky;
+  top: 0;
+  width: 100%;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 6px 14px;
-  background: rgba(15, 23, 42, 0.6);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  font-size: 12px;
+  padding: 8px 16px;
+  background: rgba(15, 23, 42, 0.9);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  z-index: 20;
 }
 
-.pane-label .badge.raw {
+.strip-badge.raw {
   color: #38bdf8;
   font-weight: 700;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
-.pane-label .badge.edit {
+.strip-badge.edit {
   color: #a78bfa;
   font-weight: 700;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
-.gdrive-quick-btn {
-  color: #38bdf8;
-  text-decoration: none;
+.strip-count {
   font-size: 11px;
+  color: #64748b;
+}
+
+.gdrive-pill-link {
+  color: #38bdf8;
+  font-size: 11px;
+  text-decoration: none;
+  background: rgba(56, 189, 248, 0.1);
+  padding: 4px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(56, 189, 248, 0.2);
   display: flex;
   align-items: center;
   gap: 4px;
 }
 
-.pane-viewport {
-  flex: 1;
-  overflow: auto;
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  padding: 16px;
-}
-
-.qc-image {
-  max-width: 100%;
-  height: auto;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
-  border-radius: 4px;
-  transition: transform 0.1s ease-out;
-}
-
-.image-placeholder {
+/* WEBTOON STRIP */
+.webtoon-strip {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  height: 100%;
-  color: #64748b;
-  gap: 8px;
+  padding: 20px 0;
 }
 
-.gdrive-embed-box {
+.webtoon-slice-wrapper {
+  position: relative;
   width: 100%;
-  height: 100%;
+  display: block;
+  line-height: 0;
+  cursor: pointer;
+  transition: all 0.15s ease;
 }
 
-.gdrive-iframe {
-  width: 100%;
-  height: 100%;
+.webtoon-slice-wrapper.active {
+  outline: 2px solid #38bdf8;
+  box-shadow: 0 0 20px rgba(56, 189, 248, 0.3);
+}
+
+.slice-marker {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  background: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(6px);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  z-index: 10;
+  opacity: 0.8;
+  transition: opacity 0.2s;
+}
+
+.slice-marker.edit {
+  color: #a78bfa;
+  border-color: rgba(167, 139, 250, 0.3);
+}
+
+.webtoon-slice-wrapper:hover .slice-marker {
+  opacity: 1;
+}
+
+.slice-marker button {
+  background: transparent;
   border: none;
-  border-radius: 6px;
+  color: inherit;
+  cursor: pointer;
 }
 
-.image-drop-placeholder {
+.webtoon-slice-img {
+  width: 100%;
+  display: block;
+  height: auto;
+}
+
+.slice-empty-placeholder {
+  width: 100%;
+  height: 300px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px dashed rgba(255, 255, 255, 0.1);
+  color: #64748b;
+  font-size: 12px;
+}
+
+/* GDRIVE EMBED IN WEBTOON COLUMN */
+.gdrive-full-embed {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.embed-top-bar {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 14px;
+  background: rgba(0, 0, 0, 0.3);
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.gdrive-iframe-view {
+  flex: 1;
+  width: 100%;
+  border: none;
+}
+
+/* DROP ZONE */
+.webtoon-drop-zone {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   text-align: center;
-  padding: 24px;
+  margin: auto;
+  padding: 30px;
+  max-width: 480px;
   background: rgba(255, 255, 255, 0.02);
   border: 2px dashed rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
-  gap: 10px;
+  border-radius: 12px;
+  gap: 12px;
   color: #94a3b8;
-  max-width: 440px;
-  margin: auto;
 }
 
-.url-input-row {
+.webtoon-drop-zone i {
+  font-size: 2.5rem;
+  color: #38bdf8;
+}
+
+.webtoon-drop-zone h3 {
+  font-size: 16px;
+  color: #fff;
+  margin: 0;
+}
+
+.webtoon-drop-zone p {
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.quick-url-input {
   display: flex;
   gap: 6px;
   width: 100%;
 }
 
-/* SLIDER / CURTAIN */
-.qc-slider-container {
-  height: 100%;
-  overflow: auto;
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  padding: 16px;
-}
-
-.slider-viewport {
-  position: relative;
-  max-width: 900px;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.9);
-  user-select: none;
-}
-
-.slider-bg-img,
-.slider-fg-img {
-  width: 100%;
-  display: block;
-}
-
-.slider-fg-clip {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-}
-
-.slider-notice-overlay {
-  position: absolute;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.7);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  text-align: center;
-  padding: 20px;
-}
-
-.slider-divider {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: #38bdf8;
-  pointer-events: none;
-  box-shadow: 0 0 10px rgba(56, 189, 248, 0.8);
-}
-
-.slider-handle {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 32px;
-  height: 32px;
-  background: #38bdf8;
-  color: #040712;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-}
-
-.slider-range-input {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0;
-  cursor: ew-resize;
-  z-index: 10;
-  margin: 0;
-}
-
-/* WEBTOON CONTINUOUS */
-.qc-webtoon-container {
+/* SINGLE WEBTOON LAYOUT */
+.qc-webtoon-single-layout {
   height: 100%;
   overflow-y: auto;
-  padding: 20px;
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 24px;
-}
-
-.webtoon-page-row {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  max-width: 1200px;
-  width: 100%;
-}
-
-.webtoon-page-meta {
-  font-size: 12px;
-  color: #94a3b8;
-  font-weight: 600;
-}
-
-.webtoon-page-images {
-  display: flex;
-  gap: 12px;
   justify-content: center;
-  width: 100%;
+  background: #080c14;
 }
 
-.webtoon-img {
-  max-width: 580px;
-  width: 100%;
-  border-radius: 4px;
-}
-
-/* FOOTER / REVIEW PANEL */
+/* FOOTER / ANNOTATION & DECISION */
 .qc-footer {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -993,6 +978,9 @@ onUnmounted(() => {
   font-size: 12px;
   font-weight: 700;
   color: #38bdf8;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .preset-tags {
@@ -1081,7 +1069,7 @@ onUnmounted(() => {
 }
 
 @media (max-width: 900px) {
-  .qc-side-by-side-container {
+  .qc-webtoon-dual-layout {
     grid-template-columns: 1fr;
   }
   .qc-footer {
