@@ -883,7 +883,7 @@ async def download_raw_command(interaction: discord.Interaction, manga_id: str, 
 async def scout_project_command(
     interaction: discord.Interaction,
     judul: str,
-    sumber: Literal["all", "asura", "omega", "doujiva", "evascan", "thunder", "qimanga", "demon"] = "all",
+    sumber: Literal["all", "asura", "omega", "doujiva", "evascan", "thunder", "vortex", "qimanga", "demon"] = "all",
 ):
     if not is_admin(interaction.user):
         return await interaction.response.send_message(
@@ -898,29 +898,6 @@ async def scout_project_command(
         return await interaction.followup.send(
             "Project Scout gagal menghubungi salah satu layanan. Coba lagi melalui dashboard.", ephemeral=True,
         )
-    labels = {
-        "untranslated": "Belum ditemukan di Indonesia", "lagging": "Versi Indonesia tertinggal",
-        "available": "Sudah tersedia di Indonesia", "ambiguous": "Perlu diperiksa manual",
-        "ryukomik_project": "Sudah menjadi project Ryukomik", "candidate": "Kandidat",
-        "adopted": "Sudah diambil", "ignored": "Diabaikan",
-    }
-    embed = discord.Embed(
-        title=f"Project Scout • {result['canonical_title']}",
-        description=labels.get(result["scout_status"], result["scout_status"]),
-        color=discord.Color.green() if result["scout_status"] == "untranslated" else discord.Color.gold(),
-    )
-    embed.add_field(name="Chapter RAW", value=str(result.get("raw_latest_chapter") or "—"), inline=True)
-    embed.add_field(name="Chapter Indonesia", value=str(result.get("indonesia_latest_chapter") or "—"), inline=True)
-    embed.add_field(name="Confidence", value=f"{result.get('confidence', 0)}%", inline=True)
-    matches = [
-        source for source in result.get("sources", [])
-        if source.get("source_group") != "raw" and int(source.get("match_score") or 0) >= 55
-    ][:6]
-    embed.add_field(
-        name="Hasil Pembanding",
-        value="\n".join(
-            f"• **{item['source'].title()}** — {item['title']} ({item['match_score']}%)" for item in matches
-        ) or "Tidak ditemukan hasil yang cukup mirip.",
     embed = scout_service.build_scout_embed(result)
     view = ScoutResultView(result, original_user_id=interaction.user.id)
     await interaction.followup.send(embed=embed, view=view, ephemeral=True)
