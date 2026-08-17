@@ -1186,17 +1186,7 @@ async def giveaway_setup_command(interaction: discord.Interaction):
         await interaction.followup.send("❌ Gagal membuat/menyiapkan channel giveaway.")
 
 
-@giveaway_group.command(name="start", description="Mulai giveaway baru untuk member Ryukomik")
-@discord.app_commands.describe(
-    prize="Nama hadiah (contoh: Ryukomik Premium 7 Hari, 5x Premium 30 Hari, atau ketik hadiah custom)",
-    duration="Durasi giveaway dalam Bahasa Indonesia (contoh: 2 jam, 30 menit, 1 hari, 7 hari, 1 minggu)",
-    winners="Jumlah pemenang / kuota hadiah (contoh: 1, 3, 5, 10)",
-    mention_everyone="Tag @everyone agar semua member server mendapat notifikasi (default: True)",
-    channel="Channel tempat giveaway dikirim (opsional, default: #・giveaway)",
-    role_requirement="Role yang wajib dimiliki untuk bisa ikut (opsional)",
-    description="Deskripsi / ketentuan tambahan giveaway (opsional)",
-)
-async def giveaway_start_command(
+async def _start_giveaway_logic(
     interaction: discord.Interaction,
     prize: str,
     duration: str,
@@ -1206,7 +1196,7 @@ async def giveaway_start_command(
     role_requirement: discord.Role | None = None,
     description: str | None = None,
 ):
-    """Start a new giveaway in the specified or default channel."""
+    """Core logic for starting a new giveaway."""
     if not is_admin(interaction.user):
         return await interaction.response.send_message("Hanya administrator yang dapat membuat giveaway.", ephemeral=True)
 
@@ -1280,6 +1270,39 @@ async def giveaway_start_command(
     await interaction.followup.send(
         f"✅ Giveaway **{prize_title}** ({durasi_id}, `{winners}` pemenang) berhasil dimulai di {target_channel.mention} (ID: #{giveaway_id})!",
         ephemeral=True,
+    )
+
+
+@giveaway_group.command(name="start", description="Mulai giveaway baru untuk member Ryukomik")
+@discord.app_commands.describe(
+    prize="Nama hadiah (contoh: Ryukomik Premium 7 Hari, 5x Premium 30 Hari, atau ketik hadiah custom)",
+    duration="Durasi giveaway dalam Bahasa Indonesia (contoh: 2 jam, 30 menit, 1 hari, 7 hari, 1 minggu)",
+    winners="Jumlah pemenang / kuota hadiah (contoh: 1, 3, 5, 10)",
+    mention_everyone="Tag @everyone agar semua member server mendapat notifikasi (default: True)",
+    channel="Channel tempat giveaway dikirim (opsional, default: #・giveaway)",
+    role_requirement="Role yang wajib dimiliki untuk bisa ikut (opsional)",
+    description="Deskripsi / ketentuan tambahan giveaway (opsional)",
+)
+async def giveaway_start_command(
+    interaction: discord.Interaction,
+    prize: str,
+    duration: str,
+    winners: int = 1,
+    mention_everyone: bool = True,
+    channel: discord.TextChannel | None = None,
+    role_requirement: discord.Role | None = None,
+    description: str | None = None,
+):
+    """Start a new giveaway in the specified or default channel."""
+    await _start_giveaway_logic(
+        interaction=interaction,
+        prize=prize,
+        duration=duration,
+        winners=winners,
+        mention_everyone=mention_everyone,
+        channel=channel,
+        role_requirement=role_requirement,
+        description=description,
     )
 
 
@@ -1357,7 +1380,7 @@ async def giveaway_quick_command(
     role_requirement: discord.Role | None = None,
 ):
     """Launch a preset giveaway with streamlined options."""
-    await giveaway_start_command(
+    await _start_giveaway_logic(
         interaction=interaction,
         prize=prize,
         duration=duration,
@@ -1502,18 +1525,27 @@ bot.tree.add_command(giveaway_group)
 
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
-    """Handle slash command errors."""
-    print(f"Slash command error: {error}")
-    message = "Terjadi error saat menjalankan slash command!"
+    """Handle slash command errors with detailed logging."""
+    import traceback
+    traceback.print_exception(type(error), error, error.__traceback__)
+    original = getattr(error, "original", error)
+    err_msg = str(original) if original else str(error)
+    print(f"[ERROR] Slash command error in {interaction.command}: {err_msg}", flush=True)
+
+    if isinstance(error, discord.app_commands.CheckFailure):
+        user_msg = "❌ Kamu tidak memiliki izin untuk menggunakan command ini!"
+    else:
+        user_msg = f"❌ Terjadi error: `{err_msg[:150]}`"
+
     try:
         if interaction.response.is_done():
-            await interaction.followup.send(message, ephemeral=False)
+            await interaction.followup.send(user_msg, ephemeral=True)
         else:
-            await interaction.response.send_message(message, ephemeral=False)
+            await interaction.response.send_message(user_msg, ephemeral=True)
     except discord.NotFound:
-        # The interaction token already expired; log the original failure
-        # without raising a second Unknown Interaction traceback.
-        print(f"[WARN] Could not report expired interaction {interaction.id}")
+        print(f"[WARN] Could not report expired interaction {interaction.id}", flush=True)
+    except Exception as exc:
+        print(f"[WARN] Failed to send error feedback: {exc}", flush=True)
 
 
 # ==================== RUN BOT ====================
