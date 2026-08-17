@@ -23,6 +23,7 @@ from raw_downloader import (
     qimanga_downloader,
     demon_downloader,
     thunder_downloader,
+    vortex_downloader,
 )
 from raw_downloader.resolver import normalize_title
 
@@ -38,6 +39,7 @@ RAW_DOWNLOADERS = {
     "doujiva": doujiva_downloader,
     "evascan": evascan_downloader,
     "thunder": thunder_downloader,
+    "vortex": vortex_downloader,
     "qimanga": qimanga_downloader,
     "demon": demon_downloader,
 }

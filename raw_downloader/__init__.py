@@ -5,6 +5,7 @@ from .evascan import EvaScanDownloader, search_evascan
 from .thunder import ThunderDownloader, search_thunder
 from .qimanga import QiMangaDownloader
 from .demon import DemonDownloader
+from .vortex import VortexDownloader, search_vortex
 
 asura_downloader = AsuraDownloader()
 doujiva_downloader = DoujivaDownloader()
@@ -13,6 +14,7 @@ evascan_downloader = EvaScanDownloader()
 thunder_downloader = ThunderDownloader()
 qimanga_downloader = QiMangaDownloader()
 demon_downloader = DemonDownloader()
+vortex_downloader = VortexDownloader()
 
 
 def get_downloader(source: str = "asura"):
@@ -25,6 +27,8 @@ def get_downloader(source: str = "asura"):
         return evascan_downloader
     if source.casefold() in ("thunder", "thunderscan", "thunderscans"):
         return thunder_downloader
+    if source.casefold() in ("vortex", "vortexscan", "vortexscans"):
+        return vortex_downloader
     if source.casefold() in ("qimanga", "qi"):
         return qimanga_downloader
     if source.casefold() in ("demon", "demonicscans"):
@@ -40,15 +44,22 @@ __all__ = [
     "OmegaDownloader",
     "EvaScanDownloader",
     "ThunderDownloader",
+    "VortexDownloader",
+    "QiMangaDownloader",
+    "DemonDownloader",
     "search_asura",
     "search_doujiva",
     "search_omega",
     "search_evascan",
     "search_thunder",
+    "search_vortex",
     "get_downloader",
     "asura_downloader",
     "doujiva_downloader",
     "omega_downloader",
     "evascan_downloader",
     "thunder_downloader",
+    "vortex_downloader",
+    "qimanga_downloader",
+    "demon_downloader",
 ]
