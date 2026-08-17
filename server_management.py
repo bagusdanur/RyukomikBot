@@ -112,14 +112,19 @@ async def ensure_project_scout_channel(guild: discord.Guild) -> discord.TextChan
 
 
 async def ensure_giveaway_channel(guild: discord.Guild) -> discord.TextChannel | None:
-    """Create or configure the public giveaway channel with secure read-only permissions for everyone."""
+    """Create or configure the public giveaway channel below #ambil-role with secure read-only permissions."""
     channel = _find_text_channel(guild, channel_id=GIVEAWAY_CHANNEL_ID, names=GIVEAWAY_NAMES)
+    role_channel = _find_text_channel(guild, names=ROLE_NAMES)
+    target_category = role_channel.category if role_channel and role_channel.category else (
+        guild.get_channel(PROJECT_CATEGORY_ID) if PROJECT_CATEGORY_ID else None
+    )
+    if not isinstance(target_category, discord.CategoryChannel):
+        target_category = None
+    target_position = (role_channel.position + 1) if role_channel else None
+
     admin_role = guild.get_role(ROLE_ADMIN_ID)
     me = guild.me
     if channel is None:
-        category = guild.get_channel(PROJECT_CATEGORY_ID) if PROJECT_CATEGORY_ID else None
-        if not isinstance(category, discord.CategoryChannel):
-            category = None
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(
                 view_channel=True,
@@ -151,10 +156,11 @@ async def ensure_giveaway_channel(guild: discord.Guild) -> discord.TextChannel |
             )
         channel = await guild.create_text_channel(
             GIVEAWAY_CHANNEL_NAME,
-            category=category,
+            category=target_category,
+            position=target_position if target_position is not None else 0,
             overwrites=overwrites,
             topic="🎉 Giveaway Resmi Ryukomik! Ikuti event & menangkan akses Premium gratis.",
-            reason="Membuat channel giveaway otomatis lewat Discord API",
+            reason="Membuat channel giveaway otomatis di bawah channel ambil-role",
         )
     else:
         changes = {}
@@ -163,9 +169,13 @@ async def ensure_giveaway_channel(guild: discord.Guild) -> discord.TextChannel |
         expected_topic = "🎉 Giveaway Resmi Ryukomik! Ikuti event & menangkan akses Premium gratis."
         if not channel.topic:
             changes["topic"] = expected_topic
+        if target_category and channel.category_id != target_category.id:
+            changes["category"] = target_category
+        if target_position is not None and channel.position != target_position:
+            changes["position"] = target_position
         if changes:
             try:
-                await channel.edit(reason="Menyesuaikan nama/topic channel giveaway", **changes)
+                await channel.edit(reason="Menempatkan channel giveaway di bawah channel ambil-role", **changes)
             except discord.HTTPException:
                 pass
 
