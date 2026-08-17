@@ -257,6 +257,69 @@ export type ManualBonus = {
   created_at: string;
 };
 
+export type ProjectTrackerActiveTask = {
+  id: number;
+  chapter: string;
+  role: string;
+  staff_name: string;
+  status: string;
+};
+
+export type ProjectTrackerItem = {
+  id: number | null;
+  title: string;
+  slug: string;
+  cover_url: string | null;
+  publication_status: string;
+  type_genre: string;
+  info: string;
+  project_chapter: number | null;
+  latest_assigned_chapter: number | null;
+  effective_chapter: number;
+  raw_source: string | null;
+  raw_source_id: string | null;
+  raw_chapter: number | null;
+  chapter_gap: number | null;
+  missing_chapters: string[];
+  next_task_chapter: string;
+  active_tasks_count: number;
+  active_tasks: ProjectTrackerActiveTask[];
+  status: "raw_available" | "in_progress" | "up_to_date" | "unlinked";
+  last_checked_at: string | null;
+  project_url: string;
+};
+
+export type ProjectTrackerSummary = {
+  total_projects: number;
+  raw_available_count: number;
+  in_progress_count: number;
+  up_to_date_count: number;
+  unlinked_count: number;
+};
+
+export type ProjectTrackerResponse = {
+  items: ProjectTrackerItem[];
+  summary: ProjectTrackerSummary;
+  page: number;
+  page_size: number;
+  total: number;
+  total_pages: number;
+};
+
+export type ProjectRawChapter = {
+  id: string;
+  title: string;
+  date?: string;
+  manga_id?: string;
+  source?: string;
+};
+
+export type ProjectRawChaptersResponse = {
+  title: string;
+  source: string;
+  source_id: string;
+  chapters: ProjectRawChapter[];
+};
 
 let csrfToken = "";
 export function getCsrfToken(): string { return csrfToken; }
@@ -452,6 +515,49 @@ const liveApi = {
     ),
   downloadSubmission: (id: number) =>
     request<{ download_url: string }>(`/api/submissions/${id}/download`),
+  projects: (search = "", status = "all", source = "all", page = 1, pageSize = 30) => {
+    const params = new URLSearchParams();
+    if (search) params.set("search", search);
+    if (status && status !== "all") params.set("status", status);
+    if (source && source !== "all") params.set("source", source);
+    params.set("page", String(page));
+    params.set("page_size", String(pageSize));
+    return request<ProjectTrackerResponse>(`/api/projects?${params.toString()}`);
+  },
+  syncProjects: () =>
+    request<{ ok: boolean; updates_count: number; message: string; updates: any[] }>(
+      "/api/projects/sync",
+      { method: "POST" },
+    ),
+  syncSingleProject: (slugOrTitle: string) =>
+    request<{
+      ok: boolean;
+      title: string;
+      source: string;
+      source_id: string;
+      project_chapter: number;
+      raw_chapter: number;
+      chapter_gap: number;
+      total_raw_chapters: number;
+      message: string;
+    }>(`/api/projects/${encodeURIComponent(slugOrTitle)}/sync`, { method: "POST" }),
+  setProjectRawSource: (slugOrTitle: string, payload: { source: string; source_id: string }) =>
+    request<{
+      ok: boolean;
+      title: string;
+      source: string;
+      source_id: string;
+      raw_chapter: number;
+      total_chapters: number;
+      message: string;
+    }>(`/api/projects/${encodeURIComponent(slugOrTitle)}/set-raw`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  projectRawChapters: (slugOrTitle: string) =>
+    request<ProjectRawChaptersResponse>(
+      `/api/projects/${encodeURIComponent(slugOrTitle)}/raw-chapters`,
+    ),
   audit: () =>
     request<Array<Record<string, string | number | null>>>("/api/audit"),
   auditPage: (page = 1, pageSize = 20) =>
@@ -755,6 +861,98 @@ const demoApi = {
 
   submissions: async () => [],
   downloadSubmission: async () => ({ download_url: "#" }),
+  projects: async (search = "", status = "all", source = "all", page = 1, pageSize = 30): Promise<ProjectTrackerResponse> => ({
+    items: [
+      {
+        id: 1,
+        title: "Get Out!",
+        slug: "get-out",
+        cover_url: "https://storage.ryukomik.my.id/covers/get-out/cover.jpg",
+        publication_status: "ongoing",
+        type_genre: "18+",
+        info: "2 jam lalu",
+        project_chapter: 4,
+        latest_assigned_chapter: 4,
+        effective_chapter: 4,
+        raw_source: "omega",
+        raw_source_id: "get-out",
+        raw_chapter: 6,
+        chapter_gap: 2,
+        missing_chapters: ["5", "6"],
+        next_task_chapter: "5",
+        active_tasks_count: 0,
+        active_tasks: [],
+        status: "raw_available",
+        last_checked_at: new Date().toISOString(),
+        project_url: "https://ryukomik.my.id/komik/project/get-out",
+      },
+      {
+        id: 2,
+        title: "Secret Class",
+        slug: "secret-class",
+        cover_url: null,
+        publication_status: "ongoing",
+        type_genre: "Manhwa",
+        info: "Kemarin",
+        project_chapter: 210,
+        latest_assigned_chapter: 211,
+        effective_chapter: 211,
+        raw_source: "asura",
+        raw_source_id: "secret-class",
+        raw_chapter: 211,
+        chapter_gap: 0,
+        missing_chapters: [],
+        next_task_chapter: "212",
+        active_tasks_count: 1,
+        active_tasks: [{ id: 101, chapter: "211", role: "TL", staff_name: "Aira", status: "claimed" }],
+        status: "in_progress",
+        last_checked_at: new Date().toISOString(),
+        project_url: "https://ryukomik.my.id/komik/project/secret-class",
+      },
+    ],
+    summary: {
+      total_projects: 2,
+      raw_available_count: 1,
+      in_progress_count: 1,
+      up_to_date_count: 0,
+      unlinked_count: 0,
+    },
+    page,
+    page_size: pageSize,
+    total: 2,
+    total_pages: 1,
+  }),
+  syncProjects: async () => ({ ok: true, updates_count: 1, message: "Sinkronisasi demo selesai.", updates: [] }),
+  syncSingleProject: async (slug: string) => ({
+    ok: true,
+    title: slug,
+    source: "omega",
+    source_id: slug,
+    project_chapter: 4,
+    raw_chapter: 6,
+    chapter_gap: 2,
+    total_raw_chapters: 6,
+    message: "RAW berhasil diperbarui (Demo).",
+  }),
+  setProjectRawSource: async (slug: string, payload: any) => ({
+    ok: true,
+    title: slug,
+    source: payload.source,
+    source_id: payload.source_id,
+    raw_chapter: 6,
+    total_chapters: 6,
+    message: "Sumber RAW berhasil dihubungkan.",
+  }),
+  projectRawChapters: async (slug: string) => ({
+    title: slug,
+    source: "omega",
+    source_id: slug,
+    chapters: [
+      { id: "chapter-6", title: "Chapter 6", date: "11 jam lalu" },
+      { id: "chapter-5", title: "Chapter 5", date: "1 hari lalu" },
+      { id: "chapter-4", title: "Chapter 4", date: "2 hari lalu" },
+    ],
+  }),
   audit: async () => [
     {
       id: 1,

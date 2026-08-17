@@ -78,9 +78,11 @@ from dashboard.backend.routers.staff import router as staff_router
 from dashboard.backend.routers.payrate import router as payrate_router
 from dashboard.backend.routers.operations import router as operations_router
 from dashboard.backend.routers.notifications import router as notifications_router
+from dashboard.backend.routers.projects import router as projects_router
 
 
 async def setup_dashboard_tables():
+    await staff_db.setup_database()
     await pair_service.setup_pair_tables()
     await scout_service.setup_scout_tables()
     connection = await dashboard_db()
@@ -325,6 +327,7 @@ app.include_router(staff_router)
 app.include_router(payrate_router)
 app.include_router(operations_router)
 app.include_router(notifications_router)
+app.include_router(projects_router)
 
 _rate_windows: dict[str, deque] = defaultdict(deque)
 MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}

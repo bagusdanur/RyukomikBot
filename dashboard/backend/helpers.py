@@ -21,34 +21,42 @@ from dashboard.backend.deps import (
 async def discord_api(method: str, path: str, payload=None):
     if not TOKEN:
         return None
-    async with aiohttp.ClientSession() as session:
-        async with session.request(
-            method,
-            f"https://discord.com/api/v10{path}",
-            headers={"Authorization": f"Bot {TOKEN}", "Content-Type": "application/json"},
-            json=payload,
-            timeout=aiohttp.ClientTimeout(total=20),
-        ) as response:
-            if 200 <= response.status < 300:
-                if response.status == 204:
-                    return {}
-                try:
-                    return await response.json()
-                except (aiohttp.ContentTypeError, json.JSONDecodeError):
-                    return {}
-            return None
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.request(
+                method,
+                f"https://discord.com/api/v10{path}",
+                headers={"Authorization": f"Bot {TOKEN}", "Content-Type": "application/json"},
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=20),
+            ) as response:
+                if 200 <= response.status < 300:
+                    if response.status == 204:
+                        return {}
+                    try:
+                        return await response.json()
+                    except (aiohttp.ContentTypeError, json.JSONDecodeError):
+                        return {}
+                return None
+    except Exception as error:
+        print(f"[DISCORD API] {method} {path} error: {error}", flush=True)
+        return None
 
 
 async def fetch_member(user_id: int):
     if not TOKEN:
         return None
-    async with aiohttp.ClientSession() as session:
-        async with session.get(
-            f"https://discord.com/api/v10/guilds/{GUILD_ID}/members/{user_id}",
-            headers={"Authorization": f"Bot {TOKEN}"},
-            timeout=aiohttp.ClientTimeout(total=15),
-        ) as response:
-            return await response.json() if response.status == 200 else None
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"https://discord.com/api/v10/guilds/{GUILD_ID}/members/{user_id}",
+                headers={"Authorization": f"Bot {TOKEN}"},
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as response:
+                return await response.json() if response.status == 200 else None
+    except Exception as error:
+        print(f"[DISCORD API] fetch_member {user_id} error: {error}", flush=True)
+        return None
 
 
 def discord_avatar(member: dict) -> str | None:

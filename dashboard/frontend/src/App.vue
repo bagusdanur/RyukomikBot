@@ -26,7 +26,8 @@ import {
 } from "./api";
 
 type Page =
-  "overview" | "actions" | "tasks" | "staff" | "payrates" | "recruitment" | "scout" | "deadlines" | "recap" | "payouts" | "bonuses" | "operations" | "audit" | "converter" | "ocr" | "notifications" | "workload";
+  "overview" | "actions" | "projects" | "tasks" | "staff" | "payrates" | "recruitment" | "scout" | "deadlines" | "recap" | "payouts" | "bonuses" | "operations" | "audit" | "converter" | "ocr" | "notifications" | "workload";
+const ProjectsPage = defineAsyncComponent(() => import("./pages/ProjectsPage.vue"));
 const OperationsPage = defineAsyncComponent(() => import("./pages/OperationsPage.vue"));
 const ActionCenterPage = defineAsyncComponent(() => import("./pages/ActionCenterPage.vue"));
 const ScoutPage = defineAsyncComponent(() => import("./pages/ScoutPage.vue"));
@@ -101,6 +102,7 @@ const uploadTask = ref<Assignment | null>(null),
 
 const navItems = computed(() => [
   { id: "overview", label: "Ringkasan", icon: "pi pi-home" },
+  { id: "projects", label: "Daftar Project", icon: "pi pi-book" },
   ...(user.value?.role === "admin"
     ? [{ id: "actions", label: "Perlu Tindakan", icon: "pi pi-bell" }]
     : []),
@@ -126,8 +128,8 @@ const navItems = computed(() => [
 ]);
 const mobilePrimaryIds = computed(() =>
   user.value?.role === "admin"
-    ? ["overview", "actions", "tasks", "recap"]
-    : ["overview", "tasks", "deadlines"],
+    ? ["overview", "projects", "tasks", "recap"]
+    : ["overview", "projects", "tasks", "deadlines"],
 );
 const mobilePrimaryItems = computed(() =>
   navItems.value.filter((item) => mobilePrimaryIds.value.includes(item.id)),
@@ -513,10 +515,15 @@ async function analyzeRawRate() {
     rawRateAnalyzing.value = false;
   }
 }
-async function openTask(staffId?: string) {
+async function openTask(staffId?: string, prefill?: { manga?: string; chapter?: string; role?: string }) {
   editingTask.value = null;
   rawRateAnalysis.value = null;
   error.value = "";
+  if (prefill) {
+    if (prefill.manga) task.value.manga = prefill.manga;
+    if (prefill.chapter) task.value.chapter = prefill.chapter;
+    if (prefill.role) task.value.role = prefill.role;
+  }
   if (!staff.value.length) {
     loading.value = true;
     try {
@@ -535,6 +542,12 @@ async function openTask(staffId?: string) {
     return;
   }
   showTask.value = true;
+  if (prefill?.manga && prefill?.chapter) {
+    analyzeRawRate();
+  }
+}
+function handleCreateTaskFromProject(payload: { manga: string; chapter: string }) {
+  openTask(undefined, { manga: payload.manga, chapter: payload.chapter });
 }
 function editTask(item: Assignment) {
   editingTask.value = item;
@@ -962,10 +975,10 @@ onMounted(async () => {
         ><section class="mobile-quick-section">
           <div class="mobile-section-label"><span>Akses Cepat</span><small>Tindakan yang paling sering digunakan</small></div>
           <div class="mobile-quick-grid" v-if="user.role === 'admin'">
-            <button @click="openTask()"><i class="pi pi-plus-circle"></i><span><b>Buat Tugas</b><small>Kirim pekerjaan baru</small></span></button>
-            <button @click="navigateMobile('actions')"><i class="pi pi-bell"></i><span><b>Review</b><small>{{ actionItems.length }} perlu tindakan</small></span></button>
-            <button @click="navigateMobile('payouts')"><i class="pi pi-money-bill"></i><span><b>Bayar Gaji</b><small>Proses permintaan</small></span></button>
-            <button @click="navigateMobile('recruitment')"><i class="pi pi-user-plus"></i><span><b>Rekrutmen</b><small>Atur pelamar</small></span></button>
+            <button @click="navigateMobile('projects')"><i class="pi pi-book"></i><span><b>Daftar Project</b><small>Tracker RAW</small></span></button>
+            <button @click="openTask()"><i class="pi pi-plus-circle"></i><span><b>Buat Tugas</b><small>Kirim pekerjaan</small></span></button>
+            <button @click="navigateMobile('actions')"><i class="pi pi-bell"></i><span><b>Review</b><small>{{ actionItems.length }} tindakan</small></span></button>
+            <button @click="navigateMobile('payouts')"><i class="pi pi-money-bill"></i><span><b>Bayar Gaji</b><small>Proses transfer</small></span></button>
           </div>
           <div class="mobile-quick-grid" v-else>
             <button @click="navigateMobile('tasks')"><i class="pi pi-list-check"></i><span><b>Tugas Saya</b><small>Lihat progres kerja</small></span></button>
@@ -1049,7 +1062,10 @@ onMounted(async () => {
               <span>Progres Proyek</span>
               <small>Ringkasan chapter berdasarkan status tugas terbaru.</small>
             </div>
-            <Button label="Lihat semua tugas" text icon="pi pi-arrow-right" @click="page = 'tasks'" />
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <Button label="Daftar Project & RAW" icon="pi pi-book" severity="secondary" size="small" @click="page = 'projects'" />
+              <Button label="Lihat semua tugas" text icon="pi pi-arrow-right" @click="page = 'tasks'" />
+            </div>
           </div>
           <div v-if="overview.project_progress.length" class="project-progress-list">
             <article v-for="project in overview.project_progress" :key="project.manga">
@@ -1073,6 +1089,10 @@ onMounted(async () => {
       </template>
       <Suspense v-if="page === 'actions'">
         <ActionCenterPage :items="actionItems" :loading="loading" @reload="loadPage" @handle="handleAction" />
+        <template #fallback><div class="operations-skeleton"><span v-for="n in 4" :key="n"></span></div></template>
+      </Suspense>
+      <Suspense v-if="page === 'projects'">
+        <ProjectsPage @create-task="handleCreateTaskFromProject" />
         <template #fallback><div class="operations-skeleton"><span v-for="n in 4" :key="n"></span></div></template>
       </Suspense>
       <Suspense v-if="page === 'operations'">
