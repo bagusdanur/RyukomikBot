@@ -50,8 +50,19 @@ import pair_workflow as pair_service
 import project_scout as scout_service
 from database import DB_PATH, setup_database
 from chapter_utils import chapter_display, parse_chapters
-from invoice_pdf import render_paid_invoice
-from raw_downloader import asura_downloader, doujiva_downloader, omega_downloader, evascan_downloader, thunder_downloader
+from raw_downloader import (
+    asura_downloader,
+    doujiva_downloader,
+    omega_downloader,
+    evascan_downloader,
+    thunder_downloader,
+    vortex_downloader,
+    qimanga_downloader,
+    demon_downloader,
+    kagane_downloader,
+    mgeko_downloader,
+)
+from raw_downloader.resolver import title_score
 from raw_rate_analysis import suggest_assignment_rate
 
 # Shared deps (extracted to reduce app.py size)
@@ -494,6 +505,7 @@ class RawRateAnalysisRequest(BaseModel):
     manga: str = Field(min_length=2, max_length=150)
     chapter: str = Field(min_length=1, max_length=30)
     role: Literal["TL", "TS", "TL+TS"]
+    source: str | None = None
 
 
 class ScoutSearchRequest(BaseModel):
@@ -1662,6 +1674,77 @@ async def action_center(_user=Depends(admin_user)):
         await connection.close()
 
 
+@app.get("/api/raw/search")
+async def raw_search(
+    q: str = Query(..., min_length=1),
+    source: str = Query("all"),
+    _user=Depends(current_user),
+):
+    """Search manga across active RAW downloaders."""
+    query = q.strip()
+    if len(query) < 2:
+        return []
+
+    all_downloaders = {
+        "asura": asura_downloader,
+        "omega": omega_downloader,
+        "doujiva": doujiva_downloader,
+        "evascan": evascan_downloader,
+        "thunder": thunder_downloader,
+        "vortex": vortex_downloader,
+        "qimanga": qimanga_downloader,
+        "demon": demon_downloader,
+        "kagane": kagane_downloader,
+        "mgeko": mgeko_downloader,
+    }
+
+    if source != "all" and source in all_downloaders:
+        targets = {source: all_downloaders[source]}
+    else:
+        targets = all_downloaders
+
+    source_display_names = {
+        "asura": "Asura",
+        "omega": "Omega",
+        "doujiva": "Doujiva",
+        "evascan": "EvaScan",
+        "thunder": "Thunder",
+        "vortex": "Vortex",
+        "qimanga": "QiManga",
+        "demon": "Demon",
+        "kagane": "Kagane",
+        "mgeko": "Mgeko",
+    }
+
+    async def search_single_source(src_key, downloader):
+        try:
+            items = await asyncio.wait_for(downloader.search_manga(query), timeout=7.0)
+            results = []
+            for item in (items or [])[:10]:
+                results.append({
+                    "id": str(item.get("id") or item.get("slug") or ""),
+                    "title": str(item.get("title") or ""),
+                    "source": src_key,
+                    "source_name": source_display_names.get(src_key, src_key.title()),
+                    "image": item.get("image") or item.get("thumbnail") or item.get("cover") or "",
+                    "latest_chapter": item.get("update") or item.get("chapter_count") or item.get("latest_chapter") or "",
+                    "rating": str(item.get("rating") or ""),
+                })
+            return results
+        except Exception:
+            return []
+
+    tasks = [search_single_source(k, v) for k, v in targets.items()]
+    source_results = await asyncio.gather(*tasks)
+
+    combined = []
+    for r in source_results:
+        combined.extend(r)
+
+    combined.sort(key=lambda item: title_score(query, item["title"]), reverse=True)
+    return combined[:30]
+
+
 @app.post("/api/raw-rate-analysis")
 async def raw_rate_analysis(payload: RawRateAnalysisRequest, _user=Depends(admin_user)):
     """Recommend a role rate from the matching RAW's pages and image heights."""
@@ -1671,26 +1754,39 @@ async def raw_rate_analysis(payload: RawRateAnalysisRequest, _user=Depends(admin
         raise HTTPException(status_code=422, detail=str(error))
 
     minimum, maximum = await role_rate_range(payload.role)
+    all_downloaders = {
+        "asura": asura_downloader,
+        "omega": omega_downloader,
+        "doujiva": doujiva_downloader,
+        "evascan": evascan_downloader,
+        "thunder": thunder_downloader,
+        "vortex": vortex_downloader,
+        "qimanga": qimanga_downloader,
+        "demon": demon_downloader,
+        "kagane": kagane_downloader,
+        "mgeko": mgeko_downloader,
+    }
+
+    if payload.source and payload.source in all_downloaders:
+        downloaders = {payload.source: all_downloaders[payload.source]}
+    else:
+        downloaders = all_downloaders
+
     result = await suggest_assignment_rate(
         payload.manga.strip(),
         requested_chapters,
         payload.role,
         minimum,
         maximum,
-        {
-            "asura": asura_downloader,
-            "omega": omega_downloader,
-            "doujiva": doujiva_downloader,
-            "evascan": evascan_downloader,
-            "thunder": thunder_downloader,
-        },
+        downloaders,
         timeout=12,
     )
     if result["status"] != "resolved":
+        source_name = payload.source.title() if payload.source else "sumber RAW"
         message = {
-            "not_found": "Judul RAW tidak ditemukan di Asura, Omega, Doujiva, EvaScan, atau Thunder.",
+            "not_found": f"Judul RAW tidak ditemukan di {source_name}.",
             "ambiguous": "Judul RAW ambigu. Perjelas judul manga sebelum dianalisis.",
-            "chapters_missing": "Chapter tugas belum tersedia pada sumber RAW yang ditemukan.",
+            "chapters_missing": f"Chapter tugas belum tersedia pada {source_name}.",
             "timeout": "Analisis RAW terlalu lama. Coba lagi beberapa saat.",
             "no_images": "Daftar gambar RAW kosong. Coba lagi beberapa saat.",
         }.get(result["status"], "RAW tidak dapat dianalisis saat ini.")

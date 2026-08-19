@@ -205,6 +205,15 @@ export type RecruitmentSettings = {
     updated_by: string | null;
   }>;
 };
+export type RawSearchResult = {
+  id: string;
+  title: string;
+  source: string;
+  source_name: string;
+  image?: string;
+  latest_chapter?: string;
+  rating?: string;
+};
 export type RecruitmentSubmission = { id:number; applicant_id:string; applicant_name:string; ticket_name:string; position:string; ticket_channel_id:string; status:string; submitted_at:string };
 export type ScoutSource = {
   id: number; source_group: "raw" | "indonesia" | "internal"; source: string;
@@ -415,10 +424,12 @@ const liveApi = {
       method: "PUT",
       body: JSON.stringify(payload),
     }),
-  analyzeRawRate: (manga: string, chapter: string, role: string) =>
+  rawSearch: (q: string, source = "all") =>
+    request<RawSearchResult[]>(`/api/raw/search?q=${encodeURIComponent(q)}&source=${encodeURIComponent(source)}`),
+  analyzeRawRate: (manga: string, chapter: string, role: string, source?: string) =>
     request<RawRateAnalysis>("/api/raw-rate-analysis", {
       method: "POST",
-      body: JSON.stringify({ manga, chapter, role }),
+      body: JSON.stringify({ manga, chapter, role, ...(source ? { source } : {}) }),
     }),
   approveAssignment: (id: number) =>
     request(`/api/assignments/${id}/approve`, { method: "POST" }),
@@ -729,6 +740,7 @@ const demoApi = {
   approvePairChapter: async () => ({ ok: true }),
   revisePairChapter: async () => ({ ok: true }),
   updateAssignment: async () => ({ ok: true, notified: true }),
+  rawSearch: async (): Promise<RawSearchResult[]> => [],
   analyzeRawRate: async (): Promise<RawRateAnalysis> => ({
     source: "asura", matched_title: "Contoh Manga", chapter_count: 1,
     page_count: 18, measured_pages: 18, max_height: 6200, total_height: 106000,

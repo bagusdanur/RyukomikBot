@@ -20,6 +20,7 @@ import {
   type Recap,
   type RecapSummary,
   type RawRateAnalysis,
+  type RawSearchResult,
   type Staff,
   type Submission,
   type User,
@@ -93,7 +94,51 @@ const task = ref({
   ts_rate: 5000,
   deadline_at: "",
   raw_mode: "editor_safe",
+  raw_source: "",
+  raw_id: "",
 });
+const mangaSearchSource = ref("all");
+const mangaSearchResults = ref<RawSearchResult[]>([]);
+const mangaSearching = ref(false);
+const mangaDropdownOpen = ref(false);
+let mangaSearchTimer: ReturnType<typeof setTimeout> | null = null;
+
+function onMangaSearchInput() {
+  mangaDropdownOpen.value = true;
+  if (mangaSearchTimer) clearTimeout(mangaSearchTimer);
+  const q = task.value.manga.trim();
+  if (q.length < 2) {
+    mangaSearchResults.value = [];
+    mangaSearching.value = false;
+    return;
+  }
+  mangaSearching.value = true;
+  mangaSearchTimer = setTimeout(async () => {
+    try {
+      mangaSearchResults.value = await api.rawSearch(q, mangaSearchSource.value);
+    } catch {
+      mangaSearchResults.value = [];
+    } finally {
+      mangaSearching.value = false;
+    }
+  }, 300);
+}
+
+function selectMangaResult(item: RawSearchResult) {
+  task.value.manga = item.title;
+  task.value.raw_source = item.source;
+  task.value.raw_id = item.id;
+  mangaDropdownOpen.value = false;
+  if (task.value.chapter.trim()) {
+    analyzeRawRate();
+  }
+}
+
+function clearSelectedSource() {
+  task.value.raw_source = "";
+  task.value.raw_id = "";
+}
+
 const rawRateAnalysis = ref<RawRateAnalysis | null>(null);
 const rawRateAnalyzing = ref(false);
 const submissions = ref<Submission[]>([]);
@@ -501,6 +546,8 @@ async function createTask() {
       ts_rate: 5000,
       deadline_at: "",
       raw_mode: "editor_safe",
+      raw_source: "",
+      raw_id: "",
     };
     rawRateAnalysis.value = null;
     await loadPage();
@@ -518,21 +565,22 @@ async function analyzeRawRate() {
   try {
     rawRateAnalyzing.value = true;
     error.value = "";
+    const sourceParam = task.value.raw_source || undefined;
     if (task.value.role === "PAIR") {
       const [tl, ts] = await Promise.all([
-        api.analyzeRawRate(task.value.manga, task.value.chapter, "TL"),
-        api.analyzeRawRate(task.value.manga, task.value.chapter, "TS"),
+        api.analyzeRawRate(task.value.manga, task.value.chapter, "TL", sourceParam),
+        api.analyzeRawRate(task.value.manga, task.value.chapter, "TS", sourceParam),
       ]);
       rawRateAnalysis.value = tl;
       task.value.final_rate = tl.rate_per_chapter;
       task.value.ts_rate = ts.rate_per_chapter;
-      success.value = `RAW dianalisis: ${tl.workload}. Rekomendasi TL ${money(tl.rate_per_chapter)}/chapter dan TS ${money(ts.rate_per_chapter)}/chapter sudah diterapkan.`;
+      success.value = `RAW (${tl.source.toUpperCase()}) dianalisis: ${tl.workload}. Rekomendasi TL ${money(tl.rate_per_chapter)}/chapter dan TS ${money(ts.rate_per_chapter)}/chapter sudah diterapkan.`;
       return;
     }
-    const result = await api.analyzeRawRate(task.value.manga, task.value.chapter, task.value.role);
+    const result = await api.analyzeRawRate(task.value.manga, task.value.chapter, task.value.role, sourceParam);
     rawRateAnalysis.value = result;
     task.value.final_rate = result.rate_per_chapter;
-    success.value = `RAW dianalisis: ${result.workload}. Rekomendasi rate diterapkan dan masih dapat diubah.`;
+    success.value = `RAW (${result.source.toUpperCase()}) dianalisis: ${result.workload}. Rekomendasi rate diterapkan dan masih dapat diubah.`;
   } catch (e) {
     rawRateAnalysis.value = null;
     error.value = e instanceof Error ? e.message : "Analisis RAW gagal.";
@@ -543,6 +591,10 @@ async function analyzeRawRate() {
 async function openTask(staffId?: string, prefill?: { manga?: string; chapter?: string; role?: string }) {
   editingTask.value = null;
   rawRateAnalysis.value = null;
+  mangaSearchResults.value = [];
+  mangaDropdownOpen.value = false;
+  task.value.raw_source = "";
+  task.value.raw_id = "";
   error.value = "";
   if (prefill) {
     if (prefill.manga) task.value.manga = prefill.manga;
@@ -586,6 +638,8 @@ function editTask(item: Assignment) {
     ts_rate: 5000,
     deadline_at: item.deadline_at || "",
     raw_mode: item.raw_mode || "editor_safe",
+    raw_source: "",
+    raw_id: "",
   };
   rawRateAnalysis.value = null;
   showTask.value = true;
@@ -1795,12 +1849,85 @@ onMounted(async () => {
           <button type="button" @click="showTask = false; editingTask = null">×</button>
         </div>
         <div class="form-grid">
-          <label class="wide"
-            >Judul manga<InputText
-              v-model="task.manga"
-              required
-              placeholder="Contoh: Let's Do It After Work" /></label
-          ><label
+          <div class="wide manga-search-field">
+            <div class="manga-search-header">
+              <label>Judul manga</label>
+              <div class="manga-search-filter">
+                <span>Filter sumber:</span>
+                <select v-model="mangaSearchSource" @change="onMangaSearchInput">
+                  <option value="all">Semua sumber</option>
+                  <option value="asura">Asura</option>
+                  <option value="omega">Omega</option>
+                  <option value="doujiva">Doujiva</option>
+                  <option value="evascan">EvaScan</option>
+                  <option value="thunder">Thunder</option>
+                  <option value="vortex">Vortex</option>
+                  <option value="qimanga">QiManga</option>
+                  <option value="demon">Demon</option>
+                  <option value="kagane">Kagane</option>
+                  <option value="mgeko">Mgeko</option>
+                </select>
+              </div>
+            </div>
+            <div class="manga-input-wrapper">
+              <InputText
+                v-model="task.manga"
+                required
+                placeholder="Ketik judul manga untuk mencari... (contoh: Magic, Solo, Let's Do It)"
+                autocomplete="off"
+                @input="onMangaSearchInput"
+                @focus="mangaDropdownOpen = true"
+              />
+              <i v-if="mangaSearching" class="pi pi-spin pi-spinner search-icon-right"></i>
+              <i v-else-if="task.manga" class="pi pi-times search-icon-right clickable" @click="task.manga = ''; clearSelectedSource(); mangaSearchResults = []; mangaDropdownOpen = false"></i>
+              <i v-else class="pi pi-search search-icon-right"></i>
+            </div>
+
+            <!-- Selected source badge pill -->
+            <div v-if="task.raw_source" class="selected-source-pill">
+              <span class="source-tag" :data-source="task.raw_source">
+                <i class="pi pi-check-circle"></i> {{ task.raw_source.toUpperCase() }}
+              </span>
+              <span class="source-slug">{{ task.raw_id }}</span>
+              <button type="button" class="btn-clear-source" title="Ganti/hapus sumber" @click="clearSelectedSource">×</button>
+            </div>
+
+            <!-- Autocomplete Dropdown List -->
+            <div
+              v-if="mangaDropdownOpen && (mangaSearchResults.length > 0 || (task.manga.trim().length >= 2 && !mangaSearching))"
+              class="manga-search-dropdown"
+            >
+              <div v-if="mangaSearchResults.length > 0" class="dropdown-results-list">
+                <div
+                  v-for="item in mangaSearchResults"
+                  :key="item.source + '-' + item.id"
+                  class="dropdown-item"
+                  :class="{ selected: task.manga === item.title && task.raw_source === item.source }"
+                  @click="selectMangaResult(item)"
+                >
+                  <div class="dropdown-item-thumb">
+                    <img v-if="item.image" :src="item.image" :alt="item.title" loading="lazy" @error="(e: any) => e.target.style.display = 'none'" />
+                    <i v-else class="pi pi-book"></i>
+                  </div>
+                  <div class="dropdown-item-info">
+                    <div class="dropdown-item-title">{{ item.title }}</div>
+                    <div class="dropdown-item-meta">
+                      <span class="source-badge" :data-source="item.source">{{ item.source_name }}</span>
+                      <span v-if="item.latest_chapter" class="chapter-badge">{{ item.latest_chapter }}</span>
+                      <span v-if="item.rating && item.rating !== '0'" class="rating-badge"><i class="pi pi-star-fill"></i> {{ item.rating }}</span>
+                    </div>
+                  </div>
+                  <div class="dropdown-item-action">
+                    <i class="pi pi-check"></i>
+                  </div>
+                </div>
+              </div>
+              <div v-else-if="task.manga.trim().length >= 2 && !mangaSearching" class="dropdown-empty">
+                <i class="pi pi-info-circle"></i>
+                <span>Tidak ada hasil langsung dari sumber RAW. Anda tetap dapat menggunakan judul manual di atas.</span>
+              </div>
+            </div>
+          </div><label
             >Chapter (maks. 5)<InputText
               v-model="task.chapter"
               required
