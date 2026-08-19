@@ -66,7 +66,7 @@ router = APIRouter(prefix="/api/assignments", tags=["assignments"])
 class AssignmentCreate(BaseModel):
     manga: str = Field(min_length=2, max_length=150)
     chapter: str = Field(min_length=1, max_length=30)
-    staff_id: str
+    staff_id: str | int
     role: Literal["TL", "TS", "TL+TS"]
     rate_per_chapter: int | None = Field(default=None, ge=0, le=1_000_000)
     final_rate: int | None = Field(default=None, ge=0, le=1_000_000)
@@ -77,13 +77,12 @@ class AssignmentCreate(BaseModel):
 class TlTsPairCreate(BaseModel):
     manga: str = Field(min_length=2, max_length=150)
     chapter: str = Field(min_length=1, max_length=30)
-    tl_staff_id: str
-    ts_staff_id: str
+    tl_staff_id: str | int
+    ts_staff_id: str | int
     tl_rate_per_chapter: int = Field(ge=0, le=1_000_000)
     ts_rate_per_chapter: int = Field(ge=0, le=1_000_000)
     deadline_at: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     raw_mode: Literal["editor_safe", "original"] = "editor_safe"
-
 
 class AssignmentUpdate(BaseModel):
     manga: str = Field(min_length=2, max_length=150)

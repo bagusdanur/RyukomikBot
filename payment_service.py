@@ -332,19 +332,8 @@ async def qris_download_url(object_key, expires=600):
 
 
 def scheduled_cycles(today=None):
-    today = today or datetime.now(ZoneInfo("Asia/Jakarta")).date()
-    cycles = []
-    current_19 = date(today.year, today.month, 19)
-    previous_month_end = date(today.year, today.month, 1) - timedelta(days=1)
-    current_4 = date(today.year, today.month, 4)
-    if today >= current_19:
-        cycles.append((f"{today:%Y-%m}-19", date(today.year, today.month, 1), date(today.year, today.month, 15)))
-    if today >= current_4:
-        cycles.append((f"{today:%Y-%m}-04", date(previous_month_end.year, previous_month_end.month, 16), previous_month_end))
-    # Include one previous cycle so restart downtime is caught up safely.
-    previous_19 = date(previous_month_end.year, previous_month_end.month, 19)
-    cycles.append((f"{previous_19:%Y-%m}-19", date(previous_19.year, previous_19.month, 1), date(previous_19.year, previous_19.month, 15)))
-    return cycles
+    """Deprecated: 4/19 date cycles removed in favor of direct full balance payout."""
+    return []
 
 
 def _method_snapshot(method):
@@ -362,6 +351,7 @@ def _method_snapshot(method):
 
 
 async def create_payout(staff_id, method_id=None, payout_type="instant", cutoff_start=None, cutoff_end=None, cycle_key=None, actor_id=0):
+    """Create a payout and invoice for ALL unbilled approved tasks & bonuses of a staff."""
     connection = await _db()
     try:
         await connection.execute("BEGIN IMMEDIATE")
@@ -374,9 +364,6 @@ async def create_payout(staff_id, method_id=None, payout_type="instant", cutoff_
         clauses = ["a.staff_id=?", "a.status='approved'",
                    "NOT EXISTS(SELECT 1 FROM dashboard_assignment_billing b WHERE b.assignment_id=a.id)"]
         params = [staff_id]
-        if cutoff_start and cutoff_end:
-            clauses.append("date(a.approved_at) BETWEEN ? AND ?")
-            params.extend([str(cutoff_start), str(cutoff_end)])
         items = await (await connection.execute(f"""SELECT a.* FROM assignments a
             WHERE {' AND '.join(clauses)} ORDER BY a.id""", params)).fetchall()
         bonus_rows = await (await connection.execute("""SELECT * FROM performance_bonuses
@@ -389,7 +376,7 @@ async def create_payout(staff_id, method_id=None, payout_type="instant", cutoff_
             raise ValueError("Tidak ada saldo approved yang tersedia untuk dicairkan.")
         snapshot = _method_snapshot(method)
         payout_status = "issued" if method else "awaiting_method"
-        period = (cutoff_end or datetime.now(ZoneInfo("Asia/Jakarta")).date()).strftime("%Y-%m")
+        period = datetime.now(ZoneInfo("Asia/Jakarta")).date().strftime("%Y-%m")
         number = f"RYU-{period.replace('-', '')}-{staff_id}-{secrets.token_hex(2).upper()}"
         chapter_count = sum(item["chapter_count"] or 1 for item in items)
         assignment_total = sum(item["final_rate"] for item in items)
@@ -416,8 +403,8 @@ async def create_payout(staff_id, method_id=None, payout_type="instant", cutoff_
             (staff_id,payout_type,cycle_key,cutoff_start,cutoff_end,invoice_id,payment_method_id,
              method_snapshot_encrypted,chapter_count,total_amount,status)
             VALUES(?,?,?,?,?,?,?,?,?,?,?)""", (
-                staff_id, payout_type, cycle_key, str(cutoff_start) if cutoff_start else None,
-                str(cutoff_end) if cutoff_end else None, invoice_id, method_id,
+                staff_id, payout_type, cycle_key, None,
+                None, invoice_id, method_id,
                 encrypt_value(json.dumps(snapshot)), chapter_count, total, payout_status,
             ))
         await connection.commit()
@@ -557,47 +544,8 @@ async def _wrap_existing_invoice(staff_id, method, cycle_key, start, end):
 
 
 async def create_due_scheduled_payouts(today=None):
-    created = []
-    for cycle_key, start, end in scheduled_cycles(today):
-        connection = await _db()
-        try:
-            staff_rows = await (await connection.execute("""SELECT DISTINCT staff_id FROM (
-                SELECT CAST(a.staff_id AS TEXT) staff_id FROM assignments a
-                    WHERE a.status='approved' AND date(a.approved_at) BETWEEN ? AND ?
-                UNION SELECT staff_id FROM performance_bonuses
-                    WHERE status='approved' AND invoice_id IS NULL AND period<=substr(?,1,7)
-                UNION SELECT staff_id FROM manual_bonuses
-                    WHERE status='approved' AND invoice_id IS NULL
-            )""",
-                (str(start), str(end), str(end)))).fetchall()
-        finally:
-            await connection.close()
-        for row in staff_rows:
-            existing = await _db()
-            try:
-                already = await (await existing.execute(
-                    "SELECT id FROM payout_requests WHERE cycle_key=? AND staff_id=?",
-                    (cycle_key, row["staff_id"]))).fetchone()
-            finally:
-                await existing.close()
-            if already:
-                await attach_payment_method_to_waiting(row["staff_id"])
-                continue
-            methods = await list_methods(row["staff_id"])
-            default = next((item for item in methods if item["is_default"]), None)
-            try:
-                result = await _wrap_existing_invoice(row["staff_id"], default, cycle_key, start, end)
-                if not result:
-                    result = await create_payout(
-                        row["staff_id"], default["id"] if default else None,
-                        "scheduled", start, end, cycle_key,
-                    )
-                if not default:
-                    result["missing_method"] = True
-                created.append(result)
-            except (ValueError, aiosqlite.IntegrityError):
-                pass
-    return created
+    """Deprecated: 4/19 scheduled payout batches removed in favor of direct full payouts."""
+    return []
 
 
 async def list_payouts(status=None):

@@ -167,7 +167,8 @@ async def enrich_staff(rows):
     return enriched
 
 
-def resolve_staff_id(staff_id: str, profiles: dict) -> str | None:
+def resolve_staff_id(staff_id: str | int, profiles: dict) -> str | None:
+    staff_id = str(staff_id)
     if staff_id in profiles:
         return staff_id
     for pid in profiles:
@@ -176,7 +177,8 @@ def resolve_staff_id(staff_id: str, profiles: dict) -> str | None:
     return None
 
 
-async def resolve_staff_id_with_fallback(staff_id: str, profiles: dict) -> str | None:
+async def resolve_staff_id_with_fallback(staff_id: str | int, profiles: dict) -> str | None:
+    staff_id = str(staff_id)
     result = resolve_staff_id(staff_id, profiles)
     if result:
         return result

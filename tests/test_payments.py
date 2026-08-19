@@ -80,27 +80,13 @@ class PaymentServiceTests(unittest.TestCase):
         replacement = asyncio.run(payments.create_payout(100, method_id))
         self.assertNotEqual(payout["invoice_id"], replacement["invoice_id"])
 
-    def test_schedule_cutoffs(self):
-        cycles = payments.scheduled_cycles(date(2026, 7, 19))
-        self.assertIn(("2026-07-19", date(2026, 7, 1), date(2026, 7, 15)), cycles)
-        cycles = payments.scheduled_cycles(date(2026, 8, 4))
-        self.assertIn(("2026-08-04", date(2026, 7, 16), date(2026, 7, 31)), cycles)
-
-    def test_scheduled_invoice_exists_before_method_and_is_reconciled(self):
-        self.add_approved()
-        created = asyncio.run(payments.create_due_scheduled_payouts(date(2026, 7, 19)))
-        target = next(item for item in created if item.get("cycle_key") == "2026-07-19")
-        self.assertEqual(target["status"], "awaiting_method")
-        connection = sqlite3.connect(self.path)
-        self.assertEqual(connection.execute("SELECT COUNT(*) FROM dashboard_invoices").fetchone()[0], 1)
-        connection.close()
-        asyncio.run(payments.create_method(100, "bank", "BCA", "Staff", "1234567890"))
-        detail = asyncio.run(payments.payout_detail(target["id"]))
-        self.assertEqual(detail["status"], "issued")
-        asyncio.run(payments.create_due_scheduled_payouts(date(2026, 7, 19)))
-        connection = sqlite3.connect(self.path)
-        self.assertEqual(connection.execute("SELECT COUNT(*) FROM dashboard_invoices").fetchone()[0], 1)
-        connection.close()
+    def test_payout_takes_all_unbilled_approved(self):
+        self.add_approved(chapters=1, amount=5000)
+        self.add_approved(chapters=2, amount=10000)
+        method_id = asyncio.run(payments.create_method(100, "bank", "BCA", "Staff", "1234567890"))
+        payout = asyncio.run(payments.create_payout(100, method_id))
+        self.assertEqual(payout["chapter_count"], 3)
+        self.assertEqual(payout["total_amount"], 15000)
 
     def test_paid_invoice_pdf(self):
         self.add_approved(chapters=2, amount=24000)

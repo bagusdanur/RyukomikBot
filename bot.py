@@ -318,42 +318,9 @@ bot = RyukomikBot()
 
 @tasks.loop(hours=1)
 async def scheduled_payout_loop():
-    """Create idempotent 4/19 payout batches and notify private/admin channels."""
+    """Evaluate performance bonuses monthly without 4/19 cutoff restrictions."""
     # Safe to run hourly: the unique staff/period key makes monthly evaluation idempotent.
     await performance_bonuses.evaluate_period(performance_bonuses.previous_period())
-    created = await payments.create_due_scheduled_payouts()
-    guild = bot.get_guild(GUILD_ID)
-    if not guild:
-        return
-    admin_channel = guild.get_channel(STAFF_LOG_CHANNEL_ID)
-    for item in created:
-        staff_id = int(item.get("staff_id") or 0)
-        if item.get("missing_method"):
-            from helpers.utils import find_ticket
-            ticket = await find_ticket(guild, staff_id)
-            if ticket:
-                member = guild.get_member(staff_id)
-                await ticket.send(
-                    content=member.mention if member else None,
-                    embed=discord.Embed(
-                        title="Lengkapi Metode Pembayaran",
-                        description=f"Siklus gaji **{item['cycle_key']}** belum dapat dibuat karena tujuan transfer belum tersedia.",
-                        color=discord.Color.orange(),
-                    ),
-                )
-        detail = await payments.payout_detail(item["id"])
-        if admin_channel and detail:
-            member = guild.get_member(int(detail["staff_id"]))
-            embed = discord.Embed(
-                title=f"Gajian Terjadwal #{detail['id']}",
-                description=f"Siklus **{detail['cycle_key']}** untuk {member.mention if member else detail['staff_id']}.",
-                color=discord.Color.gold(),
-            )
-            embed.add_field(name="Total", value=f"Rp {detail['total_amount']:,.0f}".replace(",", "."), inline=True)
-            embed.add_field(name="Chapter", value=str(detail["chapter_count"]), inline=True)
-            if detail["status"] == "awaiting_method":
-                embed.add_field(name="Status", value="Menunggu metode pembayaran staff", inline=False)
-            await admin_channel.send(embed=embed, view=PayoutAdminView(detail["id"], detail["status"]))
 
 
 @scheduled_payout_loop.before_loop

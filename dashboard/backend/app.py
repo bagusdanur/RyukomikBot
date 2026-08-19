@@ -78,15 +78,35 @@ from dashboard.backend.deps import (
 
 # Routers
 from dashboard.backend.routers.tools import router as tools_router
-from dashboard.backend.routers.assignments import router as assignments_router
-from dashboard.backend.routers.invoices import router as invoices_router
-from dashboard.backend.routers.payouts import router as payouts_router
+from dashboard.backend.routers.assignments import (
+    router as assignments_router,
+    AssignmentCreate, AssignmentUpdate, TlTsPairCreate,
+    assignments, create_dashboard_assignment, update_dashboard_assignment,
+)
+from dashboard.backend.routers.invoices import (
+    router as invoices_router,
+    InvoiceCreate, invoices, create_invoice, refresh_invoice, create_correction_invoice, delete_invoice,
+    invoice_detail, pay_invoice,
+)
+from dashboard.backend.routers.payouts import (
+    router as payouts_router,
+    payout_requests,
+)
 from dashboard.backend.routers.bonus import router as bonus_router
 from dashboard.backend.routers.scout import router as scout_router
-from dashboard.backend.routers.pair import router as pair_router
-from dashboard.backend.routers.recruitment import router as recruitment_router
+from dashboard.backend.routers.pair import (
+    router as pair_router,
+    pair_projects, create_tl_ts_pair, create_pair_workspace,
+)
+from dashboard.backend.routers.recruitment import (
+    router as recruitment_router,
+    RecruitmentSettingsUpdate, update_recruitment_settings, recruitment_settings,
+)
 from dashboard.backend.routers.staff import router as staff_router
-from dashboard.backend.routers.payrate import router as payrate_router
+from dashboard.backend.routers.payrate import (
+    router as payrate_router,
+    PayrateUpdate, update_payrate, payrates,
+)
 from dashboard.backend.routers.operations import router as operations_router
 from dashboard.backend.routers.notifications import router as notifications_router
 from dashboard.backend.routers.projects import router as projects_router
@@ -473,34 +493,6 @@ class RecruitmentCloseRequest(BaseModel):
     reason: str = Field(min_length=3, max_length=500)
 
 
-class AssignmentCreate(BaseModel):
-    manga: str = Field(min_length=2, max_length=150)
-    chapter: str = Field(min_length=1, max_length=30)
-    staff_id: str
-    role: Literal["TL", "TS", "TL+TS"]
-    rate_per_chapter: int | None = Field(default=None, ge=0, le=1_000_000)
-    final_rate: int | None = Field(default=None, ge=0, le=1_000_000)
-    deadline_at: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
-
-
-class TlTsPairCreate(BaseModel):
-    manga: str = Field(min_length=2, max_length=150)
-    chapter: str = Field(min_length=1, max_length=30)
-    tl_staff_id: str
-    ts_staff_id: str
-    tl_rate_per_chapter: int = Field(ge=0, le=1_000_000)
-    ts_rate_per_chapter: int = Field(ge=0, le=1_000_000)
-    deadline_at: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
-
-
-class AssignmentUpdate(BaseModel):
-    manga: str = Field(min_length=2, max_length=150)
-    chapter: str = Field(min_length=1, max_length=30)
-    role: Literal["TL", "TS", "TL+TS"]
-    rate_per_chapter: int = Field(ge=0, le=1_000_000)
-    deadline_at: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
-
-
 class RawRateAnalysisRequest(BaseModel):
     manga: str = Field(min_length=2, max_length=150)
     chapter: str = Field(min_length=1, max_length=30)
@@ -517,11 +509,6 @@ class ScoutSearchRequest(BaseModel):
 class ScoutDecisionRequest(BaseModel):
     action: Literal["candidate", "adopt", "available", "ignore", "ambiguous"]
     notes: str = Field(default="", max_length=1000)
-
-
-class InvoiceCreate(BaseModel):
-    staff_id: str
-    period: str = Field(pattern=r"^\d{4}-\d{2}$")
 
 
 class RevisionRequest(BaseModel):
@@ -1858,16 +1845,79 @@ async def deadlines(user=Depends(current_user)):
 async def recap(period: str = Query(pattern=r"^\d{4}-\d{2}$"), _user=Depends(admin_user)):
     connection = await dashboard_db()
     try:
+        # 1. Stats for the selected period
         rows = await (await connection.execute("""
             SELECT staff_id, SUM(COALESCE(chapter_count,1)) chapter_count, SUM(final_rate) total_amount,
-                   SUM(CASE WHEN status='approved' THEN final_rate ELSE 0 END) pending_amount,
                    SUM(CASE WHEN status='paid' THEN final_rate ELSE 0 END) paid_amount
             FROM assignments
             WHERE staff_id IS NOT NULL AND status IN ('approved','paid')
               AND (approved_at LIKE ? OR paid_period = ?)
             GROUP BY staff_id ORDER BY total_amount DESC
         """, (f"{period}%", period))).fetchall()
-        return await enrich_staff(rows)
+        staff_map = {row["staff_id"]: dict(row) for row in rows}
+
+        # 2. All unbilled approved tasks for all staff (all-time unbilled)
+        unbilled_rows = await (await connection.execute("""
+            SELECT a.staff_id, SUM(COALESCE(a.chapter_count,1)) unbilled_chapters, SUM(a.final_rate) unbilled_amount
+            FROM assignments a
+            WHERE a.staff_id IS NOT NULL AND a.status='approved'
+              AND NOT EXISTS (SELECT 1 FROM dashboard_assignment_billing b WHERE b.assignment_id=a.id)
+            GROUP BY a.staff_id
+        """)).fetchall()
+
+        # 3. Unbilled approved bonuses
+        bonus_rows = await (await connection.execute("""
+            SELECT staff_id, SUM(proposed_amount) total_bonus
+            FROM performance_bonuses
+            WHERE status='approved' AND invoice_id IS NULL AND proposed_amount>0
+            GROUP BY staff_id
+        """)).fetchall()
+        manual_bonus_rows = await (await connection.execute("""
+            SELECT staff_id, SUM(amount) total_bonus
+            FROM manual_bonuses
+            WHERE status='approved' AND invoice_id IS NULL AND amount>0
+            GROUP BY staff_id
+        """)).fetchall()
+
+        bonus_map = {}
+        for b in bonus_rows:
+            bonus_map[b["staff_id"]] = bonus_map.get(b["staff_id"], 0) + b["total_bonus"]
+        for b in manual_bonus_rows:
+            bonus_map[b["staff_id"]] = bonus_map.get(b["staff_id"], 0) + b["total_bonus"]
+
+        for u in unbilled_rows:
+            sid = u["staff_id"]
+            if sid not in staff_map:
+                staff_map[sid] = {
+                    "staff_id": sid,
+                    "chapter_count": u["unbilled_chapters"],
+                    "total_amount": u["unbilled_amount"],
+                    "paid_amount": 0,
+                    "pending_amount": u["unbilled_amount"],
+                }
+            else:
+                staff_map[sid]["pending_amount"] = u["unbilled_amount"]
+
+        for sid, bonus in bonus_map.items():
+            if sid not in staff_map:
+                staff_map[sid] = {
+                    "staff_id": sid,
+                    "chapter_count": 0,
+                    "total_amount": bonus,
+                    "paid_amount": 0,
+                    "pending_amount": bonus,
+                }
+            else:
+                staff_map[sid]["pending_amount"] = staff_map[sid].get("pending_amount", 0) + bonus
+                staff_map[sid]["total_amount"] = staff_map[sid].get("total_amount", 0) + bonus
+
+        # Ensure every entry has pending_amount and total_amount
+        for sid, item in staff_map.items():
+            if "pending_amount" not in item:
+                item["pending_amount"] = 0
+
+        sorted_rows = sorted(staff_map.values(), key=lambda r: (r.get("pending_amount", 0), r.get("total_amount", 0)), reverse=True)
+        return await enrich_staff(sorted_rows)
     finally:
         await connection.close()
 

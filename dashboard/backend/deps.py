@@ -89,19 +89,39 @@ class _PooledConnection:
 
 async def dashboard_db():
     """Get a DB connection from pool or create new one."""
+    import database as staff_db
+    current_path = staff_db.DB_PATH
     async with _pool_lock:
-        if _pool:
+        while _pool:
             conn = _pool.pop()
-            try:
-                await conn.execute("SELECT 1")
-                return _PooledConnection(conn)
-            except Exception:
-                pass
-    connection = await aiosqlite.connect(DB_PATH, timeout=30)
+            if getattr(conn, '_db_path', None) == current_path:
+                try:
+                    await conn.execute("SELECT 1")
+                    return _PooledConnection(conn)
+                except Exception:
+                    pass
+            else:
+                try:
+                    await conn.close()
+                except Exception:
+                    pass
+    connection = await aiosqlite.connect(current_path, timeout=30)
+    connection._db_path = current_path
     connection.row_factory = aiosqlite.Row
     await connection.execute("PRAGMA busy_timeout=30000")
     await connection.execute("PRAGMA foreign_keys=ON")
     return _PooledConnection(connection)
+
+
+async def close_pool():
+    """Close and clear all pooled SQLite connections."""
+    async with _pool_lock:
+        while _pool:
+            conn = _pool.pop()
+            try:
+                await conn.close()
+            except Exception:
+                pass
 
 
 # --- Auth dependencies ---
@@ -167,10 +187,17 @@ DEFAULT_RATE_RANGES = {
 }
 
 
-def normalize_paging(page: int, page_size: int, paginated: bool):
+def normalize_paging(page: int = 1, page_size: int = 20, paginated: bool = False):
+    from fastapi.params import Query as FastAPIQuery
+    if isinstance(paginated, FastAPIQuery):
+        paginated = getattr(paginated, 'default', False)
+    if isinstance(page, FastAPIQuery):
+        page = getattr(page, 'default', 1)
+    if isinstance(page_size, FastAPIQuery):
+        page_size = getattr(page_size, 'default', 20)
     if not paginated:
         return page, page_size, False
-    return max(1, page), min(100, max(1, page_size)), True
+    return max(1, int(page)), min(100, max(1, int(page_size))), True
 
 
 def page_payload(items: list, page: int, page_size: int, total: int):

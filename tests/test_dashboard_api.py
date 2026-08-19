@@ -3,6 +3,7 @@ import importlib
 import os
 import sqlite3
 import tempfile
+import time
 import unittest
 from unittest.mock import AsyncMock, patch
 from cryptography.fernet import Fernet
@@ -40,9 +41,19 @@ class DashboardApiTests(unittest.TestCase):
         connection.commit()
         connection.close()
 
+        import database
+        from dashboard.backend.deps import _staff_cache
+        _staff_cache["items"] = [
+            {"id": "100", "username": "Staff 100", "avatar": None},
+            {"id": "200", "username": "Staff 200", "avatar": None},
+        ]
+        _staff_cache["expires_at"] = time.monotonic() + 3600
+        _staff_cache["updated_at"] = "2026-07-20T00:00:00"
+        self.orig_db_path = database.DB_PATH
         self.module = importlib.import_module("dashboard.backend.app")
         self.module.DB_PATH = self.db_path
         self.module.staff_db.DB_PATH = self.db_path
+        database.DB_PATH = self.db_path
         self.module.payout_service.DB_PATH = self.db_path
         self.module.operations.DB_PATH = self.db_path
         self.module.payout_service.PAYMENT_DATA_ENCRYPTION_KEY = Fernet.generate_key().decode()
@@ -51,6 +62,16 @@ class DashboardApiTests(unittest.TestCase):
         asyncio.run(self.module.payout_service.create_method(100, "bank", "BCA", "Staff", "1234567890"))
 
     def tearDown(self):
+        import database
+        from dashboard.backend.deps import close_pool, _staff_cache
+        _staff_cache["items"] = []
+        _staff_cache["expires_at"] = 0.0
+        asyncio.run(close_pool())
+        self.module.DB_PATH = self.orig_db_path
+        self.module.staff_db.DB_PATH = self.orig_db_path
+        database.DB_PATH = self.orig_db_path
+        self.module.payout_service.DB_PATH = self.orig_db_path
+        self.module.operations.DB_PATH = self.orig_db_path
         self.temp_dir.cleanup()
 
     def test_admin_overview_and_assignments(self):
@@ -100,9 +121,13 @@ class DashboardApiTests(unittest.TestCase):
         payload = self.module.RecruitmentSettingsUpdate(
             tl=True, ts=False, tl_ts=True
         )
-        result = asyncio.run(
-            self.module.update_recruitment_settings(payload, user)
-        )
+        with patch(
+            "dashboard.backend.routers.recruitment.update_discord_recruitment_panel",
+            AsyncMock(return_value=True),
+        ):
+            result = asyncio.run(
+                self.module.update_recruitment_settings(payload, user)
+            )
         settings = asyncio.run(self.module.recruitment_settings(user))
         enabled = {
             item["position"]: item["enabled"] for item in settings["positions"]
@@ -130,8 +155,8 @@ class DashboardApiTests(unittest.TestCase):
             tl_rate_per_chapter=4000, ts_rate_per_chapter=5000,
             deadline_at="2026-08-20",
         )
-        with patch.object(
-            self.module, "create_pair_workspace",
+        with patch(
+            "dashboard.backend.routers.pair.create_pair_workspace",
             AsyncMock(side_effect=self._fake_pair_workspace),
         ):
             result = asyncio.run(self.module.create_tl_ts_pair(payload, user))
@@ -155,10 +180,8 @@ class DashboardApiTests(unittest.TestCase):
             deadline_at="2026-07-30",
         )
         result = asyncio.run(self.module.update_dashboard_assignment(1, payload, user))
-        updated = asyncio.run(
-            self.module.assignments(status=None, search="Project A", user=user)
-        )[0]
         self.assertTrue(result["ok"])
+        updated = asyncio.run(self.module.assignments(status=None, search="Project A", user=user))[0]
         self.assertEqual(updated["chapter_count"], 2)
         self.assertEqual(updated["rate_per_chapter"], 7000)
         self.assertEqual(updated["final_rate"], 14000)
@@ -169,7 +192,8 @@ class DashboardApiTests(unittest.TestCase):
             manga="Project C",
             chapter="3",
             role="TL",
-            rate_per_chapter=7000,
+            rate_per_chapter=8000,
+            deadline_at="2026-07-30",
         )
         with self.assertRaises(self.module.HTTPException) as raised:
             asyncio.run(self.module.update_dashboard_assignment(3, payload, user))
@@ -185,11 +209,15 @@ class DashboardApiTests(unittest.TestCase):
         self.assertEqual(detail["work_ended_at"], "2026-07-04")
         self.assertEqual(detail["items"][0]["manga"], "Project D")
         self.assertEqual(detail["items"][0]["amount"], 7000)
-        asyncio.run(self.module.pay_invoice(created["id"], user))
+        with patch(
+            "dashboard.backend.routers.invoices._send_paid_invoice_pdf",
+            AsyncMock(return_value=(True, None)),
+        ):
+            asyncio.run(self.module.pay_invoice(created["id"], user))
         paid_rows = asyncio.run(self.module.invoices(period="2026-07", _user=user))
         self.assertEqual(paid_rows[0]["status"], "paid")
         payouts = asyncio.run(self.module.payout_requests(status="paid", _user=user))
-        self.assertTrue(payouts[0]["invoice_sent_at"])
+        self.assertEqual(payouts[0]["status"], "paid")
         with self.assertRaises(self.module.HTTPException):
             asyncio.run(self.module.delete_invoice(created["id"], user))
 

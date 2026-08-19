@@ -77,8 +77,8 @@ async def _replace_invoice_items(connection, invoice, items, actor_id: int):
 # ---------------------------------------------------------------------------
 
 class InvoiceCreate(BaseModel):
-    staff_id: str
-    period: str = Field(pattern=r"^\d{4}-\d{2}$")
+    staff_id: str | int
+    period: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}$")
 
 
 # ---------------------------------------------------------------------------
@@ -118,12 +118,15 @@ async def invoice_detail(invoice_id: int, _user=Depends(admin_user)):
         bonus_items = await bonus_service.invoice_bonus_items(connection, invoice_id)
         manual_bonus_items = await bonus_service.invoice_manual_bonus_items(connection, invoice_id)
         if not items:
-            status_clause = "paid_period=?" if invoice["status"] == "paid" else "status='approved' AND approved_at LIKE ?"
+            status_clause = "paid_period=?" if invoice["status"] == "paid" else "status='approved'"
+            params = [invoice["staff_id"]]
+            if invoice["status"] == "paid":
+                params.append(invoice["period"])
             items = await (await connection.execute(f"""
                 SELECT id assignment_id,manga,chapter,role,final_rate amount,assigned_at,approved_at,
                        COALESCE(chapter_count,1) chapter_count,COALESCE(rate_per_chapter,final_rate) rate_per_chapter
                 FROM assignments WHERE staff_id=? AND {status_clause} ORDER BY id
-            """, (invoice["staff_id"], invoice["period"] if invoice["status"] == "paid" else f"{invoice['period']}%"))).fetchall()
+            """, params)).fetchall()
         result = (await _enrich_staff([invoice]))[0]
         result["items"] = [dict(item) for item in items] + [{
             "assignment_id": None, "item_type": "performance_bonus", "manga": "Bonus Performa",
@@ -149,13 +152,16 @@ async def invoice_detail(invoice_id: int, _user=Depends(admin_user)):
 async def create_invoice(payload: InvoiceCreate, user=Depends(admin_user)):
     connection = await dashboard_db()
     try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        period = payload.period or datetime.now(ZoneInfo("Asia/Jakarta")).strftime("%Y-%m")
         items = await (await connection.execute("""
             SELECT id,manga,chapter,role,final_rate,assigned_at,approved_at,
                    COALESCE(chapter_count,1) chapter_count,COALESCE(rate_per_chapter,final_rate) rate_per_chapter
-            FROM assignments a WHERE staff_id=? AND status='approved' AND approved_at LIKE ?
+            FROM assignments a WHERE staff_id=? AND status='approved'
               AND NOT EXISTS (SELECT 1 FROM dashboard_assignment_billing b WHERE b.assignment_id=a.id)
             ORDER BY id
-        """, (payload.staff_id, f"{payload.period}%"))).fetchall()
+        """, (payload.staff_id,))).fetchall()
         bonus_rows = await (await connection.execute(
             """SELECT id FROM performance_bonuses
             WHERE staff_id=? AND status='approved' AND invoice_id IS NULL AND proposed_amount>0""",
@@ -167,16 +173,16 @@ async def create_invoice(payload: InvoiceCreate, user=Depends(admin_user)):
             (str(payload.staff_id),),
         )).fetchall()
         if not items and not bonus_rows and not manual_rows:
-            raise HTTPException(status_code=422, detail="Tidak ada tugas approved atau bonus yang belum dibayar pada periode ini.")
+            raise HTTPException(status_code=422, detail="Tidak ada tugas approved atau bonus yang belum dibayar untuk staff ini.")
         chapter_count = sum(item["chapter_count"] or 1 for item in items)
         total_amount = sum(item["final_rate"] for item in items)
-        invoice_number = f"RYU-{payload.period.replace('-', '')}-{payload.staff_id}-{secrets.token_hex(2).upper()}"
+        invoice_number = f"RYU-{period.replace('-', '')}-{payload.staff_id}-{secrets.token_hex(2).upper()}"
         try:
             cursor = await connection.execute("""
                 INSERT INTO dashboard_invoices
                     (invoice_number,staff_id,period,chapter_count,total_amount,status,issued_by)
                 VALUES(?,?,?,?,?,'issued',?)
-            """, (invoice_number, payload.staff_id, payload.period, chapter_count, total_amount, user["id"]))
+            """, (invoice_number, payload.staff_id, period, chapter_count, total_amount, user["id"]))
             invoice_id = cursor.lastrowid
             await connection.executemany("""
                 INSERT INTO dashboard_invoice_items
@@ -231,11 +237,11 @@ async def refresh_invoice(invoice_id: int, user=Depends(admin_user)):
         items = await (await connection.execute("""
             SELECT a.id,a.manga,a.chapter,a.role,a.final_rate,a.assigned_at,a.approved_at,
                    COALESCE(a.chapter_count,1) chapter_count,COALESCE(a.rate_per_chapter,a.final_rate) rate_per_chapter
-            FROM assignments a WHERE a.staff_id=? AND a.status='approved' AND a.approved_at LIKE ?
+            FROM assignments a WHERE a.staff_id=? AND a.status='approved'
               AND (NOT EXISTS (SELECT 1 FROM dashboard_assignment_billing b WHERE b.assignment_id=a.id)
                    OR EXISTS (SELECT 1 FROM dashboard_assignment_billing b WHERE b.assignment_id=a.id AND b.invoice_id=?))
             ORDER BY a.id
-        """, (invoice["staff_id"], f"{invoice['period']}%", invoice_id))).fetchall()
+        """, (invoice["staff_id"], invoice_id))).fetchall()
         before_items = await _replace_invoice_items(connection, invoice, items, user["id"])
         await connection.commit()
         after = {
@@ -264,9 +270,9 @@ async def create_correction_invoice(invoice_id: int, user=Depends(admin_user)):
         items = await (await connection.execute("""
             SELECT a.id,a.manga,a.chapter,a.role,a.final_rate,a.assigned_at,a.approved_at,
                    COALESCE(a.chapter_count,1) chapter_count,COALESCE(a.rate_per_chapter,a.final_rate) rate_per_chapter
-            FROM assignments a WHERE a.staff_id=? AND a.status='approved' AND a.approved_at LIKE ?
+            FROM assignments a WHERE a.staff_id=? AND a.status='approved'
               AND NOT EXISTS (SELECT 1 FROM dashboard_assignment_billing b WHERE b.assignment_id=a.id) ORDER BY a.id
-        """, (parent["staff_id"], f"{parent['period']}%"))).fetchall()
+        """, (parent["staff_id"],))).fetchall()
         if not items:
             raise HTTPException(status_code=422, detail="Tidak ada tugas terlambat yang belum ditagihkan.")
         count = (await (await connection.execute(
