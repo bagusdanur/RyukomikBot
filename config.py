@@ -39,6 +39,8 @@ THUNDER_API = os.getenv("THUNDER_API", "https://api.ryukomik.web.id/thunder")
 QIMANGA_API = os.getenv("QIMANGA_API", "https://api.ryukomik.web.id/qimanga")
 DEMON_API = os.getenv("DEMON_API", "https://api.ryukomik.web.id/demon")
 VORTEX_API = os.getenv("VORTEX_API", "https://api.ryukomik.web.id/vortex")
+KAGANE_API = os.getenv("KAGANE_API", "https://api.ryukomik.web.id/kagane")
+MGEKO_API = os.getenv("MGEKO_API", "https://api.ryukomik.web.id/mgeko")
 DASHBOARD_URL = os.getenv("DASHBOARD_URL", "https://staff.ryukomik.web.id")
 
 # Recruitment test materials. Keep these configurable because Filebin links

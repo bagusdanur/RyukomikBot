@@ -24,6 +24,8 @@ from raw_downloader import (
     demon_downloader,
     thunder_downloader,
     vortex_downloader,
+    kagane_downloader,
+    mgeko_downloader,
 )
 from raw_downloader.resolver import normalize_title
 
@@ -42,6 +44,8 @@ RAW_DOWNLOADERS = {
     "vortex": vortex_downloader,
     "qimanga": qimanga_downloader,
     "demon": demon_downloader,
+    "kagane": kagane_downloader,
+    "mgeko": mgeko_downloader,
 }
 CACHE_HOURS = max(1, int(os.getenv("SCOUT_CACHE_HOURS", "24")))
 MAX_CONCURRENCY = max(1, min(10, int(os.getenv("SCOUT_MAX_CONCURRENCY", "5"))))

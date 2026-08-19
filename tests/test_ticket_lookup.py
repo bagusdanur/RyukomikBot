@@ -1,9 +1,11 @@
+import pytest
 from types import SimpleNamespace
 import discord
 
 from helpers.utils import find_ticket
 
 
+@pytest.mark.anyio
 async def test_find_ticket_accepts_staff_ticket_inside_recruitment_category():
     staff = SimpleNamespace(id=123)
     channel = SimpleNamespace(
@@ -15,6 +17,7 @@ async def test_find_ticket_accepts_staff_ticket_inside_recruitment_category():
     assert await find_ticket(guild, staff.id) is channel
 
 
+@pytest.mark.anyio
 async def test_find_ticket_uses_private_owner_overwrite_when_legacy_topic_has_no_id():
     staff = SimpleNamespace(id=123)
     channel = SimpleNamespace(

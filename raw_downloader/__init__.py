@@ -6,6 +6,8 @@ from .thunder import ThunderDownloader, search_thunder
 from .qimanga import QiMangaDownloader
 from .demon import DemonDownloader
 from .vortex import VortexDownloader, search_vortex
+from .kagane import KaganeDownloader, search_kagane
+from .mgeko import MgekoDownloader, search_mgeko
 
 asura_downloader = AsuraDownloader()
 doujiva_downloader = DoujivaDownloader()
@@ -15,6 +17,8 @@ thunder_downloader = ThunderDownloader()
 qimanga_downloader = QiMangaDownloader()
 demon_downloader = DemonDownloader()
 vortex_downloader = VortexDownloader()
+kagane_downloader = KaganeDownloader()
+mgeko_downloader = MgekoDownloader()
 
 
 def get_downloader(source: str = "asura"):
@@ -33,6 +37,10 @@ def get_downloader(source: str = "asura"):
         return qimanga_downloader
     if source.casefold() in ("demon", "demonicscans"):
         return demon_downloader
+    if source.casefold() in ("kagane", "kaganeto", "kagane.to"):
+        return kagane_downloader
+    if source.casefold() in ("mgeko", "mgekocc", "mgeko.cc", "geko"):
+        return mgeko_downloader
     if source.casefold() == "asura":
         return asura_downloader
     raise ValueError(f"Sumber RAW tidak dikenal: {source}")
@@ -47,12 +55,16 @@ __all__ = [
     "VortexDownloader",
     "QiMangaDownloader",
     "DemonDownloader",
+    "KaganeDownloader",
+    "MgekoDownloader",
     "search_asura",
     "search_doujiva",
     "search_omega",
     "search_evascan",
     "search_thunder",
     "search_vortex",
+    "search_kagane",
+    "search_mgeko",
     "get_downloader",
     "asura_downloader",
     "doujiva_downloader",
@@ -62,4 +74,6 @@ __all__ = [
     "vortex_downloader",
     "qimanga_downloader",
     "demon_downloader",
+    "kagane_downloader",
+    "mgeko_downloader",
 ]

@@ -62,6 +62,8 @@ const availableSources = [
   { id: "vortex", label: "Vortex Scans" },
   { id: "qimanga", label: "QiManga" },
   { id: "demon", label: "Demon Scans" },
+  { id: "kagane", label: "Kagane" },
+  { id: "mgeko", label: "Mgeko" },
 ];
 
 const statusLabels: Record<string, string> = {
