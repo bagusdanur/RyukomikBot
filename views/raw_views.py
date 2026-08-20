@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import aiohttp
 import os
 import re
@@ -191,9 +191,7 @@ async def create_filebin_download(
             return None, [], selected_source
         resized_images = 0
         for index, (_, image_path, _) in enumerate(upload_entries, 1):
-            # Thunder RAW must remain byte-for-byte original. Its long pages are
-            # intentionally not capped to the editor-safe 8192 px height.
-            if raw_mode != "original" and selected_source != "thunder":
+            if raw_mode != "original":
                 resize_result = await asyncio.to_thread(resize_for_editor, image_path)
                 resized_images += int(resize_result.resized)
             if index == len(upload_entries) or index % 3 == 0:

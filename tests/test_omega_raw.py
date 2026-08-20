@@ -204,7 +204,34 @@ class ThreeSourceResolverTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(completed, ["1", "2"])
         self.assertEqual(final_source, "doujiva")
 
-    async def test_thunder_keeps_original_images_without_resize(self):
+    async def test_thunder_resizes_in_editor_safe_mode(self):
+        downloaders = {
+            "thunder": FakePackageDownloader("thunder"),
+        }
+        with tempfile.TemporaryDirectory() as temporary, patch(
+            "views.raw_views.RAW_ROOT", temporary
+        ), patch(
+            "views.raw_views.get_downloader",
+            side_effect=lambda source: downloaders[source],
+        ), patch(
+            "views.raw_views.upload_to_filebin",
+            new=AsyncMock(return_value=True),
+        ), patch(
+            "views.raw_views.verify_filebin",
+            new=AsyncMock(return_value=True),
+        ), patch(
+            "views.raw_views.resize_for_editor",
+            return_value=unittest.mock.MagicMock(resized=True),
+        ) as resize_mock:
+            url, completed, final_source = await create_filebin_download(
+                "thunder", "shared-title", ["1"], raw_mode="editor_safe"
+            )
+        self.assertTrue(url.startswith("https://filebin.net/"))
+        self.assertEqual(completed, ["1"])
+        self.assertEqual(final_source, "thunder")
+        self.assertTrue(resize_mock.called)
+
+    async def test_thunder_keeps_original_images_in_original_mode(self):
         downloaders = {
             "thunder": FakePackageDownloader("thunder"),
         }
@@ -223,7 +250,7 @@ class ThreeSourceResolverTests(unittest.IsolatedAsyncioTestCase):
             "views.raw_views.resize_for_editor",
         ) as resize_mock:
             url, completed, final_source = await create_filebin_download(
-                "thunder", "shared-title", ["1"]
+                "thunder", "shared-title", ["1"], raw_mode="original"
             )
         self.assertTrue(url.startswith("https://filebin.net/"))
         self.assertEqual(completed, ["1"])
