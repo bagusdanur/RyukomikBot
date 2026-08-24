@@ -376,11 +376,12 @@ async def workflow_reminder_loop():
         except ValueError:
             continue
         days_left = (deadline_date - today_date).days
-        if days_left > 3:
+        # One supportive reminder only, exactly one day before the deadline.
+        # Submit enforcement remains separate and still applies after expiry.
+        if days_left != 1:
             continue
-        overdue = days_left < 0
-        stage = f"overdue-daily:{today_date.isoformat()}" if overdue else f"deadline-d{days_left}"
-        key = f"{stage}:{assignment_id}:{deadline}"
+        overdue = False
+        key = f"deadline-h1:{assignment_id}:{deadline}"
         if not await db.claim_reminder(key, assignment_id, "staff"):
             continue
         ticket = await find_ticket(guild, int(item.get("staff_id") or 0))
@@ -395,36 +396,18 @@ async def workflow_reminder_loop():
                     ),
                     color=discord.Color.red() if overdue else discord.Color.gold(),
                 )
-            if overdue:
-                strict_title = f"🚨 TERLAMBAT {abs(days_left)} HARI"
-                strict_action = "Segera selesaikan atau gunakan **Bantuan Tugas** untuk melaporkan kendala."
-            elif days_left == 0:
-                strict_title = "🔴 DEADLINE HARI INI"
-                strict_action = "Hasil harus dikirim hari ini. Laporkan kendala sekarang."
-            elif days_left == 1:
-                strict_title = "🟠 DEADLINE BESOK"
-                strict_action = "Prioritaskan tugas ini dan pastikan hasil segera diselesaikan."
-            else:
-                strict_title = f"🟡 DEADLINE H-{days_left}"
-                strict_action = "Mulai prioritaskan tugas ini dan cek kembali progres pengerjaan."
-            embed.title = strict_title
-            embed.description = f"**#{assignment_id} — {item['manga']} Ch. {item['chapter']}**\nDeadline: **{deadline}**. {strict_action}"
-            embed.color = discord.Color.red() if days_left <= 0 else discord.Color.orange() if days_left == 1 else discord.Color.gold()
+            embed.title = "⏰ Pengingat Deadline Besok"
+            embed.description = (
+                f"Halo! Sekadar mengingatkan tugas **#{assignment_id} — {item['manga']} "
+                f"Ch. {item['chapter']}** memiliki deadline **{deadline}**.\n\n"
+                "Semangat menyelesaikannya. Kalau ada kendala atau membutuhkan tambahan waktu, "
+                "silakan gunakan **Bantuan Tugas → Minta Perpanjangan**."
+            )
+            embed.color = discord.Color.blurple()
             await operations.enqueue_notification(
                 key, "deadline_reminder", ticket.id,
                 {"content": member.mention if member else None, "embed": embed.to_dict()},
             )
-            if overdue and admin_channel:
-                admin_key = f"{key}:admin"
-                if await db.claim_reminder(admin_key, assignment_id, "admin"):
-                    await admin_channel.send(
-                        embed=discord.Embed(
-                            title=f"🚨 Tugas #{assignment_id} Terlambat {abs(days_left)} Hari",
-                            description=f"**{item['manga']} Ch. {item['chapter']}** • Deadline **{deadline}**\nStaff: {member.mention if member else item['staff_id']} • Tiket: {ticket.mention}",
-                            color=discord.Color.red(),
-                        ),
-                        allowed_mentions=discord.AllowedMentions.none(),
-                    )
 
 
 @workflow_reminder_loop.before_loop

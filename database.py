@@ -1012,7 +1012,7 @@ async def get_reminder_candidates() -> List[Dict[str, Any]]:
             SELECT * FROM assignments
             WHERE
               (deadline_at IS NOT NULL AND status IN ('claimed','revision')
-               AND date(deadline_at) <= date('now','+3 day'))
+               AND date(deadline_at) <= date('now','+1 day'))
               OR
               (status='submitted' AND submitted_at IS NOT NULL
                AND datetime(submitted_at) <= datetime('now','-24 hours'))
