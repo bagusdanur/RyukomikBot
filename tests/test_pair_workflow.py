@@ -40,6 +40,24 @@ class PairWorkflowTests(unittest.TestCase):
         self.assertTrue(all(row[2] == "pair_waiting" for row in rows))
         self.assertEqual(sum(row[3] for row in rows), 18000)
 
+    def test_pair_propagates_lossless_raw_pack_mode(self):
+        project = asyncio.run(pair_workflow.create_project(
+            manga="Pair Project", chapters=["6"], tl_staff_id=100, ts_staff_id=200,
+            tl_rate_per_chapter=4000, ts_rate_per_chapter=5000,
+            deadline_at="2026-08-20", created_by=999, raw_source="diva",
+            raw_manga_id="pair-project", raw_pack_mode="merge_16000",
+        ))
+        connection = sqlite3.connect(database.DB_PATH)
+        project_mode = connection.execute(
+            "SELECT raw_pack_mode FROM pair_projects WHERE id=?", (project["id"],)
+        ).fetchone()[0]
+        assignment_modes = connection.execute(
+            "SELECT raw_pack_mode FROM assignments WHERE pair_project_id=?", (project["id"],)
+        ).fetchall()
+        connection.close()
+        self.assertEqual(project_mode, "merge_16000")
+        self.assertEqual(assignment_modes, [("merge_16000",), ("merge_16000",)])
+
     def test_tl_and_ts_must_finish_before_atomic_pay_release(self):
         project = self.create_pair(["1"])
         chapter_id = project["chapters"][0]["id"]

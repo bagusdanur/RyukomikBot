@@ -87,6 +87,7 @@ class AssignmentCreate(BaseModel):
     raw_mode: Literal["editor_safe", "original"] = "editor_safe"
     raw_source: str | None = Field(default=None, max_length=30)
     raw_id: str | None = Field(default=None, max_length=500)
+    raw_pack_mode: Literal["normal", "merge_16000"] = "normal"
 
 
 class TlTsPairCreate(BaseModel):
@@ -100,6 +101,7 @@ class TlTsPairCreate(BaseModel):
     raw_mode: Literal["editor_safe", "original"] = "editor_safe"
     raw_source: str | None = Field(default=None, max_length=30)
     raw_id: str | None = Field(default=None, max_length=500)
+    raw_pack_mode: Literal["normal", "merge_16000"] = "normal"
 
 class AssignmentUpdate(BaseModel):
     manga: str = Field(min_length=2, max_length=150)
@@ -110,6 +112,7 @@ class AssignmentUpdate(BaseModel):
     raw_mode: Literal["editor_safe", "original"] = "editor_safe"
     raw_source: str | None = Field(default=None, max_length=30)
     raw_id: str | None = Field(default=None, max_length=500)
+    raw_pack_mode: Literal["normal", "merge_16000"] = "normal"
 
 
 class RevisionRequest(BaseModel):
@@ -396,6 +399,7 @@ async def create_dashboard_assignment(payload: AssignmentCreate, user=Depends(ad
         raw_mode=payload.raw_mode,
         raw_source=payload.raw_source,
         raw_manga_id=payload.raw_id,
+        raw_pack_mode=payload.raw_pack_mode,
     )
     notice_payload = payload.model_copy(update={
         "chapter": chapter_display(chapters),
@@ -460,6 +464,7 @@ async def create_tl_ts_pair(payload: TlTsPairCreate, user=Depends(admin_user)):
         raw_mode=payload.raw_mode,
         raw_source=payload.raw_source,
         raw_manga_id=payload.raw_id,
+        raw_pack_mode=payload.raw_pack_mode,
     )
     try:
         channel_id, panel_message_id = await create_pair_workspace(int(project["id"]))
@@ -517,7 +522,7 @@ async def update_dashboard_assignment(
             """UPDATE assignments
                SET manga=?,chapter=?,chapters=?,chapter_count=?,role=?,
                    base_rate=?,rate_per_chapter=?,final_rate=?,deadline_at=?,raw_mode=?,
-                   raw_source=?,raw_manga_id=?
+                   raw_source=?,raw_manga_id=?,raw_pack_mode=?
                WHERE id=? AND status IN ('open','claimed','submitted','revision')""",
             (
                 payload.manga.strip(),
@@ -532,6 +537,7 @@ async def update_dashboard_assignment(
                 payload.raw_mode,
                 payload.raw_source,
                 payload.raw_id,
+                payload.raw_pack_mode,
                 assignment_id,
             ),
         )

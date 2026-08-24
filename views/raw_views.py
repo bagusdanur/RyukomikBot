@@ -19,7 +19,7 @@ from raw_downloader.resolver import (
     resolve_assignment_raw,
 )
 from raw_downloader.retry import RETRYABLE_STATUSES
-from raw_downloader.image_processing import resize_for_editor
+from raw_downloader.image_processing import merge_images_lossless, resize_for_editor
 
 RAW_ROOT = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "raw")
 FILEBIN_BASE_URL = "https://filebin.net"
@@ -50,6 +50,10 @@ def cleanup_old_raw_files(max_age_hours=24):
 
 def raw_mode_label(raw_mode: str) -> str:
     return "RAW Original" if raw_mode == "original" else "Aman untuk Editor (maks. 8192 px)"
+
+
+def raw_pack_label(raw_pack_mode: str) -> str:
+    return "Gabung Lossless (maks. 16.000 px)" if raw_pack_mode == "merge_16000" else "Normal (per halaman)"
 
 
 async def resolve_pinned_raw(source: str, manga_id: str, allowed_chapters, timeout: int = 12):
@@ -152,6 +156,7 @@ async def create_filebin_download(
     fallbacks=None,
     progress: Optional[Callable[[str], Awaitable[None]]] = None,
     raw_mode: str = "editor_safe",
+    raw_pack_mode: str = "normal",
 ):
     """Upload images directly so Filebin's download ZIP has no nested archive/folders."""
     cleanup_old_raw_files()
@@ -215,9 +220,24 @@ async def create_filebin_download(
 
         if not upload_entries:
             return None, [], selected_source
+        if raw_pack_mode == "merge_16000":
+            await notify(f"Menggabungkan **{len(upload_entries)} halaman** secara lossless hingga 16.000 px...")
+            merged_entries = []
+            merged_root = os.path.join(request_root, "merged")
+            for chapter_id in dict.fromkeys(item[0] for item in upload_entries):
+                chapter_paths = [path for item_chapter, path, _ in upload_entries if item_chapter == chapter_id]
+                safe_chapter = re.sub(r"[^a-zA-Z0-9_-]+", "-", chapter_id).strip("-")[:30] or "chapter"
+                merged_paths = await asyncio.to_thread(
+                    merge_images_lossless, chapter_paths, merged_root, f"ch-{safe_chapter}"
+                )
+                merged_entries.extend(
+                    (chapter_id, path, os.path.basename(path)) for path in merged_paths
+                )
+            upload_entries = merged_entries
+            await notify(f"Penggabungan selesai: **{len(upload_entries)} file lossless** siap diunggah.")
         resized_images = 0
         for index, (_, image_path, _) in enumerate(upload_entries, 1):
-            if raw_mode != "original":
+            if raw_pack_mode != "merge_16000" and raw_mode != "original":
                 resize_result = await asyncio.to_thread(resize_for_editor, image_path)
                 resized_images += int(resize_result.resized)
             if index == len(upload_entries) or index % 3 == 0:
@@ -413,6 +433,7 @@ class RawAssignmentSelect(discord.ui.Select):
                         for item in result.get("fallbacks", [])
                     ],
                     raw_mode=assignment.get("raw_mode", "editor_safe"),
+                    raw_pack_mode=assignment.get("raw_pack_mode", "normal"),
                 ),
             )
 
@@ -432,23 +453,25 @@ class RawAssignmentSelect(discord.ui.Select):
                 allowed_chapters=allowed,
                 assignment_id=assignment["id"],
                 raw_mode=assignment.get("raw_mode", "editor_safe"),
+                raw_pack_mode=assignment.get("raw_pack_mode", "normal"),
             ),
         )
 
 
 class RawSearchView(discord.ui.View):
-    def __init__(self, source, results, allowed_chapters=None, assignment_id=None, raw_mode="editor_safe"):
+    def __init__(self, source, results, allowed_chapters=None, assignment_id=None, raw_mode="editor_safe", raw_pack_mode="normal"):
         super().__init__(timeout=300)
         normalized = [{**manga, "_source": manga.get("_source", source)} for manga in results[:25]]
-        self.add_item(RawMangaSelect(normalized, allowed_chapters, assignment_id, raw_mode))
+        self.add_item(RawMangaSelect(normalized, allowed_chapters, assignment_id, raw_mode, raw_pack_mode))
 
 
 class RawMangaSelect(discord.ui.Select):
-    def __init__(self, results, allowed_chapters=None, assignment_id=None, raw_mode="editor_safe"):
+    def __init__(self, results, allowed_chapters=None, assignment_id=None, raw_mode="editor_safe", raw_pack_mode="normal"):
         self.results = results
         self.allowed_chapters = allowed_chapters
         self.assignment_id = assignment_id
         self.raw_mode = raw_mode
+        self.raw_pack_mode = raw_pack_mode
         options = [
             discord.SelectOption(
                 label=str(manga.get("title", "Tanpa judul"))[:100],
@@ -542,23 +565,25 @@ class RawMangaSelect(discord.ui.Select):
                 restricted=self.allowed_chapters is not None,
                 fallbacks=fallback_candidates,
                 raw_mode=self.raw_mode,
+                raw_pack_mode=self.raw_pack_mode,
             ),
         )
 
 
 class RawChapterView(discord.ui.View):
-    def __init__(self, source, manga_id, chapters, restricted=False, fallbacks=None, raw_mode="editor_safe"):
+    def __init__(self, source, manga_id, chapters, restricted=False, fallbacks=None, raw_mode="editor_safe", raw_pack_mode="normal"):
         super().__init__(timeout=300)
         self.source, self.manga_id, self.chapters, self.restricted = source, manga_id, chapters, restricted
         self.fallbacks = fallbacks or []
         self.raw_mode = raw_mode
+        self.raw_pack_mode = raw_pack_mode
         self.add_item(RawChapterSelect(self, chapters))
 
     @discord.ui.button(label="Download Chapter Tugas", style=discord.ButtonStyle.success, row=1)
     async def latest_button(self, interaction, _button):
         chapter_ids = [str(item["id"]) for item in self.chapters] if self.restricted else [str(self.chapters[0]["id"])]
         await download_chapters(
-            interaction, self.source, self.manga_id, chapter_ids, self.fallbacks, self.raw_mode
+            interaction, self.source, self.manga_id, chapter_ids, self.fallbacks, self.raw_mode, self.raw_pack_mode
         )
 
 
@@ -575,11 +600,11 @@ class RawChapterSelect(discord.ui.Select):
             self.parent_view.source,
             self.parent_view.manga_id,
             self.values,
-            self.parent_view.fallbacks, self.parent_view.raw_mode,
+            self.parent_view.fallbacks, self.parent_view.raw_mode, self.parent_view.raw_pack_mode,
         )
 
 
-async def download_chapters(interaction, source, manga_id, chapter_ids, fallbacks=None, raw_mode="editor_safe"):
+async def download_chapters(interaction, source, manga_id, chapter_ids, fallbacks=None, raw_mode="editor_safe", raw_pack_mode="normal"):
     if not (is_staff(interaction.user) or is_admin(interaction.user)):
         return await interaction.response.send_message("Hanya staff atau administrator yang dapat download RAW.")
     await interaction.response.edit_message(
@@ -587,7 +612,7 @@ async def download_chapters(interaction, source, manga_id, chapter_ids, fallback
             title="Menyiapkan RAW...",
             description=(
                 f"Sumber: **{source.title()}**\nChapter: **{', '.join(chapter_ids)}**\n\n"
-                f"Mode: **{raw_mode_label(raw_mode)}**\nMengunduh gambar lalu mengunggahnya ke Filebin."
+                f"Mode: **{raw_mode_label(raw_mode)}**\nPaket: **{raw_pack_label(raw_pack_mode)}**\nMengunduh gambar lalu mengunggahnya ke Filebin."
             ),
             color=discord.Color.gold(),
         ),
@@ -603,13 +628,15 @@ async def download_chapters(interaction, source, manga_id, chapter_ids, fallback
         )
 
     filebin_url, completed, final_source = await create_filebin_download(
-        source, manga_id, chapter_ids, fallbacks, progress=progress, raw_mode=raw_mode
+        source, manga_id, chapter_ids, fallbacks, progress=progress, raw_mode=raw_mode,
+        raw_pack_mode=raw_pack_mode,
     )
     if not filebin_url:
         return await interaction.edit_original_response(embed=discord.Embed(title="Upload Filebin Gagal", description="RAW tidak tersedia atau Filebin sedang menolak upload. File lokal sudah dibersihkan; coba lagi nanti.", color=discord.Color.red()))
     embed = discord.Embed(title="RAW Siap Diunduh", description=f"Gambar dari **{len(completed)} chapter** sudah tersedia langsung di Filebin tanpa ZIP bertingkat.", color=discord.Color.green())
     embed.add_field(name="Sumber Final", value=final_source.title(), inline=False)
     embed.add_field(name="Mode RAW", value=raw_mode_label(raw_mode), inline=False)
+    embed.add_field(name="Paket RAW", value=raw_pack_label(raw_pack_mode), inline=False)
     embed.add_field(name="Chapter", value=", ".join(completed), inline=False)
     embed.add_field(name="Link Download", value=f"[Buka Filebin]({filebin_url})", inline=False)
     embed.add_field(name="Cara Download", value="Buka Filebin lalu pilih **Download files**. ZIP hasil download langsung berisi `ch-1_001.jpg`, `ch-1_002.jpg`, dan seterusnya.", inline=False)

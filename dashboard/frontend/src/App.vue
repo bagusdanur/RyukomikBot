@@ -100,6 +100,7 @@ const task = ref({
   raw_mode: "editor_safe",
   raw_source: "",
   raw_id: "",
+  raw_pack_mode: "normal",
 });
 const mangaSearchSource = ref("all");
 const mangaSearchResults = ref<RawSearchResult[]>([]);
@@ -582,6 +583,7 @@ async function createTask() {
         raw_mode: task.value.raw_mode,
         raw_source: task.value.raw_source || null,
         raw_id: task.value.raw_id || null,
+        raw_pack_mode: task.value.raw_pack_mode,
       });
       success.value = `Tugas #${editingTask.value.id} diperbarui${result.notified ? " dan staff sudah diberi notifikasi." : "."}`;
     } else if (task.value.role === "PAIR") {
@@ -593,6 +595,7 @@ async function createTask() {
         raw_mode: task.value.raw_mode,
         raw_source: task.value.raw_source || null,
         raw_id: task.value.raw_id || null,
+        raw_pack_mode: task.value.raw_pack_mode,
       });
       success.value = result.notified
         ? `Pair dibuat: tugas TL #${result.tl_assignment_id} dikirim ke tiket staff. Tugas TS akan otomatis aktif setelah TL disetujui.`
@@ -615,6 +618,7 @@ async function createTask() {
       raw_mode: "editor_safe",
       raw_source: "",
       raw_id: "",
+      raw_pack_mode: "normal",
     };
     rawRateAnalysis.value = null;
     await loadPage();
@@ -674,6 +678,7 @@ async function openTask(staffId?: string, prefill?: { manga?: string; chapter?: 
   mangaDropdownOpen.value = false;
   task.value.raw_source = "";
   task.value.raw_id = "";
+  task.value.raw_pack_mode = "normal";
   error.value = "";
   if (prefill) {
     if (prefill.manga) task.value.manga = prefill.manga;
@@ -719,6 +724,7 @@ function editTask(item: Assignment) {
     raw_mode: item.raw_mode || "editor_safe",
     raw_source: item.raw_source || "",
     raw_id: item.raw_manga_id || "",
+    raw_pack_mode: item.raw_pack_mode || "normal",
   };
   rawRateAnalysis.value = null;
   showTask.value = true;
@@ -2090,6 +2096,7 @@ onMounted(async () => {
               :loading="rawRateAnalyzing" @click="analyzeRawRate" />
           </div
           ><label class="wide">Mode RAW<select v-model="task.raw_mode"><option value="editor_safe">Aman untuk Editor — maksimal 8192 px</option><option value="original">RAW Original — tanpa resize</option></select><small>{{ task.raw_mode === 'original' ? 'Kualitas dan ukuran asli dipertahankan; gambar panjang mungkin sulit dibuka di Ibis.' : 'Gambar sangat panjang dikecilkan proporsional agar aman dibuka editor.' }}</small></label
+          ><label class="wide">Paket Download RAW<select v-model="task.raw_pack_mode"><option value="normal">Normal — satu file per halaman</option><option value="merge_16000">Gabung Lossless — maksimal sekitar 16.000 px</option></select><small>{{ task.raw_pack_mode === 'merge_16000' ? 'Beberapa halaman digabung vertikal sebagai PNG lossless tanpa resize. Jumlah file lebih sedikit.' : 'Setiap halaman RAW tetap menjadi file terpisah.' }}</small></label
           ><div v-if="rawRateAnalysis" class="wide raw-rate-result" :class="rawRateAnalysis.workload.toLowerCase()">
             <div>
               <small>{{ rawRateAnalysis.source.toUpperCase() }} · {{ rawRateAnalysis.matched_title }}</small>

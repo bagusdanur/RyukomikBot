@@ -43,6 +43,15 @@ class WorkflowImprovementTests(unittest.TestCase):
             "deadline-h1:1:2026-07-24", assignment_id, "staff"
         )))
 
+    def test_assignment_persists_lossless_raw_pack_mode(self):
+        assignment_id = asyncio.run(database.create_assignment(
+            "Series", "6", "TS", 5000, 5000, 1.0,
+            raw_source="diva", raw_manga_id="series", raw_pack_mode="merge_16000",
+        ))
+        assignment = asyncio.run(database.get_assignment(assignment_id))
+        self.assertEqual(assignment["raw_pack_mode"], "merge_16000")
+        self.assertEqual(assignment["raw_source"], "diva")
+
 
 if __name__ == "__main__":
     unittest.main()

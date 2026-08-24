@@ -390,6 +390,7 @@ async def open_project_raw(interaction: discord.Interaction, project_id: int):
                 source, str(result["manga"]["id"]), result["chapters"], restricted=True,
                 fallbacks=[{"source": item["source"], "manga_id": str(item["manga"]["id"])} for item in result.get("fallbacks", [])],
                 raw_mode=project.get("raw_mode", "editor_safe"),
+                raw_pack_mode=project.get("raw_pack_mode", "normal"),
             ),
         )
     if result["status"] == "ambiguous":

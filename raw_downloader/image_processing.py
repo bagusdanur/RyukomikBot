@@ -5,12 +5,15 @@ from __future__ import annotations
 import os
 import tempfile
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 
 MAX_RAW_IMAGE_HEIGHT = int(os.getenv("RAW_MAX_IMAGE_HEIGHT", "8192"))
 RAW_MODES = {"editor_safe", "original"}
+MAX_MERGED_HEIGHT = int(os.getenv("RAW_MERGED_HEIGHT", "16000"))
 
 
 @dataclass(frozen=True)
@@ -18,6 +21,56 @@ class ResizeResult:
     resized: bool
     original_height: int | None = None
     final_height: int | None = None
+
+
+def merge_images_lossless(
+    image_paths: Iterable[str], output_dir: str, stem: str, max_height: int = MAX_MERGED_HEIGHT
+) -> list[str]:
+    """Vertically pack ordered pages into lossless PNG files without resizing pixels."""
+    if max_height < 1:
+        raise ValueError("max_height must be positive")
+    paths = list(image_paths)
+    os.makedirs(output_dir, exist_ok=True)
+    groups: list[list[tuple[str, int, int]]] = []
+    current: list[tuple[str, int, int]] = []
+    current_height = 0
+    for path in paths:
+        with Image.open(path) as source:
+            width, height = ImageOps.exif_transpose(source).size
+        if current and current_height + height > max_height:
+            groups.append(current)
+            current, current_height = [], 0
+        current.append((path, width, height))
+        current_height += height
+        if current_height >= max_height:
+            groups.append(current)
+            current, current_height = [], 0
+    if current:
+        groups.append(current)
+
+    outputs: list[str] = []
+    for part, group in enumerate(groups, 1):
+        canvas_width = max(width for _, width, _ in group)
+        canvas_height = sum(height for _, _, height in group)
+        canvas = Image.new("RGB", (canvas_width, canvas_height), "white")
+        y = 0
+        for path, width, height in group:
+            with Image.open(path) as source:
+                page = ImageOps.exif_transpose(source)
+                if page.mode != "RGB":
+                    if "A" in page.getbands():
+                        layer = Image.new("RGB", page.size, "white")
+                        layer.paste(page, mask=page.getchannel("A"))
+                        page = layer
+                    else:
+                        page = page.convert("RGB")
+                canvas.paste(page, ((canvas_width - width) // 2, y))
+            y += height
+        output = os.path.join(output_dir, f"{Path(stem).stem}_part{part:03d}.png")
+        canvas.save(output, format="PNG", optimize=True)
+        canvas.close()
+        outputs.append(output)
+    return outputs
 
 
 def resize_for_editor(image_path: str, max_height: int = MAX_RAW_IMAGE_HEIGHT) -> ResizeResult:

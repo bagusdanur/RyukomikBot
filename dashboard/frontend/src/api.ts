@@ -22,6 +22,7 @@ export type Assignment = {
   raw_mode?: "editor_safe" | "original";
   raw_source?: string | null;
   raw_manga_id?: string | null;
+  raw_pack_mode?: "normal" | "merge_16000";
   staff_name?: string;
   staff_avatar?: string | null;
 };
