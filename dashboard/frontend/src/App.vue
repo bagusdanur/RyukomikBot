@@ -580,6 +580,8 @@ async function createTask() {
         rate_per_chapter: task.value.final_rate,
         deadline_at: task.value.deadline_at || null,
         raw_mode: task.value.raw_mode,
+        raw_source: task.value.raw_source || null,
+        raw_id: task.value.raw_id || null,
       });
       success.value = `Tugas #${editingTask.value.id} diperbarui${result.notified ? " dan staff sudah diberi notifikasi." : "."}`;
     } else if (task.value.role === "PAIR") {
@@ -589,6 +591,8 @@ async function createTask() {
         tl_rate_per_chapter: task.value.final_rate, ts_rate_per_chapter: task.value.ts_rate,
         deadline_at: task.value.deadline_at || null,
         raw_mode: task.value.raw_mode,
+        raw_source: task.value.raw_source || null,
+        raw_id: task.value.raw_id || null,
       });
       success.value = result.notified
         ? `Pair dibuat: tugas TL #${result.tl_assignment_id} dikirim ke tiket staff. Tugas TS akan otomatis aktif setelah TL disetujui.`
@@ -713,8 +717,8 @@ function editTask(item: Assignment) {
     ts_rate: 5000,
     deadline_at: item.deadline_at || "",
     raw_mode: item.raw_mode || "editor_safe",
-    raw_source: "",
-    raw_id: "",
+    raw_source: item.raw_source || "",
+    raw_id: item.raw_manga_id || "",
   };
   rawRateAnalysis.value = null;
   showTask.value = true;

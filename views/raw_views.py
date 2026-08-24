@@ -52,6 +52,32 @@ def raw_mode_label(raw_mode: str) -> str:
     return "RAW Original" if raw_mode == "original" else "Aman untuk Editor (maks. 8192 px)"
 
 
+async def resolve_pinned_raw(source: str, manga_id: str, allowed_chapters, timeout: int = 12):
+    """Resolve chapters only from the source explicitly selected by the administrator."""
+    source = str(source or "").casefold()
+    if source not in SOURCE_ORDER or not manga_id:
+        return {"status": "invalid_source", "source": source}
+    try:
+        chapters = await asyncio.wait_for(
+            get_downloader(source).get_chapter_list(str(manga_id)), timeout=timeout
+        )
+    except asyncio.TimeoutError:
+        return {"status": "timeout", "source": source}
+    except Exception:
+        return {"status": "not_found", "source": source}
+    matched, missing = filter_allowed_chapters(chapters or [], allowed_chapters)
+    if not matched:
+        return {"status": "chapters_missing", "source": source, "missing": missing}
+    return {
+        "status": "resolved",
+        "source": source,
+        "manga": {"id": str(manga_id), "title": "Source pilihan admin"},
+        "chapters": matched,
+        "missing": missing,
+        "fallbacks": [],
+    }
+
+
 async def upload_to_filebin(bin_id, file_path, remote_filename=None, session=None):
     """Upload one file into a shared Filebin bin."""
     filename = remote_filename or os.path.basename(file_path)
@@ -291,13 +317,17 @@ class RawAssignmentSelect(discord.ui.Select):
         assignment = self.assignments[self.values[0]]
         if assignment["staff_id"] != interaction.user.id:
             return await interaction.response.send_message("Tugas ini bukan milikmu.")
+        pinned_source = assignment.get("raw_source")
+        pinned_id = assignment.get("raw_manga_id")
         await interaction.response.edit_message(
             embed=discord.Embed(
                 title="Mencari RAW Proyekâ€¦",
                 description=(
                     f"Proyek: **{assignment['manga']}**\n"
                     f"Target chapter: **{assignment['chapter']}**\n\n"
-                    "Mencari otomatis di Asura, Omega, dan Doujiva."
+                    + (f"Menggunakan source pilihan admin: **{pinned_source.title()}**."
+                     if pinned_source and pinned_id else
+                     "Mencari otomatis di seluruh source RAW.")
                 ),
                 color=discord.Color.gold(),
             ),
@@ -318,19 +348,26 @@ class RawAssignmentSelect(discord.ui.Select):
                 view=None,
             )
 
-        result = await resolve_assignment_raw(
-            assignment["manga"],
-            allowed,
-            {source: get_downloader(source) for source in SOURCE_ORDER},
-            progress=show_progress,
-        )
+        if pinned_source and pinned_id:
+            await show_progress(f"Membuka source pilihan admin: **{pinned_source.title()}**.")
+            result = await resolve_pinned_raw(pinned_source, pinned_id, allowed)
+            if result["status"] == "resolved":
+                result["manga"]["title"] = assignment["manga"]
+        else:
+            result = await resolve_assignment_raw(
+                assignment["manga"],
+                allowed,
+                {source: get_downloader(source) for source in SOURCE_ORDER},
+                progress=show_progress,
+            )
         if result["status"] == "not_found":
             return await interaction.edit_original_response(
                 embed=discord.Embed(
                     title="RAW Tidak Ditemukan",
                     description=(
-                        f"Tidak ada hasil untuk **{assignment['manga']}** di Asura, Omega, maupun Doujiva. "
-                        "Hubungi admin jika judul proyek perlu disesuaikan."
+                        f"RAW **{assignment['manga']}** tidak tersedia di source yang ditetapkan"
+                        f"{f' ({pinned_source.title()})' if pinned_source else ''}. "
+                        "Hubungi admin untuk mengganti source tugas."
                     ),
                     color=discord.Color.red(),
                 )
@@ -338,13 +375,18 @@ class RawAssignmentSelect(discord.ui.Select):
         if result["status"] == "timeout":
             return await interaction.edit_original_response(embed=discord.Embed(
                 title="Pencarian RAW Melewati Batas Waktu",
-                description="Sumber RAW belum merespons dalam 12 detik. Bot sudah mencoba ulang otomatis; coba lagi nanti.",
+                description=(f"Source **{pinned_source.title()}** belum merespons dalam 12 detik; coba lagi nanti."
+                             if pinned_source else
+                             "Sumber RAW belum merespons dalam 12 detik. Bot sudah mencoba ulang otomatis; coba lagi nanti."),
                 color=discord.Color.red(),
             ))
         if result["status"] == "chapters_missing":
             return await interaction.edit_original_response(embed=discord.Embed(
                 title="Chapter Tugas Belum Tersedia",
-                description=f"Judul ditemukan, tetapi chapter **{', '.join(allowed)}** belum tersedia di Asura, Omega, maupun Doujiva.",
+                description=(f"Chapter **{', '.join(allowed)}** belum tersedia di source "
+                             f"**{pinned_source.title()}**. Hubungi admin untuk mengganti source tugas."
+                             if pinned_source else
+                             f"Judul ditemukan, tetapi chapter **{', '.join(allowed)}** belum tersedia di seluruh source."),
                 color=discord.Color.orange(),
             ))
         if result["status"] == "resolved":

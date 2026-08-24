@@ -261,6 +261,10 @@ async def setup_database():
             await db.execute("ALTER TABLE assignments ADD COLUMN review_message_id INTEGER")
         if "raw_mode" not in columns:
             await db.execute("ALTER TABLE assignments ADD COLUMN raw_mode TEXT NOT NULL DEFAULT 'editor_safe'")
+        if "raw_source" not in columns:
+            await db.execute("ALTER TABLE assignments ADD COLUMN raw_source TEXT")
+        if "raw_manga_id" not in columns:
+            await db.execute("ALTER TABLE assignments ADD COLUMN raw_manga_id TEXT")
         await db.execute("""
             UPDATE assignments
             SET chapters = COALESCE(chapters, json_array(chapter)),
@@ -319,6 +323,8 @@ async def create_assignment(
     chapters: Optional[List[str]] = None,
     rate_per_chapter: Optional[int] = None,
     raw_mode: str = "editor_safe",
+    raw_source: Optional[str] = None,
+    raw_manga_id: Optional[str] = None,
 ) -> int:
     """Create a new assignment and return its ID."""
     db = await get_db()
@@ -327,8 +333,8 @@ async def create_assignment(
             INSERT INTO assignments
                 (manga, chapter, staff_id, role, base_rate, final_rate, multiplier,
                  status, message_id, ticket_channel_id, claimed_at, deadline_at,
-                 chapters, chapter_count, rate_per_chapter, raw_mode)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 chapters, chapter_count, rate_per_chapter, raw_mode, raw_source, raw_manga_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             manga, chapter, staff_id, role, base_rate, final_rate, multiplier,
             "claimed" if staff_id else "open", message_id, ticket_channel_id,
@@ -336,6 +342,7 @@ async def create_assignment(
             deadline_at, json.dumps(chapters or [chapter], ensure_ascii=False),
             len(chapters or [chapter]), rate_per_chapter if rate_per_chapter is not None else final_rate,
             raw_mode if raw_mode in {"editor_safe", "original"} else "editor_safe",
+            raw_source, raw_manga_id,
         ))
         await db.commit()
         await add_assignment_event(

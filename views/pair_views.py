@@ -10,7 +10,7 @@ from config import STAFF_LOG_CHANNEL_ID
 from helpers.utils import find_ticket, format_currency, is_admin
 from raw_downloader import get_downloader
 from raw_downloader.resolver import SOURCE_ORDER, resolve_assignment_raw
-from views.raw_views import RawChapterView, RawSearchView
+from views.raw_views import RawChapterView, RawSearchView, resolve_pinned_raw
 
 logger = logging.getLogger(__name__)
 DRIVE_PREFIXES = ("https://drive.google.com/", "http://drive.google.com/")
@@ -362,11 +362,19 @@ async def open_project_raw(interaction: discord.Interaction, project_id: int):
             view=None,
         )
 
-    result = await resolve_assignment_raw(
-        project["manga"], allowed,
-        {source: get_downloader(source) for source in SOURCE_ORDER},
-        progress=progress,
-    )
+    pinned_source = project.get("raw_source")
+    pinned_id = project.get("raw_manga_id")
+    if pinned_source and pinned_id:
+        await progress(f"Membuka source pilihan admin: **{pinned_source.title()}**.")
+        result = await resolve_pinned_raw(pinned_source, pinned_id, allowed)
+        if result["status"] == "resolved":
+            result["manga"]["title"] = project["manga"]
+    else:
+        result = await resolve_assignment_raw(
+            project["manga"], allowed,
+            {source: get_downloader(source) for source in SOURCE_ORDER},
+            progress=progress,
+        )
     if result["status"] == "resolved":
         source = result["source"]
         return await interaction.edit_original_response(
@@ -391,8 +399,9 @@ async def open_project_raw(interaction: discord.Interaction, project_id: int):
         )
     messages = {
         "timeout": "API RAW belum merespons dalam batas waktu. Bot sudah mencoba ulang otomatis.",
-        "chapters_missing": f"Judul ditemukan, tetapi chapter **{', '.join(allowed)}** belum tersedia.",
-        "not_found": f"RAW untuk **{project['manga']}** belum ditemukan di seluruh sumber.",
+        "chapters_missing": (f"Chapter **{', '.join(allowed)}** belum tersedia di source **{pinned_source.title()}**. Hubungi admin untuk mengganti source tugas." if pinned_source else f"Judul ditemukan, tetapi chapter **{', '.join(allowed)}** belum tersedia."),
+        "not_found": (f"RAW untuk **{project['manga']}** tidak tersedia di source **{pinned_source.title()}**. Hubungi admin untuk mengganti source tugas." if pinned_source else f"RAW untuk **{project['manga']}** belum ditemukan di seluruh sumber."),
+        "invalid_source": "Source RAW tugas tidak dikenali. Hubungi admin untuk memilih ulang source.",
     }
     await interaction.edit_original_response(
         embed=discord.Embed(title="RAW Belum Tersedia", description=messages.get(result["status"], "Pencarian RAW gagal."), color=discord.Color.orange()),

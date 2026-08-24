@@ -20,6 +20,8 @@ export type Assignment = {
   assigned_at: string;
   gdrive_link?: string | null;
   raw_mode?: "editor_safe" | "original";
+  raw_source?: string | null;
+  raw_manga_id?: string | null;
   staff_name?: string;
   staff_avatar?: string | null;
 };

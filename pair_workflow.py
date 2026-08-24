@@ -43,6 +43,10 @@ async def setup_pair_tables() -> None:
         project_columns = {row[1] for row in await (await db.execute("PRAGMA table_info(pair_projects)")).fetchall()}
         if "raw_mode" not in project_columns:
             await db.execute("ALTER TABLE pair_projects ADD COLUMN raw_mode TEXT NOT NULL DEFAULT 'editor_safe'")
+        if "raw_source" not in project_columns:
+            await db.execute("ALTER TABLE pair_projects ADD COLUMN raw_source TEXT")
+        if "raw_manga_id" not in project_columns:
+            await db.execute("ALTER TABLE pair_projects ADD COLUMN raw_manga_id TEXT")
         await db.execute("""
             CREATE TABLE IF NOT EXISTS pair_chapters (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -94,6 +98,7 @@ async def create_project(
     *, manga: str, chapters: list[str], tl_staff_id: int, ts_staff_id: int,
     tl_rate_per_chapter: int, ts_rate_per_chapter: int,
     deadline_at: Optional[str], created_by: Optional[int], raw_mode: str = "editor_safe",
+    raw_source: Optional[str] = None, raw_manga_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """Create one project and two non-payable assignments for every chapter."""
     db = await db_module.get_db()
@@ -102,11 +107,11 @@ async def create_project(
         cursor = await db.execute(
             """INSERT INTO pair_projects
                (manga,chapters,tl_staff_id,ts_staff_id,tl_rate_per_chapter,
-                ts_rate_per_chapter,deadline_at,created_by,raw_mode)
-               VALUES(?,?,?,?,?,?,?,?,?)""",
+                ts_rate_per_chapter,deadline_at,created_by,raw_mode,raw_source,raw_manga_id)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
             (manga, json.dumps(chapters, ensure_ascii=False), tl_staff_id, ts_staff_id,
              tl_rate_per_chapter, ts_rate_per_chapter, deadline_at,
-             str(created_by) if created_by else None, raw_mode),
+             str(created_by) if created_by else None, raw_mode, raw_source, raw_manga_id),
         )
         project_id = int(cursor.lastrowid)
         chapter_rows = []
@@ -114,20 +119,22 @@ async def create_project(
             tl_cursor = await db.execute(
                 """INSERT INTO assignments
                    (manga,chapter,staff_id,role,base_rate,final_rate,multiplier,status,
-                    claimed_at,deadline_at,chapters,chapter_count,rate_per_chapter,pair_project_id)
-                   VALUES(?,?,?,?,?,?,1.0,'pair_waiting',CURRENT_TIMESTAMP,?,?,1,?,?)""",
+                    claimed_at,deadline_at,chapters,chapter_count,rate_per_chapter,pair_project_id,
+                    raw_mode,raw_source,raw_manga_id)
+                   VALUES(?,?,?,?,?,?,1.0,'pair_waiting',CURRENT_TIMESTAMP,?,?,1,?,?,?,?,?)""",
                 (manga, chapter, tl_staff_id, "TL", tl_rate_per_chapter,
                  tl_rate_per_chapter, deadline_at, json.dumps([chapter], ensure_ascii=False),
-                 tl_rate_per_chapter, project_id),
+                 tl_rate_per_chapter, project_id, raw_mode, raw_source, raw_manga_id),
             )
             ts_cursor = await db.execute(
                 """INSERT INTO assignments
                    (manga,chapter,staff_id,role,base_rate,final_rate,multiplier,status,
-                    claimed_at,deadline_at,chapters,chapter_count,rate_per_chapter,pair_project_id)
-                   VALUES(?,?,?,?,?,?,1.0,'pair_waiting',CURRENT_TIMESTAMP,?,?,1,?,?)""",
+                    claimed_at,deadline_at,chapters,chapter_count,rate_per_chapter,pair_project_id,
+                    raw_mode,raw_source,raw_manga_id)
+                   VALUES(?,?,?,?,?,?,1.0,'pair_waiting',CURRENT_TIMESTAMP,?,?,1,?,?,?,?,?)""",
                 (manga, chapter, ts_staff_id, "TS", ts_rate_per_chapter,
                  ts_rate_per_chapter, deadline_at, json.dumps([chapter], ensure_ascii=False),
-                 ts_rate_per_chapter, project_id),
+                 ts_rate_per_chapter, project_id, raw_mode, raw_source, raw_manga_id),
             )
             chapter_cursor = await db.execute(
                 """INSERT INTO pair_chapters(project_id,chapter,tl_assignment_id,ts_assignment_id)
