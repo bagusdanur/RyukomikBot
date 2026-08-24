@@ -8,9 +8,11 @@ from .demon import DemonDownloader
 from .vortex import VortexDownloader, search_vortex
 from .kagane import KaganeDownloader, search_kagane
 from .mgeko import MgekoDownloader, search_mgeko
+from config import DIVA_API
 
 asura_downloader = AsuraDownloader()
 doujiva_downloader = DoujivaDownloader()
+diva_downloader = DoujivaDownloader(DIVA_API, "diva")
 omega_downloader = OmegaDownloader()
 evascan_downloader = EvaScanDownloader()
 thunder_downloader = ThunderDownloader()
@@ -25,6 +27,8 @@ def get_downloader(source: str = "asura"):
     """Get downloader instance based on source name."""
     if source.casefold() in ("doujiva", "doujin"):
         return doujiva_downloader
+    if source.casefold() in ("diva", "divascans"):
+        return diva_downloader
     if source.casefold() == "omega":
         return omega_downloader
     if source.casefold() in ("evascan", "eva"):
@@ -68,6 +72,7 @@ __all__ = [
     "get_downloader",
     "asura_downloader",
     "doujiva_downloader",
+    "diva_downloader",
     "omega_downloader",
     "evascan_downloader",
     "thunder_downloader",

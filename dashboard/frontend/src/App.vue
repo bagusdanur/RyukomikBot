@@ -1998,6 +1998,7 @@ onMounted(async () => {
                   <option value="asura">Asura</option>
                   <option value="omega">Omega</option>
                   <option value="doujiva">Doujiva</option>
+                  <option value="diva">Diva</option>
                   <option value="evascan">EvaScan</option>
                   <option value="thunder">Thunder</option>
                   <option value="vortex">Vortex</option>

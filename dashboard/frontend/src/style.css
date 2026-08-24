@@ -43,6 +43,7 @@ img.brand-mark{display:block;object-fit:cover;background:#000;font-size:0}
 .source-badge[data-source="asura"]{background:#3b1828;color:#f472b6}
 .source-badge[data-source="omega"]{background:#1e293b;color:#38bdf8}
 .source-badge[data-source="doujiva"]{background:#312015;color:#fb923c}
+.source-badge[data-source="diva"]{background:#3b183f;color:#f0abfc}
 .source-badge[data-source="evascan"]{background:#1a2e28;color:#4ade80}
 .source-badge[data-source="thunder"]{background:#2a2512;color:#facc15}
 .source-badge[data-source="vortex"]{background:#251a3a;color:#c084fc}

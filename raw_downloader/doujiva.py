@@ -75,13 +75,14 @@ def _image_extension(url: str) -> str:
 class DoujivaDownloader:
     """Downloader for Doujiva manga / doujinshi chapters."""
 
-    def __init__(self):
-        self.api_url = DOUJIVA_API
+    def __init__(self, api_url: str = DOUJIVA_API, source: str = "doujiva"):
+        self.api_url = api_url.rstrip("/")
+        self.source = source
 
     async def search_manga(self, query: str) -> List[Dict[str, Any]]:
         """Search for manga by title."""
         async with _create_session() as session:
-            data = await get_json(session, f"{self.api_url}/search", source="doujiva", stage="search", params={"q": query}, timeout=4, validator=lambda item: item.get("success") is True or bool(item.get("data")))
+            data = await get_json(session, f"{self.api_url}/search", source=self.source, stage="search", params={"q": query}, timeout=4, validator=lambda item: item.get("success") is True or bool(item.get("data")))
             if data:
                 results = data.get("data", [])
                 normalized = []
@@ -95,7 +96,7 @@ class DoujivaDownloader:
                                 "chapter_count": item.get("update", "N/A"),
                                 "rating": item.get("rating", "N/A"),
                                 "image": item.get("image", ""),
-                                "source": "doujiva"
+                                "source": self.source
                             })
                 return normalized
             return []
@@ -104,7 +105,7 @@ class DoujivaDownloader:
         """Get manga information."""
         clean_id = _clean_manga_id(manga_id)
         async with _create_session() as session:
-            data = await get_json(session, f"{self.api_url}/detail/{clean_id}", source="doujiva", stage=f"detail:{clean_id}", timeout=4, validator=lambda item: bool((item.get("data") or {}).get("chapters")))
+            data = await get_json(session, f"{self.api_url}/detail/{clean_id}", source=self.source, stage=f"detail:{clean_id}", timeout=4, validator=lambda item: bool((item.get("data") or {}).get("chapters")))
             return data.get("data") if data else None
 
     async def get_chapter_list(self, manga_id: str) -> List[Dict[str, Any]]:
@@ -125,7 +126,7 @@ class DoujivaDownloader:
                 "title": ch.get("title", f"Chapter {chapter_id}"),
                 "date": ch.get("date", ""),
                 "manga_id": clean_id,
-                "source": "doujiva"
+                "source": self.source
             })
         return normalized_chapters
 
@@ -136,13 +137,13 @@ class DoujivaDownloader:
 
         async with _create_session() as session:
             url = f"{self.api_url}/chapter/{clean_manga}/{clean_chap}"
-            data = await get_json(session, url, source="doujiva", stage=f"chapter:{clean_manga}:{clean_chap}", timeout=10, validator=lambda item: bool(item.get("images")))
+            data = await get_json(session, url, source=self.source, stage=f"chapter:{clean_manga}:{clean_chap}", timeout=10, validator=lambda item: bool(item.get("images")))
             if data:
                 images = _normalize_chapter_images(data.get("images", []))
                 if images:
                     return images
             url_fallback = f"{self.api_url}/chapter/manga/{clean_manga}/{clean_chap}"
-            data = await get_json(session, url_fallback, source="doujiva", stage=f"chapter-fallback:{clean_manga}:{clean_chap}", timeout=10, validator=lambda item: bool(item.get("images")))
+            data = await get_json(session, url_fallback, source=self.source, stage=f"chapter-fallback:{clean_manga}:{clean_chap}", timeout=10, validator=lambda item: bool(item.get("images")))
             return _normalize_chapter_images(data.get("images", [])) if data else []
 
     async def download_chapter(
@@ -159,9 +160,9 @@ class DoujivaDownloader:
 
         clean_manga = _clean_manga_id(manga_id)
         clean_chap = _clean_chapter_id(chapter_id)
-        chapter_dir = os.path.join(save_dir, "doujiva", f"{clean_manga}_{clean_chap}")
+        chapter_dir = os.path.join(save_dir, self.source, f"{clean_manga}_{clean_chap}")
         async with _create_session() as session:
-            complete = await download_images(session, images, chapter_dir, source="doujiva", extension_for=_image_extension, concurrency=4, timeout=20, attempts=3)
+            complete = await download_images(session, images, chapter_dir, source=self.source, extension_for=_image_extension, concurrency=4, timeout=20, attempts=3)
         if complete:
             return chapter_dir
         shutil.rmtree(chapter_dir, ignore_errors=True)

@@ -53,6 +53,7 @@ from chapter_utils import chapter_display, parse_chapters
 from raw_downloader import (
     asura_downloader,
     doujiva_downloader,
+    diva_downloader,
     omega_downloader,
     evascan_downloader,
     thunder_downloader,
@@ -502,7 +503,7 @@ class RawRateAnalysisRequest(BaseModel):
 
 class ScoutSearchRequest(BaseModel):
     title: str = Field(min_length=2, max_length=180)
-    raw_source: Literal["all", "asura", "omega", "doujiva", "evascan", "thunder"] = "all"
+    raw_source: Literal["all", "asura", "omega", "doujiva", "diva", "evascan", "thunder"] = "all"
     force: bool = False
 
 
@@ -1676,6 +1677,7 @@ async def raw_search(
         "asura": asura_downloader,
         "omega": omega_downloader,
         "doujiva": doujiva_downloader,
+        "diva": diva_downloader,
         "evascan": evascan_downloader,
         "thunder": thunder_downloader,
         "vortex": vortex_downloader,
@@ -1694,6 +1696,7 @@ async def raw_search(
         "asura": "Asura",
         "omega": "Omega",
         "doujiva": "Doujiva",
+        "diva": "Diva",
         "evascan": "EvaScan",
         "thunder": "Thunder",
         "vortex": "Vortex",
@@ -1745,6 +1748,7 @@ async def raw_rate_analysis(payload: RawRateAnalysisRequest, _user=Depends(admin
         "asura": asura_downloader,
         "omega": omega_downloader,
         "doujiva": doujiva_downloader,
+        "diva": diva_downloader,
         "evascan": evascan_downloader,
         "thunder": thunder_downloader,
         "vortex": vortex_downloader,

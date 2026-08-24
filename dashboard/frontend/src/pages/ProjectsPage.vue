@@ -57,6 +57,7 @@ const availableSources = [
   { id: "asura", label: "Asura Scans" },
   { id: "omega", label: "Omega Scans" },
   { id: "doujiva", label: "Doujiva" },
+  { id: "diva", label: "Diva" },
   { id: "evascan", label: "EvaScan" },
   { id: "thunder", label: "Thunder Scans" },
   { id: "vortex", label: "Vortex Scans" },

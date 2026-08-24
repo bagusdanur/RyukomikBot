@@ -150,7 +150,7 @@ class ThreeSourceResolverTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["missing"], [])
 
     async def test_equal_coverage_uses_business_priority(self):
-        self.assertEqual(SOURCE_ORDER, ("asura", "omega", "doujiva", "evascan", "thunder", "vortex", "qimanga", "demon", "kagane", "mgeko"))
+        self.assertEqual(SOURCE_ORDER, ("asura", "omega", "doujiva", "diva", "evascan", "thunder", "vortex", "qimanga", "demon", "kagane", "mgeko"))
         downloaders = {
             source: FakeDownloader([manga(source)], chapters(source, 1, 2))
             for source in SOURCE_ORDER
@@ -159,7 +159,7 @@ class ThreeSourceResolverTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["source"], "asura")
         self.assertEqual(
             [item["source"] for item in result["fallbacks"]],
-            ["omega", "doujiva", "evascan", "thunder", "vortex", "qimanga", "demon", "kagane", "mgeko"],
+            ["omega", "doujiva", "diva", "evascan", "thunder", "vortex", "qimanga", "demon", "kagane", "mgeko"],
         )
 
     async def test_partial_sources_are_not_merged(self):
