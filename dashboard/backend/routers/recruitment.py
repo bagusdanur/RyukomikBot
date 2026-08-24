@@ -1,15 +1,12 @@
 """Recruitment router — Recruitment settings, submissions, and ticket management."""
 
 import re
-from datetime import datetime
-from zoneinfo import ZoneInfo
-
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from config import (
     GUILD_ID, REKRUT_CAT_ID, ROLE_STAFF_ID,
-    RECRUITMENT_TEST_EXPIRES_AT, RECRUITMENT_TEST_URL,
+    RECRUITMENT_TEST_URL,
     RECRUITMENT_TL_EXAMPLE_URL, RECRUITMENT_TS_ASSETS_URL,
 )
 import database as staff_db
@@ -27,6 +24,16 @@ class RecruitmentSettingsUpdate(BaseModel):
     tl: bool
     ts: bool
     tl_ts: bool
+
+
+class RecruitmentMaterialsUpdate(BaseModel):
+    test_url: str = Field(min_length=10, max_length=2000)
+    tl_example_url: str = Field(min_length=10, max_length=2000)
+    ts_assets_url: str = Field(min_length=10, max_length=2000)
+
+
+class RecruitmentAnnouncementRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=1800)
 
 
 class RecruitmentCloseRequest(BaseModel):
@@ -95,6 +102,68 @@ def recruitment_panel_payload(settings: dict[str, bool]) -> tuple[dict, list]:
     return embed, components
 
 
+def _material_defaults() -> dict[str, str]:
+    return {
+        "test_url": RECRUITMENT_TEST_URL,
+        "tl_example_url": RECRUITMENT_TL_EXAMPLE_URL,
+        "ts_assets_url": RECRUITMENT_TS_ASSETS_URL,
+    }
+
+
+def _validate_material_links(links: dict[str, str]) -> None:
+    for value in links.values():
+        if not re.match(r"^https?://", value, re.IGNORECASE):
+            raise HTTPException(422, "Semua bahan harus berupa link http/https yang valid.")
+
+
+async def _active_recruitment_channels() -> list[dict]:
+    channels = await discord_api("GET", f"/guilds/{GUILD_ID}/channels") or []
+    result = []
+    for channel in channels if isinstance(channels, list) else []:
+        topic = str(channel.get("topic") or "")
+        owner = re.search(r"applicant_id=(\d+)", topic)
+        if channel.get("type") != 0 or str(channel.get("parent_id")) != str(REKRUT_CAT_ID) or not owner:
+            continue
+        member = await discord_api("GET", f"/guilds/{GUILD_ID}/members/{owner.group(1)}")
+        roles = {str(role) for role in member.get("roles", [])} if isinstance(member, dict) else set()
+        if str(ROLE_STAFF_ID) not in roles:
+            result.append(channel)
+    return result
+
+
+async def _refresh_material_buttons(links: dict[str, str]) -> int:
+    """Replace URL buttons on existing applicant test cards without restarting the bot."""
+    updated = 0
+    position_ids = {"TL": "tl", "TS": "ts", "TL+TS": "tl_ts"}
+    for channel in await _active_recruitment_channels():
+        match = re.search(r"position=(TL\+TS|TL|TS)", str(channel.get("topic") or ""), re.IGNORECASE)
+        if not match:
+            continue
+        position = match.group(1).upper()
+        link_buttons = [{"type": 2, "style": 5, "label": "Download Bahan Tes", "url": links["test_url"]}]
+        if position in {"TL", "TL+TS"}:
+            link_buttons.append({"type": 2, "style": 5, "label": "Contoh TL", "url": links["tl_example_url"]})
+        if position in {"TS", "TL+TS"}:
+            link_buttons.append({"type": 2, "style": 5, "label": "Asset TS", "url": links["ts_assets_url"]})
+        messages = await discord_api("GET", f"/channels/{channel['id']}/messages?limit=100") or []
+        for message in messages if isinstance(messages, list) else []:
+            title = str(((message.get("embeds") or [{}])[0].get("title") or "")).casefold()
+            if title.startswith(("tes rekrutmen ", "bahan tes ")):
+                result = await discord_api("PATCH", f"/channels/{channel['id']}/messages/{message['id']}", {
+                    "components": [
+                        {"type": 1, "components": link_buttons},
+                        {"type": 1, "components": [{
+                            "type": 2, "style": 3, "label": "Submit Hasil Tes",
+                            "custom_id": f"recruitment:submit:{position_ids[position]}:v1",
+                        }]},
+                    ]
+                })
+                if result:
+                    updated += 1
+                break
+    return updated
+
+
 async def update_discord_recruitment_panel(settings: dict[str, bool]) -> bool:
     if DEV_BYPASS:
         return True
@@ -134,21 +203,15 @@ async def recruitment_settings(_user=Depends(admin_user)):
             """SELECT position,enabled,updated_at,updated_by
                FROM recruitment_position_settings ORDER BY position"""
         )).fetchall()
-        counts = await (await connection.execute(
-            """SELECT position,COUNT(*) active_count
-               FROM recruitment_submissions
-               WHERE status='submitted' GROUP BY position"""
-        )).fetchall()
     finally:
         await connection.close()
-    count_map = {row["position"]: int(row["active_count"]) for row in counts}
+    count_map = {position: 0 for position in ("TL", "TS", "TL+TS")}
+    for channel in await _active_recruitment_channels():
+        match = re.search(r"position=(TL\+TS|TL|TS)", str(channel.get("topic") or ""), re.IGNORECASE)
+        if match:
+            count_map[match.group(1).upper()] += 1
     row_map = {row["position"]: row for row in rows}
-    try:
-        material_expiry = datetime.fromisoformat(RECRUITMENT_TEST_EXPIRES_AT.replace("Z", "+00:00"))
-        material_hours = (material_expiry.replace(tzinfo=material_expiry.tzinfo or ZoneInfo("UTC")) - datetime.now(ZoneInfo("UTC"))).total_seconds() / 3600
-        material_status = "expired" if material_hours <= 0 else "expiring" if material_hours <= 24 else "active"
-    except ValueError:
-        material_hours, material_status = None, "unknown"
+    materials = await staff_db.get_recruitment_material_settings(_material_defaults())
     return {
         "positions": [
             {
@@ -165,14 +228,47 @@ async def recruitment_settings(_user=Depends(admin_user)):
             for position in ("TL", "TS", "TL+TS")
         ),
         "test_material": {
-            "url": RECRUITMENT_TEST_URL,
-            "tl_example_url": RECRUITMENT_TL_EXAMPLE_URL,
-            "ts_assets_url": RECRUITMENT_TS_ASSETS_URL,
-            "expires_at": RECRUITMENT_TEST_EXPIRES_AT,
-            "hours_remaining": round(material_hours, 1) if material_hours is not None else None,
-            "status": material_status,
+            "url": materials["test_url"],
+            "tl_example_url": materials["tl_example_url"],
+            "ts_assets_url": materials["ts_assets_url"],
+            "expires_at": None,
+            "hours_remaining": None,
+            "status": "active",
+            "updated_at": materials.get("updated_at"),
         },
     }
+
+
+@router.put("/materials")
+async def update_recruitment_materials(payload: RecruitmentMaterialsUpdate, user=Depends(admin_user)):
+    links = {key: value.strip() for key, value in payload.model_dump().items()}
+    _validate_material_links(links)
+    before = await staff_db.get_recruitment_material_settings(_material_defaults())
+    after = await staff_db.set_recruitment_material_settings(links, user["id"])
+    refreshed = await _refresh_material_buttons(links)
+    await audit(user["id"], "recruitment.materials.update", "recruitment_materials", "links", before, {**after, "cards_refreshed": refreshed})
+    return {"ok": True, "materials": after, "cards_refreshed": refreshed}
+
+
+@router.post("/announcements")
+async def send_recruitment_announcement(payload: RecruitmentAnnouncementRequest, user=Depends(admin_user)):
+    sent, failed = 0, 0
+    for channel in await _active_recruitment_channels():
+        result = await discord_api("POST", f"/channels/{channel['id']}/messages", {
+            "embeds": [{
+                "title": "📢 Pengumuman Rekrutmen",
+                "description": payload.message.strip(),
+                "color": 5793266,
+                "footer": {"text": "Ryukomik Recruitment • Pesan Administrator"},
+            }],
+            "allowed_mentions": {"parse": []},
+        })
+        if result:
+            sent += 1
+        else:
+            failed += 1
+    await audit(user["id"], "recruitment.announcement.send", "recruitment", "active", None, {"sent": sent, "failed": failed})
+    return {"ok": failed == 0, "sent": sent, "failed": failed}
 
 
 @router.get("/submissions")

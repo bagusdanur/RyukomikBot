@@ -33,6 +33,20 @@ TEST_LINKS = {
     ),
 }
 
+MATERIAL_DEFAULTS = {
+    "test_url": RECRUITMENT_TEST_URL,
+    "tl_example_url": RECRUITMENT_TL_EXAMPLE_URL,
+    "ts_assets_url": RECRUITMENT_TS_ASSETS_URL,
+}
+
+
+async def get_test_links(position: str):
+    materials = await db.get_recruitment_material_settings(MATERIAL_DEFAULTS)
+    common = ("Download Bahan Tes", materials["test_url"], "📦")
+    tl = ("Contoh TL", materials["tl_example_url"], "📝")
+    ts = ("Asset TS", materials["ts_assets_url"], "🎨")
+    return {"TL": (common, tl), "TS": (common, ts), "TL+TS": (common, tl, ts)}[position]
+
 POSITION_INSTRUCTIONS = {
     "TL": (
         "Terjemahkan seluruh **20 halaman** ke Bahasa Indonesia yang natural. Gunakan gaya "
@@ -371,12 +385,12 @@ async def reconcile_recruitment_test_cards(guild: discord.Guild) -> int:
             continue
         cards = [message async for message in channel.history(limit=100) if is_recruitment_test_card(message)]
         if cards:
-            await cards[0].edit(embed=build_test_embed(position), view=RecruitmentSubmitView(position))
+            await cards[0].edit(embed=build_test_embed(position), view=RecruitmentSubmitView(position, await get_test_links(position)))
             for stale in cards[1:]:
                 if stale.components:
                     await stale.edit(view=None)
         else:
-            await channel.send(embed=build_test_embed(position), view=RecruitmentSubmitView(position))
+            await channel.send(embed=build_test_embed(position), view=RecruitmentSubmitView(position, await get_test_links(position)))
         updated += 1
     return updated
 
@@ -543,12 +557,12 @@ class RecruitmentPositionSelect(discord.ui.Select):
             reason=f"Posisi rekrutmen dipilih: {position}",
         )
         await interaction.response.send_message(
-            embed=build_test_embed(position), view=RecruitmentSubmitView(position), ephemeral=False
+            embed=build_test_embed(position), view=RecruitmentSubmitView(position, await get_test_links(position)), ephemeral=False
         )
 
 
 class RecruitmentSubmitView(RecruitmentBaseView):
-    def __init__(self, position: str):
+    def __init__(self, position: str, links=None):
         self.position = position
         super().__init__()
         button = discord.ui.Button(
@@ -560,7 +574,7 @@ class RecruitmentSubmitView(RecruitmentBaseView):
         )
         button.callback = self.submit_button
         self.add_item(button)
-        for label, url, emoji in TEST_LINKS[position]:
+        for label, url, emoji in (TEST_LINKS[position] if links is None else links):
             self.add_item(discord.ui.Button(label=label, url=url, emoji=emoji, row=0))
 
     async def submit_button(self, interaction: discord.Interaction):
@@ -825,7 +839,7 @@ class RecruitmentBot:
                     "Pilih posisi TL, TS, atau TL+TS terlebih dahulu.", ephemeral=False
                 )
             await interaction.response.send_message(
-                embed=build_test_embed(position), view=RecruitmentSubmitView(position), ephemeral=False
+                embed=build_test_embed(position), view=RecruitmentSubmitView(position, await get_test_links(position)), ephemeral=False
             )
 
         @self.bot.command(name="close")

@@ -1,5 +1,7 @@
 import logging
 import re
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import discord
 
@@ -47,6 +49,20 @@ async def _validated_assignment(interaction: discord.Interaction, assignment_id:
     elif not is_staff(interaction.user) or int(assignment["staff_id"] or 0) != interaction.user.id:
         await _respond(interaction, "Kamu hanya dapat mengirim tugas milikmu sendiri.")
         return None
+    if not admin and assignment["status"] in {"claimed", "revision"}:
+        deadline = str(assignment.get("deadline_at") or "")[:10]
+        today = datetime.now(ZoneInfo("Asia/Jakarta")).date().isoformat()
+        if not deadline:
+            await _respond(interaction, "Tugas ini belum memiliki deadline. Hubungi Administrator sebelum submit.", ephemeral=False)
+            return None
+        if deadline < today:
+            await _respond(
+                interaction,
+                f"🔒 **Submit dikunci karena deadline {deadline} sudah lewat.**\n"
+                "Buka **Bantuan Tugas → Minta Perpanjangan**, lalu tunggu persetujuan Administrator.",
+                ephemeral=False,
+            )
+            return None
     return assignment
 
 

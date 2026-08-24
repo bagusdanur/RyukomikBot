@@ -85,7 +85,7 @@ class AssignModal(discord.ui.Modal, title="Detail Tugas Baru"):
         placeholder="Kosongkan agar rate dihitung otomatis dari kesusahan RAW",
         required=False,
     )
-    deadline = discord.ui.TextInput(label="Deadline (Opsional)", placeholder="YYYY-MM-DD, contoh: 2026-07-25", required=False)
+    deadline = discord.ui.TextInput(label="Deadline (Wajib)", placeholder="YYYY-MM-DD, contoh: 2026-08-30", required=True)
 
     def __init__(self, role, staff_id=None):
         super().__init__()
@@ -116,15 +116,13 @@ class AssignModal(discord.ui.Modal, title="Detail Tugas Baru"):
                         f"dan Rp{maximum_rate:,.0f} per chapter."
                     ).replace(",", ".")
                 )
-        deadline_at = None
-        if self.deadline.value:
-            try:
-                parsed = datetime.strptime(self.deadline.value.strip(), "%Y-%m-%d").date()
-                if parsed < date.today():
-                    raise ValueError
-                deadline_at = parsed.isoformat()
-            except ValueError:
-                return await interaction.response.send_message("Deadline harus YYYY-MM-DD dan tidak boleh sudah lewat.")
+        try:
+            parsed = datetime.strptime(self.deadline.value.strip(), "%Y-%m-%d").date()
+            if parsed < date.today():
+                raise ValueError
+            deadline_at = parsed.isoformat()
+        except ValueError:
+            return await interaction.response.send_message("Deadline wajib diisi dengan format YYYY-MM-DD dan tidak boleh sudah lewat.")
 
         manga = self.manga.value.strip()
         if override:

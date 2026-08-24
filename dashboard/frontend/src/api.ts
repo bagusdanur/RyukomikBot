@@ -72,6 +72,10 @@ export type Staff = {
   approved_amount: number;
   paid_amount: number;
 };
+export type StaffQuestion = {
+  id:number; title:string; message:string; status:"open"|"closed"; requires_answer:boolean;
+  created_at:string; responses:Array<{staff_id:string;answer:string;created_at:string;updated_at:string}>;
+};
 export type Recap = {
   staff_id: string;
   staff_name: string;
@@ -193,7 +197,7 @@ export type RecruitmentSettings = {
     url: string;
     tl_example_url: string;
     ts_assets_url: string;
-    expires_at: string;
+    expires_at: string | null;
     hours_remaining: number | null;
     status: "active" | "expiring" | "expired" | "unknown";
   };
@@ -401,6 +405,10 @@ const liveApi = {
       `/api/assignments?paginated=true&page=${page}&page_size=${pageSize}&status=${encodeURIComponent(status)}&search=${encodeURIComponent(search)}`,
     ),
   staff: () => request<Staff[]>("/api/staff"),
+  staffQuestions: () => request<StaffQuestion[]>("/api/staff/questions"),
+  createStaffQuestion: (payload:{title:string;message:string;requires_answer:boolean}) =>
+    request<{ok:boolean;id:number;sent:number;failed:number}>("/api/staff/questions", {method:"POST",body:JSON.stringify(payload)}),
+  closeStaffQuestion: (id:number) => request(`/api/staff/questions/${id}/close`, {method:"POST"}),
   staffWorkload: () => request<{ workload: Array<Record<string, unknown>>; upcoming_deadlines: Array<Record<string, unknown>>; overdue: Array<Record<string, unknown>>; summary: Record<string, number> }>("/api/staff/workload"),
   createAssignment: (payload: Record<string, unknown>) =>
     request<{ id: number; notified: boolean }>("/api/assignments", {
@@ -468,6 +476,10 @@ const liveApi = {
       method: "PUT",
       body: JSON.stringify(settings),
     }),
+  updateRecruitmentMaterials: (materials: { test_url:string; tl_example_url:string; ts_assets_url:string }) =>
+    request<{ ok:boolean; cards_refreshed:number }>("/api/recruitment/materials", { method:"PUT", body:JSON.stringify(materials) }),
+  sendRecruitmentAnnouncement: (message:string) =>
+    request<{ ok:boolean; sent:number; failed:number }>("/api/recruitment/announcements", { method:"POST", body:JSON.stringify({message}) }),
   recruitmentSubmissions: () => request<RecruitmentSubmission[]>("/api/recruitment/submissions"),
   closeRecruitmentSubmission: (id:number, reason:string) => request(`/api/recruitment/submissions/${id}/close`, {method:"POST",body:JSON.stringify({reason})}),
   scoutTitles: (status = "", search = "", page = 1, pageSize = 20) =>
@@ -733,6 +745,9 @@ const demoApi = {
       paid_amount: 89000,
     },
   ],
+  staffQuestions: async () => [] as StaffQuestion[],
+  createStaffQuestion: async () => ({ok:true,id:1,sent:2,failed:0}),
+  closeStaffQuestion: async () => ({ok:true}),
   staffWorkload: async () => ({ workload: [], upcoming_deadlines: [], overdue: [], summary: { total_staff: 0, overload: 0, busy: 0, normal: 0, idle: 0, overdue_count: 0 } }),
   createAssignment: async () => ({ id: 25, notified: true }),
   createTlTsPair: async () => ({ tl_assignment_id: 26, pair_project_id: 1, channel_id: "123", notified: true }),
@@ -782,6 +797,8 @@ const demoApi = {
     ],
   }),
   updateRecruitmentSettings: async () => ({ ok: true, discord_synced: true }),
+  updateRecruitmentMaterials: async () => ({ ok: true, cards_refreshed: 1 }),
+  sendRecruitmentAnnouncement: async () => ({ ok: true, sent: 1, failed: 0 }),
   recruitmentSubmissions: async () => [] as RecruitmentSubmission[],
   closeRecruitmentSubmission: async () => ({ ok: true }),
   scoutTitles: async (_status = "", _search = "", page = 1, pageSize = 20): Promise<Paged<ScoutTitle>> => ({

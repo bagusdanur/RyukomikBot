@@ -22,6 +22,7 @@ import {
   type RawRateAnalysis,
   type RawSearchResult,
   type Staff,
+  type StaffQuestion,
   type Submission,
   type User,
 } from "./api";
@@ -72,6 +73,8 @@ const mobileMenuOpen = ref(false);
 const installPrompt = ref<any>(null);
 const recruitment = ref<RecruitmentSettings>({ open: true, positions: [] });
 const recruitmentSubmissions = ref<RecruitmentSubmission[]>([]);
+const staffQuestions = ref<StaffQuestion[]>([]);
+const staffQuestionForm = ref({ title:"", message:"", requires_answer:true });
 const taskPage = ref(1), taskPages = ref(1), taskTotal = ref(0),
   payoutPage = ref(1), payoutPages = ref(1), payoutTotal = ref(0),
   auditPage = ref(1), auditPages = ref(1), auditTotal = ref(0);
@@ -84,6 +87,7 @@ const search = ref(""),
   editingTask = ref<Assignment | null>(null);
 const closeRegistrationTarget = ref<RecruitmentSubmission | null>(null);
 const closeRegistrationReason = ref("Batal mendaftar");
+const recruitmentAnnouncement = ref("");
 const task = ref({
   manga: "",
   chapter: "",
@@ -307,7 +311,7 @@ async function loadPage() {
       loading.value = false;
     }
   }
-  if (page.value === "staff") await run(api.staff, staff);
+  if (page.value === "staff") { await run(api.staff, staff); staffQuestions.value = await api.staffQuestions(); }
   if (page.value === "payrates") await run(api.payrates, payrates);
   if (page.value === "recruitment") { await run(api.recruitmentSettings, recruitment); recruitmentSubmissions.value = await api.recruitmentSubmissions(); }
   if (page.value === "deadlines") await run(api.deadlines, deadlines);
@@ -465,6 +469,32 @@ async function saveRate(item: { role: string; min_rate: number; max_rate: number
     loading.value = false;
   }
 }
+
+function staffDisplayName(staffId: string) {
+  return staff.value.find((item) => item.id === staffId)?.username || `Staff ${staffId}`;
+}
+
+async function createStaffQuestion() {
+  const payload = { ...staffQuestionForm.value, title:staffQuestionForm.value.title.trim(), message:staffQuestionForm.value.message.trim() };
+  if (!payload.title || !payload.message) return (error.value = "Judul dan isi pesan wajib diisi.");
+  try {
+    loading.value = true;
+    const result = await api.createStaffQuestion(payload);
+    success.value = `Pesan terkirim ke ${result.sent} tiket staff${result.failed ? `, ${result.failed} tiket tidak ditemukan/gagal` : ""}.`;
+    staffQuestionForm.value = {title:"",message:"",requires_answer:true};
+    staffQuestions.value = await api.staffQuestions();
+  } catch (e) { error.value = e instanceof Error ? e.message : "Pesan staff gagal dikirim."; }
+  finally { loading.value = false; }
+}
+
+async function closeStaffQuestion(id:number) {
+  try {
+    loading.value = true; await api.closeStaffQuestion(id);
+    success.value = "Pertanyaan ditutup."; staffQuestions.value = await api.staffQuestions();
+  } catch (e) { error.value = e instanceof Error ? e.message : "Pertanyaan gagal ditutup."; }
+  finally { loading.value = false; }
+}
+
 async function saveRecruitmentSettings() {
   const byPosition = new Map(
     recruitment.value.positions.map((item) => [item.position, item.enabled]),
@@ -494,6 +524,37 @@ async function saveRecruitmentSettings() {
   }
 }
 
+async function saveRecruitmentMaterials() {
+  const material = recruitment.value.test_material;
+  if (!material) return;
+  try {
+    loading.value = true;
+    const result = await api.updateRecruitmentMaterials({
+      test_url: material.url,
+      tl_example_url: material.tl_example_url,
+      ts_assets_url: material.ts_assets_url,
+    });
+    success.value = `Link bahan tersimpan dan ${result.cards_refreshed} tiket aktif diperbarui.`;
+    recruitment.value = await api.recruitmentSettings();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "Link bahan gagal disimpan.";
+  } finally { loading.value = false; }
+}
+
+async function sendRecruitmentAnnouncement() {
+  const message = recruitmentAnnouncement.value.trim();
+  if (!message) return (error.value = "Isi pengumuman belum diisi.");
+  if (!confirm("Kirim pengumuman ini ke semua tiket pelamar aktif?")) return;
+  try {
+    loading.value = true;
+    const result = await api.sendRecruitmentAnnouncement(message);
+    success.value = `Pengumuman terkirim ke ${result.sent} tiket${result.failed ? `, ${result.failed} gagal` : ""}.`;
+    recruitmentAnnouncement.value = "";
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "Pengumuman gagal dikirim.";
+  } finally { loading.value = false; }
+}
+
 async function closeRegistration(item: RecruitmentSubmission) {
   closeRegistrationTarget.value = item; closeRegistrationReason.value = "Batal mendaftar";
 }
@@ -507,6 +568,8 @@ async function confirmCloseRegistration() {
 async function createTask() {
   if (!editingTask.value && !task.value.staff_id) return (error.value = "Pilih staf tujuan.");
   if (!editingTask.value && task.value.role === "PAIR" && !task.value.ts_staff_id) return (error.value = "Pilih staff Typesetter.");
+  if (!task.value.deadline_at) return (error.value = "Deadline wajib diisi untuk setiap tugas.");
+  if (task.value.deadline_at < new Date().toISOString().slice(0, 10)) return (error.value = "Deadline tidak boleh tanggal yang sudah lewat.");
   try {
     loading.value = true;
     if (editingTask.value) {
@@ -556,6 +619,18 @@ async function createTask() {
   } finally {
     loading.value = false;
   }
+}
+
+function deadlineUrgency(deadline:string|null) {
+  if (!deadline) return {label:"Tanpa deadline",severity:"secondary" as const};
+  const today = new Date(); today.setHours(0,0,0,0);
+  const due = new Date(`${deadline}T00:00:00`);
+  const days = Math.round((due.getTime()-today.getTime())/86400000);
+  if (days < 0) return {label:`Terlambat ${Math.abs(days)} hari`,severity:"danger" as const};
+  if (days === 0) return {label:"Hari ini",severity:"danger" as const};
+  if (days === 1) return {label:"Besok",severity:"warn" as const};
+  if (days <= 3) return {label:`H-${days}`,severity:"warn" as const};
+  return {label:`${days} hari lagi`,severity:"success" as const};
 }
 async function analyzeRawRate() {
   if (!task.value.manga.trim() || !task.value.chapter.trim()) {
@@ -1396,6 +1471,46 @@ onMounted(async () => {
             @click="syncStaff"
           />
         </div>
+        <section class="panel staff-message-composer">
+          <div class="staff-message-intro">
+            <span class="staff-message-icon"><i class="pi pi-megaphone"></i></span>
+            <div><p class="eyebrow">PESAN KE TIKET STAFF</p><h3>Kirim pesan ke seluruh tim</h3><p>Pesan dikirim langsung ke tiket privat setiap staff di Discord.</p></div>
+          </div>
+          <div class="staff-message-modes">
+            <label :class="{ active: !staffQuestionForm.requires_answer }">
+              <input v-model="staffQuestionForm.requires_answer" type="radio" :value="false" />
+              <i class="pi pi-megaphone"></i><span><b>Pengumuman</b><small>Informasi satu arah tanpa jawaban.</small></span>
+            </label>
+            <label :class="{ active: staffQuestionForm.requires_answer }">
+              <input v-model="staffQuestionForm.requires_answer" type="radio" :value="true" />
+              <i class="pi pi-comments"></i><span><b>Pertanyaan</b><small>Staff menjawab melalui tombol Discord.</small></span>
+            </label>
+          </div>
+          <div class="staff-message-fields">
+            <label><span>Judul pesan</span><InputText v-model="staffQuestionForm.title" placeholder="Contoh: Jadwal kerja minggu ini" /></label>
+            <label><span>Isi pesan</span><textarea v-model="staffQuestionForm.message" rows="5" maxlength="1800" placeholder="Tulis pesan untuk seluruh staff..."></textarea><small>{{ staffQuestionForm.message.length }}/1800 karakter</small></label>
+          </div>
+          <div class="staff-message-footer">
+            <div><i class="pi pi-users"></i><span><b>{{ staff.length }} staff</b><small>akan menerima pesan di tiket privat</small></span></div>
+            <Button :label="staffQuestionForm.requires_answer ? 'Kirim pertanyaan' : 'Kirim pengumuman'" icon="pi pi-send" :loading="loading" @click="createStaffQuestion" />
+          </div>
+        </section>
+        <section v-if="staffQuestions.length" class="panel recruitment-applicants">
+          <div class="section-title"><div><span>Jawaban Staff</span><small>Jawaban terbaru dari tombol di tiket Discord.</small></div></div>
+          <div class="recap-list">
+            <article v-for="question in staffQuestions" :key="question.id">
+              <div><b>{{ question.title }}</b><small>{{ question.message }} • {{ question.status === 'open' ? 'Aktif' : 'Ditutup' }}</small></div>
+              <div><small>Sudah menjawab</small><b>{{ question.responses?.length || 0 }} staff</b></div>
+              <Button v-if="question.status === 'open' && question.requires_answer" label="Tutup" severity="secondary" icon="pi pi-lock" @click="closeStaffQuestion(question.id)" />
+            </article>
+            <template v-for="question in staffQuestions" :key="`answers-${question.id}`">
+              <article v-for="response in question.responses" :key="`${question.id}-${response.staff_id}`">
+                <div><b>{{ staffDisplayName(response.staff_id) }}</b><small>Jawaban untuk: {{ question.title }}</small></div>
+                <div style="flex:1"><small>Jawaban</small><b>{{ response.answer }}</b></div>
+              </article>
+            </template>
+          </div>
+        </section>
         <div class="people-grid">
           <article v-for="s in staff" :key="s.id" class="person-card">
             <div class="person-head">
@@ -1488,7 +1603,7 @@ onMounted(async () => {
             <h3>{{ recruitment.test_material.status === 'expired' ? 'Bahan perlu diperbarui' : recruitment.test_material.status === 'expiring' ? 'Bahan segera kedaluwarsa' : 'Bahan terbaru • 20 halaman' }}</h3>
             <p>
               Satu bahan untuk TL, TS, dan TL+TS.
-              <a :href="recruitment.test_material.url" target="_blank">Buka Filebin</a>
+              <a :href="recruitment.test_material.url" target="_blank">Buka bahan Drive</a>
               • <a :href="recruitment.test_material.tl_example_url" target="_blank">Contoh TL</a>
               • <a :href="recruitment.test_material.ts_assets_url" target="_blank">Asset TS</a>
               <span v-if="recruitment.test_material.hours_remaining !== null">
@@ -1500,6 +1615,26 @@ onMounted(async () => {
             :value="recruitment.test_material.status === 'active' ? 'Aktif' : recruitment.test_material.status === 'expiring' ? 'Segera habis' : 'Perbarui'"
             :severity="recruitment.test_material.status === 'active' ? 'success' : recruitment.test_material.status === 'expiring' ? 'warn' : 'danger'"
           />
+        </section>
+        <section v-if="recruitment.test_material" class="panel recruitment-preview">
+          <div style="width:100%">
+            <p class="eyebrow">SETTING BAHAN GOOGLE DRIVE</p>
+            <h3>Link bahan tes</h3>
+            <div class="form-grid">
+              <label class="wide">Bahan tes utama<InputText v-model="recruitment.test_material.url" placeholder="https://drive.google.com/..." /></label>
+              <label>Contoh Translator<InputText v-model="recruitment.test_material.tl_example_url" placeholder="https://drive.google.com/..." /></label>
+              <label>Asset Typesetter<InputText v-model="recruitment.test_material.ts_assets_url" placeholder="https://drive.google.com/..." /></label>
+            </div>
+          </div>
+          <Button label="Simpan link bahan" icon="pi pi-link" :loading="loading" @click="saveRecruitmentMaterials" />
+        </section>
+        <section class="panel recruitment-preview">
+          <div style="width:100%">
+            <p class="eyebrow">PENGUMUMAN PELAMAR</p>
+            <h3>Kirim ke semua tiket rekrutmen aktif</h3>
+            <textarea v-model="recruitmentAnnouncement" rows="4" maxlength="1800" placeholder="Tulis informasi untuk para pelamar..."></textarea>
+          </div>
+          <Button label="Kirim pengumuman" icon="pi pi-send" :loading="loading" @click="sendRecruitmentAnnouncement" />
         </section>
         <section class="panel recruitment-summary">
           <div>
@@ -1590,7 +1725,7 @@ onMounted(async () => {
       <template v-if="page === 'deadlines'"
         ><div class="table-card">
           <DataTable :value="deadlines" :loading="loading"
-            ><Column field="deadline_at" header="Deadline" sortable /><Column
+            ><Column field="deadline_at" header="Deadline" sortable /><Column header="Urgensi"><template #body="{ data }"><Tag :value="deadlineUrgency(data.deadline_at).label" :severity="deadlineUrgency(data.deadline_at).severity" /></template></Column><Column
               field="manga"
               header="Manga" /><Column
               field="chapter"
@@ -1979,7 +2114,7 @@ onMounted(async () => {
             <span>{{ taskChapterCount || 0 }} chapter × {{ money(task.final_rate) }} = <b>{{ money(taskTotalRate) }}</b></span>
           </div
           ><label
-            >Deadline<input v-model="task.deadline_at" type="date"
+            >Deadline wajib<input v-model="task.deadline_at" type="date" :min="new Date().toISOString().slice(0, 10)" required
           /></label>
         </div>
         <div class="modal-actions">

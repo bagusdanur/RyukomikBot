@@ -131,6 +131,59 @@ async def setup_database():
             (("TL",), ("TS",), ("TL+TS",)),
         )
         await db.execute("""
+            CREATE TABLE IF NOT EXISTS recruitment_material_settings (
+                id INTEGER PRIMARY KEY CHECK(id = 1),
+                test_url TEXT NOT NULL,
+                tl_example_url TEXT NOT NULL,
+                ts_assets_url TEXT NOT NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_by TEXT
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS staff_questions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                message TEXT NOT NULL,
+                created_by INTEGER NOT NULL,
+                requires_answer INTEGER NOT NULL DEFAULT 1,
+                status TEXT NOT NULL DEFAULT 'open',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                closed_at DATETIME
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS staff_question_responses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                question_id INTEGER NOT NULL,
+                staff_id INTEGER NOT NULL,
+                answer TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(question_id, staff_id),
+                FOREIGN KEY(question_id) REFERENCES staff_questions(id) ON DELETE CASCADE
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS deadline_extension_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                assignment_id INTEGER NOT NULL,
+                staff_id INTEGER NOT NULL,
+                old_deadline TEXT NOT NULL,
+                requested_deadline TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                requested_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                reviewed_at DATETIME,
+                reviewed_by INTEGER,
+                FOREIGN KEY(assignment_id) REFERENCES assignments(id)
+            )
+        """)
+        await db.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_deadline_extension_pending
+            ON deadline_extension_requests(assignment_id) WHERE status='pending'
+        """)
+        await db.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_recruitment_active_applicant
             ON recruitment_submissions(applicant_id)
             WHERE status = 'submitted'
@@ -701,6 +754,147 @@ async def set_recruitment_position_settings(
         await db.close()
 
 
+async def get_recruitment_material_settings(defaults: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """Return dashboard-managed recruitment links, falling back to config values."""
+    defaults = defaults or {}
+    db = await get_db()
+    try:
+        row = await (await db.execute(
+            "SELECT test_url,tl_example_url,ts_assets_url,updated_at,updated_by "
+            "FROM recruitment_material_settings WHERE id=1"
+        )).fetchone()
+        if row:
+            return dict(row)
+        return {
+            "test_url": defaults.get("test_url", ""),
+            "tl_example_url": defaults.get("tl_example_url", ""),
+            "ts_assets_url": defaults.get("ts_assets_url", ""),
+            "updated_at": None,
+            "updated_by": None,
+        }
+    finally:
+        await db.close()
+
+
+async def set_recruitment_material_settings(
+    links: Dict[str, str], updated_by: str | int
+) -> Dict[str, Any]:
+    db = await get_db()
+    try:
+        await db.execute(
+            """INSERT INTO recruitment_material_settings
+               (id,test_url,tl_example_url,ts_assets_url,updated_at,updated_by)
+               VALUES(1,?,?,?,CURRENT_TIMESTAMP,?)
+               ON CONFLICT(id) DO UPDATE SET
+                 test_url=excluded.test_url,
+                 tl_example_url=excluded.tl_example_url,
+                 ts_assets_url=excluded.ts_assets_url,
+                 updated_at=CURRENT_TIMESTAMP,
+                 updated_by=excluded.updated_by""",
+            (links["test_url"], links["tl_example_url"], links["ts_assets_url"], str(updated_by)),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+    return await get_recruitment_material_settings()
+
+
+async def get_staff_question(question_id: int) -> Optional[Dict[str, Any]]:
+    db = await get_db()
+    try:
+        row = await (await db.execute("SELECT * FROM staff_questions WHERE id=?", (question_id,))).fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def answer_staff_question(question_id: int, staff_id: int, answer: str) -> bool:
+    db = await get_db()
+    try:
+        question = await (await db.execute(
+            "SELECT status,requires_answer FROM staff_questions WHERE id=?", (question_id,)
+        )).fetchone()
+        if not question or question["status"] != "open" or not question["requires_answer"]:
+            return False
+        await db.execute(
+            """INSERT INTO staff_question_responses(question_id,staff_id,answer)
+               VALUES(?,?,?) ON CONFLICT(question_id,staff_id) DO UPDATE SET
+               answer=excluded.answer,updated_at=CURRENT_TIMESTAMP""",
+            (question_id, staff_id, answer.strip()),
+        )
+        await db.commit()
+        return True
+    finally:
+        await db.close()
+
+
+async def create_deadline_extension_request(
+    assignment_id: int, staff_id: int, old_deadline: str,
+    requested_deadline: str, reason: str,
+) -> Optional[Dict[str, Any]]:
+    db = await get_db()
+    try:
+        existing = await (await db.execute(
+            "SELECT * FROM deadline_extension_requests WHERE assignment_id=? AND status='pending'",
+            (assignment_id,),
+        )).fetchone()
+        if existing:
+            return None
+        cursor = await db.execute(
+            """INSERT INTO deadline_extension_requests
+               (assignment_id,staff_id,old_deadline,requested_deadline,reason)
+               VALUES(?,?,?,?,?)""",
+            (assignment_id, staff_id, old_deadline, requested_deadline, reason.strip()),
+        )
+        await db.commit()
+        row = await (await db.execute(
+            "SELECT * FROM deadline_extension_requests WHERE id=?", (cursor.lastrowid,)
+        )).fetchone()
+        return dict(row)
+    finally:
+        await db.close()
+
+
+async def get_deadline_extension_request(request_id: int) -> Optional[Dict[str, Any]]:
+    db = await get_db()
+    try:
+        row = await (await db.execute(
+            "SELECT * FROM deadline_extension_requests WHERE id=?", (request_id,)
+        )).fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def resolve_deadline_extension_request(request_id: int, admin_id: int, approved: bool) -> bool:
+    db = await get_db()
+    try:
+        await db.execute("BEGIN IMMEDIATE")
+        row = await (await db.execute(
+            "SELECT * FROM deadline_extension_requests WHERE id=? AND status='pending'", (request_id,)
+        )).fetchone()
+        if not row:
+            await db.rollback()
+            return False
+        if approved:
+            await db.execute(
+                "UPDATE assignments SET deadline_at=? WHERE id=? AND status IN ('claimed','revision')",
+                (row["requested_deadline"], row["assignment_id"]),
+            )
+        await db.execute(
+            """UPDATE deadline_extension_requests SET status=?,reviewed_at=CURRENT_TIMESTAMP,reviewed_by=?
+               WHERE id=?""",
+            ("approved" if approved else "rejected", admin_id, request_id),
+        )
+        await db.commit()
+        return True
+    except Exception:
+        await db.rollback()
+        raise
+    finally:
+        await db.close()
+
+
 async def clear_assignment_message(assignment_id: int) -> None:
     """Forget a task announcement after it has been removed from the public channel."""
     db = await get_db()
@@ -818,7 +1012,7 @@ async def get_reminder_candidates() -> List[Dict[str, Any]]:
             SELECT * FROM assignments
             WHERE
               (deadline_at IS NOT NULL AND status IN ('claimed','revision')
-               AND date(deadline_at) <= date('now','+1 day'))
+               AND date(deadline_at) <= date('now','+3 day'))
               OR
               (status='submitted' AND submitted_at IS NOT NULL
                AND datetime(submitted_at) <= datetime('now','-24 hours'))

@@ -43,6 +43,8 @@ from views.payment_views import (
     RetryInvoiceDynamic,
 )
 from views.role_views import ZodiacRoleView
+from views.staff_question_views import StaffQuestionAnswerDynamic
+from views.support_views import DeadlineExtensionDecisionDynamic
 from views.pair_views import (
     PairApproveDynamic, PairReviseDynamic, PairTlDynamic,
     PairStatusDynamic, PairTlRevisionChapterDynamic, PairTlRevisionDynamic,
@@ -123,6 +125,8 @@ class RyukomikBot(commands.Bot):
             RejectPayoutDynamic, RetryInvoiceDynamic,
         )
         self.add_dynamic_items(GiveawayJoinDynamic)
+        self.add_dynamic_items(StaffQuestionAnswerDynamic)
+        self.add_dynamic_items(DeadlineExtensionDecisionDynamic)
         open_assignments = await get_assignments_by_status("open")
         for assignment in open_assignments:
             if assignment.get("message_id"):
@@ -366,9 +370,17 @@ async def workflow_reminder_loop():
                         )
             continue
         deadline = str(item.get("deadline_at") or "")[:10]
-        today = datetime.now(ZoneInfo("Asia/Jakarta")).date().isoformat()
-        overdue = bool(deadline and deadline < today)
-        key = f"{'overdue' if overdue else 'deadline-h1'}:{assignment_id}:{deadline}"
+        today_date = datetime.now(ZoneInfo("Asia/Jakarta")).date()
+        try:
+            deadline_date = datetime.strptime(deadline, "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        days_left = (deadline_date - today_date).days
+        if days_left > 3:
+            continue
+        overdue = days_left < 0
+        stage = f"overdue-daily:{today_date.isoformat()}" if overdue else f"deadline-d{days_left}"
+        key = f"{stage}:{assignment_id}:{deadline}"
         if not await db.claim_reminder(key, assignment_id, "staff"):
             continue
         ticket = await find_ticket(guild, int(item.get("staff_id") or 0))
@@ -383,10 +395,36 @@ async def workflow_reminder_loop():
                     ),
                     color=discord.Color.red() if overdue else discord.Color.gold(),
                 )
+            if overdue:
+                strict_title = f"🚨 TERLAMBAT {abs(days_left)} HARI"
+                strict_action = "Segera selesaikan atau gunakan **Bantuan Tugas** untuk melaporkan kendala."
+            elif days_left == 0:
+                strict_title = "🔴 DEADLINE HARI INI"
+                strict_action = "Hasil harus dikirim hari ini. Laporkan kendala sekarang."
+            elif days_left == 1:
+                strict_title = "🟠 DEADLINE BESOK"
+                strict_action = "Prioritaskan tugas ini dan pastikan hasil segera diselesaikan."
+            else:
+                strict_title = f"🟡 DEADLINE H-{days_left}"
+                strict_action = "Mulai prioritaskan tugas ini dan cek kembali progres pengerjaan."
+            embed.title = strict_title
+            embed.description = f"**#{assignment_id} — {item['manga']} Ch. {item['chapter']}**\nDeadline: **{deadline}**. {strict_action}"
+            embed.color = discord.Color.red() if days_left <= 0 else discord.Color.orange() if days_left == 1 else discord.Color.gold()
             await operations.enqueue_notification(
                 key, "deadline_reminder", ticket.id,
                 {"content": member.mention if member else None, "embed": embed.to_dict()},
             )
+            if overdue and admin_channel:
+                admin_key = f"{key}:admin"
+                if await db.claim_reminder(admin_key, assignment_id, "admin"):
+                    await admin_channel.send(
+                        embed=discord.Embed(
+                            title=f"🚨 Tugas #{assignment_id} Terlambat {abs(days_left)} Hari",
+                            description=f"**{item['manga']} Ch. {item['chapter']}** • Deadline **{deadline}**\nStaff: {member.mention if member else item['staff_id']} • Tiket: {ticket.mention}",
+                            color=discord.Color.red(),
+                        ),
+                        allowed_mentions=discord.AllowedMentions.none(),
+                    )
 
 
 @workflow_reminder_loop.before_loop

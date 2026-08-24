@@ -17,6 +17,7 @@ Helpers moved: resolve_staff_ticket_channel, send_assignment_notice,
 import asyncio
 import hashlib
 import json
+from datetime import date, datetime
 from io import BytesIO
 from typing import Literal
 
@@ -56,6 +57,18 @@ from dashboard.backend.helpers import (
 from enums import AssignmentStatus, EventType
 
 router = APIRouter(prefix="/api/assignments", tags=["assignments"])
+
+
+def require_current_deadline(value: str | None) -> str:
+    if not value:
+        raise HTTPException(status_code=422, detail="Deadline wajib diisi untuk setiap tugas.")
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Format deadline harus YYYY-MM-DD.")
+    if parsed < date.today():
+        raise HTTPException(status_code=422, detail="Deadline tidak boleh tanggal yang sudah lewat.")
+    return value
 
 
 # ──────────────────────────────────────────────
@@ -338,6 +351,7 @@ async def assignments(
 
 @router.post("", status_code=201)
 async def create_dashboard_assignment(payload: AssignmentCreate, user=Depends(admin_user)):
+    payload.deadline_at = require_current_deadline(payload.deadline_at)
     try:
         chapters = parse_chapters(payload.chapter)
     except ValueError as error:
@@ -394,6 +408,7 @@ async def create_dashboard_assignment(payload: AssignmentCreate, user=Depends(ad
 
 @router.post("/tl-ts-pair", status_code=201)
 async def create_tl_ts_pair(payload: TlTsPairCreate, user=Depends(admin_user)):
+    payload.deadline_at = require_current_deadline(payload.deadline_at)
     try:
         chapters = parse_chapters(payload.chapter)
     except ValueError as error:
@@ -462,6 +477,7 @@ async def update_dashboard_assignment(
     payload: AssignmentUpdate,
     user=Depends(admin_user),
 ):
+    payload.deadline_at = require_current_deadline(payload.deadline_at)
     before = await staff_db.get_assignment(assignment_id)
     if not before:
         raise HTTPException(status_code=404, detail="Tugas tidak ditemukan.")
