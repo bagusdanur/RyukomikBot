@@ -145,6 +145,23 @@ class MeasureRawWorkloadTests(unittest.TestCase):
 
 
 class SuggestAssignmentRateTests(unittest.TestCase):
+    def test_pinned_source_bypasses_title_search(self):
+        downloader = _FakeDownloader(
+            {"id": "unused", "title": "I'm a Hero"},
+            [{"id": "series-chapter-54", "title": "Chapter 54"}],
+            {"series-chapter-54": ["https://example.test/54.png"]},
+        )
+        downloader.search_manga = AsyncMock(side_effect=AssertionError("title search must be bypassed"))
+        canned = RawWorkload(1, 1, 3000, 3000, 0)
+        with patch("raw_rate_analysis.measure_raw_workload", AsyncMock(return_value=canned)):
+            result = asyncio.run(suggest_assignment_rate(
+                "I’m a Hero", ["54"], "TL", 4_000, 8_000,
+                {"thunder": downloader},
+                pinned_source="thunder", pinned_manga_id="im-a-hero",
+            ))
+        self.assertEqual(result["status"], "resolved")
+        self.assertEqual(result["source"], "thunder")
+
     def test_resolved_rate_is_bounded_by_role_range(self):
         downloader = _FakeDownloader(
             {"id": "m1", "title": "Project"},

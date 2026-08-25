@@ -649,10 +649,11 @@ async function analyzeRawRate() {
     rawRateAnalyzing.value = true;
     error.value = "";
     const sourceParam = task.value.raw_source || undefined;
+    const rawIdParam = task.value.raw_id || undefined;
     if (task.value.role === "PAIR") {
       const [tl, ts] = await Promise.all([
-        api.analyzeRawRate(task.value.manga, task.value.chapter, "TL", sourceParam),
-        api.analyzeRawRate(task.value.manga, task.value.chapter, "TS", sourceParam),
+        api.analyzeRawRate(task.value.manga, task.value.chapter, "TL", sourceParam, rawIdParam),
+        api.analyzeRawRate(task.value.manga, task.value.chapter, "TS", sourceParam, rawIdParam),
       ]);
       rawRateAnalysis.value = tl;
       task.value.final_rate = tl.rate_per_chapter;
@@ -660,7 +661,7 @@ async function analyzeRawRate() {
       success.value = `RAW (${tl.source.toUpperCase()}) dianalisis: ${tl.workload}. Rekomendasi TL ${money(tl.rate_per_chapter)}/chapter dan TS ${money(ts.rate_per_chapter)}/chapter sudah diterapkan.`;
       return;
     }
-    const result = await api.analyzeRawRate(task.value.manga, task.value.chapter, task.value.role, sourceParam);
+    const result = await api.analyzeRawRate(task.value.manga, task.value.chapter, task.value.role, sourceParam, rawIdParam);
     rawRateAnalysis.value = result;
     task.value.final_rate = result.rate_per_chapter;
     success.value = `RAW (${result.source.toUpperCase()}) dianalisis: ${result.workload}. Rekomendasi rate diterapkan dan masih dapat diubah.`;

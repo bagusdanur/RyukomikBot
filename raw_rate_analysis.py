@@ -14,7 +14,7 @@ from io import BytesIO
 import aiohttp
 from PIL import Image, UnidentifiedImageError
 
-from raw_downloader.resolver import resolve_assignment_raw
+from raw_downloader.resolver import filter_allowed_chapters, resolve_assignment_raw
 
 # RAW CDNs (Asura, Omega, Doujiva, EvaScan, Thunder) reject requests without a
 # browser-like User-Agent, same as every raw_downloader/*.py session. Without
@@ -177,13 +177,34 @@ async def suggest_assignment_rate(
     *,
     timeout: int = 12,
     progress=None,
+    pinned_source: str | None = None,
+    pinned_manga_id: str | None = None,
 ) -> dict:
     """Resolve a manga+chapters request against RAW sources and suggest a rate
     driven purely by RAW workload (page count + image height), never above
     the role's existing [minimum, maximum]. Shared by the dashboard and the
     Discord assign flow so both derive the same rate for the same RAW.
     """
-    resolved = await resolve_assignment_raw(manga, chapters, downloaders, progress=progress, timeout=timeout)
+    if pinned_source and pinned_manga_id and pinned_source in downloaders:
+        downloader = downloaders[pinned_source]
+        try:
+            chapter_list = await asyncio.wait_for(
+                downloader.get_chapter_list(pinned_manga_id), timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            return {"status": "timeout"}
+        except Exception:
+            chapter_list = []
+        matched_chapters, missing = filter_allowed_chapters(chapter_list, chapters)
+        resolved = {
+            "status": "resolved" if matched_chapters else "chapters_missing",
+            "source": pinned_source,
+            "manga": {"id": pinned_manga_id, "title": manga},
+            "chapters": matched_chapters,
+            "missing": missing,
+        }
+    else:
+        resolved = await resolve_assignment_raw(manga, chapters, downloaders, progress=progress, timeout=timeout)
     status = resolved.get("status")
     if status != "resolved":
         return {"status": status or "not_found"}

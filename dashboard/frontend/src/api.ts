@@ -437,10 +437,10 @@ const liveApi = {
     }),
   rawSearch: (q: string, source = "all") =>
     request<RawSearchResult[]>(`/api/raw/search?q=${encodeURIComponent(q)}&source=${encodeURIComponent(source)}`),
-  analyzeRawRate: (manga: string, chapter: string, role: string, source?: string) =>
+  analyzeRawRate: (manga: string, chapter: string, role: string, source?: string, rawId?: string) =>
     request<RawRateAnalysis>("/api/raw-rate-analysis", {
       method: "POST",
-      body: JSON.stringify({ manga, chapter, role, ...(source ? { source } : {}) }),
+      body: JSON.stringify({ manga, chapter, role, ...(source ? { source } : {}), ...(rawId ? { raw_id: rawId } : {}) }),
     }),
   approveAssignment: (id: number) =>
     request(`/api/assignments/${id}/approve`, { method: "POST" }),

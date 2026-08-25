@@ -499,6 +499,7 @@ class RawRateAnalysisRequest(BaseModel):
     chapter: str = Field(min_length=1, max_length=30)
     role: Literal["TL", "TS", "TL+TS"]
     source: str | None = None
+    raw_id: str | None = Field(default=None, max_length=300)
 
 
 class ScoutSearchRequest(BaseModel):
@@ -1771,6 +1772,8 @@ async def raw_rate_analysis(payload: RawRateAnalysisRequest, _user=Depends(admin
         maximum,
         downloaders,
         timeout=12,
+        pinned_source=payload.source,
+        pinned_manga_id=payload.raw_id.strip() if payload.raw_id else None,
     )
     if result["status"] != "resolved":
         source_name = payload.source.title() if payload.source else "sumber RAW"
