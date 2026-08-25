@@ -59,9 +59,9 @@ from enums import AssignmentStatus, EventType
 router = APIRouter(prefix="/api/assignments", tags=["assignments"])
 
 
-def require_current_deadline(value: str | None) -> str:
+def require_current_deadline(value: str | None) -> str | None:
     if not value:
-        raise HTTPException(status_code=422, detail="Deadline wajib diisi untuk setiap tugas.")
+        return None
     try:
         parsed = datetime.strptime(value, "%Y-%m-%d").date()
     except ValueError:

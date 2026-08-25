@@ -103,6 +103,7 @@ const task = ref({
   raw_pack_mode: "normal",
 });
 const mangaSearchSource = ref("all");
+const deadlineNotSet = ref(false);
 const mangaSearchResults = ref<RawSearchResult[]>([]);
 const mangaSearching = ref(false);
 const mangaDropdownOpen = ref(false);
@@ -569,8 +570,9 @@ async function confirmCloseRegistration() {
 async function createTask() {
   if (!editingTask.value && !task.value.staff_id) return (error.value = "Pilih staf tujuan.");
   if (!editingTask.value && task.value.role === "PAIR" && !task.value.ts_staff_id) return (error.value = "Pilih staff Typesetter.");
-  if (!task.value.deadline_at) return (error.value = "Deadline wajib diisi untuk setiap tugas.");
-  if (task.value.deadline_at < new Date().toISOString().slice(0, 10)) return (error.value = "Deadline tidak boleh tanggal yang sudah lewat.");
+  if (!deadlineNotSet.value && !task.value.deadline_at) return (error.value = "Isi tanggal deadline atau pilih Tidak ditentukan.");
+  if (!deadlineNotSet.value && task.value.deadline_at < new Date().toISOString().slice(0, 10)) return (error.value = "Deadline tidak boleh tanggal yang sudah lewat.");
+  const selectedDeadline = deadlineNotSet.value ? null : task.value.deadline_at || null;
   try {
     loading.value = true;
     if (editingTask.value) {
@@ -579,7 +581,7 @@ async function createTask() {
         chapter: task.value.chapter,
         role: task.value.role,
         rate_per_chapter: task.value.final_rate,
-        deadline_at: task.value.deadline_at || null,
+        deadline_at: selectedDeadline,
         raw_mode: task.value.raw_mode,
         raw_source: task.value.raw_source || null,
         raw_id: task.value.raw_id || null,
@@ -591,7 +593,7 @@ async function createTask() {
         manga: task.value.manga, chapter: task.value.chapter,
         tl_staff_id: task.value.staff_id, ts_staff_id: task.value.ts_staff_id,
         tl_rate_per_chapter: task.value.final_rate, ts_rate_per_chapter: task.value.ts_rate,
-        deadline_at: task.value.deadline_at || null,
+        deadline_at: selectedDeadline,
         raw_mode: task.value.raw_mode,
         raw_source: task.value.raw_source || null,
         raw_id: task.value.raw_id || null,
@@ -601,7 +603,7 @@ async function createTask() {
         ? `Pair dibuat: tugas TL #${result.tl_assignment_id} dikirim ke tiket staff. Tugas TS akan otomatis aktif setelah TL disetujui.`
         : `Pair #${result.tl_assignment_id} tersimpan, tetapi tiket staff tidak ditemukan. Periksa tiket staff sebelum melanjutkan.`;
     } else {
-      const result = await api.createAssignment({ ...task.value, rate_per_chapter: task.value.final_rate, staff_id: task.value.staff_id, deadline_at: task.value.deadline_at || null });
+      const result = await api.createAssignment({ ...task.value, rate_per_chapter: task.value.final_rate, staff_id: task.value.staff_id, deadline_at: selectedDeadline });
       success.value = `Tugas #${result.id} dibuat${result.notified ? " dan staf sudah diberi notifikasi." : ", tetapi notifikasi Discord gagal."}`;
     }
     showTask.value = false;
@@ -621,6 +623,7 @@ async function createTask() {
       raw_pack_mode: "normal",
     };
     rawRateAnalysis.value = null;
+    deadlineNotSet.value = false;
     await loadPage();
   } catch (e) {
     error.value = e instanceof Error ? e.message : "Gagal membuat tugas.";
@@ -680,6 +683,7 @@ async function openTask(staffId?: string, prefill?: { manga?: string; chapter?: 
   task.value.raw_source = "";
   task.value.raw_id = "";
   task.value.raw_pack_mode = "normal";
+  deadlineNotSet.value = false;
   error.value = "";
   if (prefill) {
     if (prefill.manga) task.value.manga = prefill.manga;
@@ -728,6 +732,7 @@ function editTask(item: Assignment) {
     raw_pack_mode: item.raw_pack_mode || "normal",
   };
   rawRateAnalysis.value = null;
+  deadlineNotSet.value = !item.deadline_at;
   showTask.value = true;
 }
 async function downloadResult(item: Submission) {
@@ -2127,8 +2132,14 @@ onMounted(async () => {
             <span>{{ taskChapterCount || 0 }} chapter × {{ money(task.final_rate) }} = <b>{{ money(taskTotalRate) }}</b></span>
           </div
           ><label
-            >Deadline wajib<input v-model="task.deadline_at" type="date" :min="new Date().toISOString().slice(0, 10)" required
-          /></label>
+            >Pengaturan deadline
+            <select v-model="deadlineNotSet" @change="deadlineNotSet && (task.deadline_at = '')">
+              <option :value="false">Tentukan tanggal (disarankan)</option>
+              <option :value="true">Tidak ditentukan</option>
+            </select>
+            <input v-if="!deadlineNotSet" v-model="task.deadline_at" type="date" :min="new Date().toISOString().slice(0, 10)" required />
+            <small v-else>Tugas dapat berjalan tanpa batas tanggal.</small>
+          </label>
         </div>
         <div class="modal-actions">
           <Button
