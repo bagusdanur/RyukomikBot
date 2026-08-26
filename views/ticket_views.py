@@ -52,10 +52,10 @@ async def _validated_assignment(interaction: discord.Interaction, assignment_id:
     if not admin and assignment["status"] in {"claimed", "revision"}:
         deadline = str(assignment.get("deadline_at") or "")[:10]
         today = datetime.now(ZoneInfo("Asia/Jakarta")).date().isoformat()
-        if not deadline:
-            await _respond(interaction, "Tugas ini belum memiliki deadline. Hubungi Administrator sebelum submit.", ephemeral=False)
-            return None
-        if deadline < today:
+        # A missing deadline is an explicit admin choice ("Tidak ditentukan"),
+        # so staff may submit normally. The strict lock only applies when an
+        # actual deadline exists and has passed.
+        if deadline and deadline < today:
             await _respond(
                 interaction,
                 f"🔒 **Submit dikunci karena deadline {deadline} sudah lewat.**\n"
