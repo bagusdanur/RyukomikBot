@@ -2018,6 +2018,7 @@ onMounted(async () => {
                   <option value="demon">Demon</option>
                   <option value="kagane">Kagane</option>
                   <option value="mgeko">Mgeko</option>
+                  <option value="dusk">Dusk</option>
                 </select>
               </div>
             </div>

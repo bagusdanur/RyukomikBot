@@ -51,6 +51,7 @@ img.brand-mark{display:block;object-fit:cover;background:#000;font-size:0}
 .source-badge[data-source="demon"]{background:#331418;color:#f87171}
 .source-badge[data-source="kagane"]{background:#2c1538;color:#e879f9}
 .source-badge[data-source="mgeko"]{background:#142c22;color:#34d399}
+.source-badge[data-source="dusk"]{background:#211936;color:#c4b5fd}
 .chapter-badge{font-size:10px;padding:2px 6px;border-radius:5px;background:#182234;color:#94a3b8}
 .rating-badge{font-size:10px;display:flex;align-items:center;gap:3px;color:#fbbf24}
 .rating-badge i{font-size:9px}

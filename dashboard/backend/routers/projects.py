@@ -34,7 +34,7 @@ RAW_DOWNLOADERS = scout_service.RAW_DOWNLOADERS
 
 class ProjectSetRawRequest(BaseModel):
     source: Literal[
-        "asura", "omega", "doujiva", "diva", "evascan", "thunder", "vortex", "qimanga", "demon", "kagane", "mgeko"
+        "asura", "omega", "doujiva", "diva", "evascan", "thunder", "vortex", "qimanga", "demon", "kagane", "mgeko", "dusk"
     ]
     source_id: str = Field(min_length=1, max_length=150)
 

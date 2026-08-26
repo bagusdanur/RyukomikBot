@@ -65,6 +65,7 @@ const availableSources = [
   { id: "demon", label: "Demon Scans" },
   { id: "kagane", label: "Kagane" },
   { id: "mgeko", label: "Mgeko" },
+  { id: "dusk", label: "Dusk" },
 ];
 
 const statusLabels: Record<string, string> = {
