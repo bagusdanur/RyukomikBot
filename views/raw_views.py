@@ -19,7 +19,7 @@ from raw_downloader.resolver import (
     resolve_assignment_raw,
 )
 from raw_downloader.retry import RETRYABLE_STATUSES
-from raw_downloader.image_processing import merge_images_lossless, resize_for_editor
+from raw_downloader.image_processing import convert_images_to_webp, merge_images_lossless, resize_for_editor
 
 RAW_ROOT = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "raw")
 FILEBIN_BASE_URL = "https://filebin.net"
@@ -53,7 +53,11 @@ def raw_mode_label(raw_mode: str) -> str:
 
 
 def raw_pack_label(raw_pack_mode: str) -> str:
-    return "Gabung Lossless (maks. 16.000 px)" if raw_pack_mode == "merge_16000" else "Normal (per halaman)"
+    if raw_pack_mode == "merge_16000":
+        return "Gabung Lossless (maks. 16.000 px)"
+    if raw_pack_mode == "webp_hd":
+        return "WebP HD (ukuran lebih kecil)"
+    return "Normal (per halaman)"
 
 
 async def resolve_pinned_raw(source: str, manga_id: str, allowed_chapters, timeout: int = 12):
@@ -242,6 +246,26 @@ async def create_filebin_download(
                 resized_images += int(resize_result.resized)
             if index == len(upload_entries) or index % 3 == 0:
                 await notify(f"Memproses gambar agar aman untuk editor: **{index}/{len(upload_entries)}**")
+
+        if raw_pack_mode == "webp_hd":
+            await notify(f"Mengonversi **{len(upload_entries)} gambar** ke WebP HD...")
+            webp_entries = []
+            webp_root = os.path.join(request_root, "webp-hd")
+            for chapter_id in dict.fromkeys(item[0] for item in upload_entries):
+                entries = [item for item in upload_entries if item[0] == chapter_id]
+                safe_chapter = re.sub(r"[^a-zA-Z0-9_-]+", "-", chapter_id).strip("-")[:30] or "chapter"
+                converted = await asyncio.to_thread(
+                    convert_images_to_webp,
+                    [path for _, path, _ in entries],
+                    os.path.join(webp_root, safe_chapter),
+                    92,
+                )
+                webp_entries.extend(
+                    (chapter_id, path, f"ch-{safe_chapter}_{index:03d}.webp")
+                    for index, path in enumerate(converted, 1)
+                )
+            upload_entries = webp_entries
+            await notify(f"Konversi selesai: **{len(upload_entries)} WebP HD** siap diunggah.")
 
         upload_semaphore = asyncio.Semaphore(FILEBIN_UPLOAD_CONCURRENCY)
         uploaded_count = 0

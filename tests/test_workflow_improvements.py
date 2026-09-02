@@ -52,6 +52,13 @@ class WorkflowImprovementTests(unittest.TestCase):
         self.assertEqual(assignment["raw_pack_mode"], "merge_16000")
         self.assertEqual(assignment["raw_source"], "diva")
 
+    def test_assignment_persists_webp_hd_raw_pack_mode(self):
+        assignment_id = asyncio.run(database.create_assignment(
+            "Series", "7", "TS", 5000, 5000, 1.0, raw_pack_mode="webp_hd",
+        ))
+        assignment = asyncio.run(database.get_assignment(assignment_id))
+        self.assertEqual(assignment["raw_pack_mode"], "webp_hd")
+
 
 if __name__ == "__main__":
     unittest.main()

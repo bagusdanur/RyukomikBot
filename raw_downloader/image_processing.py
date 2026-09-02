@@ -14,6 +14,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 MAX_RAW_IMAGE_HEIGHT = int(os.getenv("RAW_MAX_IMAGE_HEIGHT", "8192"))
 RAW_MODES = {"editor_safe", "original"}
 MAX_MERGED_HEIGHT = int(os.getenv("RAW_MERGED_HEIGHT", "16000"))
+RAW_WEBP_QUALITY = max(80, min(100, int(os.getenv("RAW_WEBP_QUALITY", "92"))))
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,34 @@ class ResizeResult:
     resized: bool
     original_height: int | None = None
     final_height: int | None = None
+
+
+def convert_images_to_webp(
+    image_paths: Iterable[str], output_dir: str, quality: int = RAW_WEBP_QUALITY
+) -> list[str]:
+    """Convert ordered RAW pages to high-quality WebP without changing dimensions."""
+    if quality < 1 or quality > 100:
+        raise ValueError("quality must be between 1 and 100")
+    os.makedirs(output_dir, exist_ok=True)
+    outputs: list[str] = []
+    for index, path in enumerate(image_paths, 1):
+        output = os.path.join(output_dir, f"{index:03d}.webp")
+        with Image.open(path) as opened:
+            source = ImageOps.exif_transpose(opened)
+            converted = None
+            try:
+                image = source
+                if image.mode not in {"RGB", "RGBA"}:
+                    converted = image.convert("RGBA" if "A" in image.getbands() else "RGB")
+                    image = converted
+                image.save(output, format="WEBP", quality=quality, method=6)
+            finally:
+                if converted is not None:
+                    converted.close()
+                if source is not opened:
+                    source.close()
+        outputs.append(output)
+    return outputs
 
 
 def merge_images_lossless(

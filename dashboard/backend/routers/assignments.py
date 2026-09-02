@@ -87,7 +87,7 @@ class AssignmentCreate(BaseModel):
     raw_mode: Literal["editor_safe", "original"] = "editor_safe"
     raw_source: str | None = Field(default=None, max_length=30)
     raw_id: str | None = Field(default=None, max_length=500)
-    raw_pack_mode: Literal["normal", "merge_16000"] = "normal"
+    raw_pack_mode: Literal["normal", "merge_16000", "webp_hd"] = "normal"
 
 
 class TlTsPairCreate(BaseModel):
@@ -101,7 +101,7 @@ class TlTsPairCreate(BaseModel):
     raw_mode: Literal["editor_safe", "original"] = "editor_safe"
     raw_source: str | None = Field(default=None, max_length=30)
     raw_id: str | None = Field(default=None, max_length=500)
-    raw_pack_mode: Literal["normal", "merge_16000"] = "normal"
+    raw_pack_mode: Literal["normal", "merge_16000", "webp_hd"] = "normal"
 
 class AssignmentUpdate(BaseModel):
     manga: str = Field(min_length=2, max_length=150)
@@ -112,7 +112,7 @@ class AssignmentUpdate(BaseModel):
     raw_mode: Literal["editor_safe", "original"] = "editor_safe"
     raw_source: str | None = Field(default=None, max_length=30)
     raw_id: str | None = Field(default=None, max_length=500)
-    raw_pack_mode: Literal["normal", "merge_16000"] = "normal"
+    raw_pack_mode: Literal["normal", "merge_16000", "webp_hd"] = "normal"
 
 
 class RevisionRequest(BaseModel):

@@ -347,7 +347,7 @@ async def create_assignment(
             len(chapters or [chapter]), rate_per_chapter if rate_per_chapter is not None else final_rate,
             raw_mode if raw_mode in {"editor_safe", "original"} else "editor_safe",
             raw_source, raw_manga_id,
-            raw_pack_mode if raw_pack_mode in {"normal", "merge_16000"} else "normal",
+            raw_pack_mode if raw_pack_mode in {"normal", "merge_16000", "webp_hd"} else "normal",
         ))
         await db.commit()
         await add_assignment_event(

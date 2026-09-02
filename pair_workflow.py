@@ -115,7 +115,7 @@ async def create_project(
             (manga, json.dumps(chapters, ensure_ascii=False), tl_staff_id, ts_staff_id,
              tl_rate_per_chapter, ts_rate_per_chapter, deadline_at,
              str(created_by) if created_by else None, raw_mode, raw_source, raw_manga_id,
-             raw_pack_mode if raw_pack_mode in {"normal", "merge_16000"} else "normal"),
+             raw_pack_mode if raw_pack_mode in {"normal", "merge_16000", "webp_hd"} else "normal"),
         )
         project_id = int(cursor.lastrowid)
         chapter_rows = []
