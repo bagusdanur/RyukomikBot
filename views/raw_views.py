@@ -54,7 +54,7 @@ def raw_mode_label(raw_mode: str) -> str:
 
 def raw_pack_label(raw_pack_mode: str) -> str:
     if raw_pack_mode == "merge_16000":
-        return "Gabung Lossless (maks. 16.000 px)"
+        return "Gabung WebP HD (maks. 16.000 px)"
     if raw_pack_mode == "webp_hd":
         return "WebP HD (ukuran lebih kecil)"
     return "Normal (per halaman)"
@@ -225,7 +225,7 @@ async def create_filebin_download(
         if not upload_entries:
             return None, [], selected_source
         if raw_pack_mode == "merge_16000":
-            await notify(f"Menggabungkan **{len(upload_entries)} halaman** secara lossless hingga 16.000 px...")
+            await notify(f"Menggabungkan **{len(upload_entries)} halaman** menjadi WebP HD hingga 16.000 px...")
             merged_entries = []
             merged_root = os.path.join(request_root, "merged")
             for chapter_id in dict.fromkeys(item[0] for item in upload_entries):
@@ -238,7 +238,7 @@ async def create_filebin_download(
                     (chapter_id, path, os.path.basename(path)) for path in merged_paths
                 )
             upload_entries = merged_entries
-            await notify(f"Penggabungan selesai: **{len(upload_entries)} file lossless** siap diunggah.")
+            await notify(f"Penggabungan selesai: **{len(upload_entries)} WebP kualitas 95** siap diunggah.")
         resized_images = 0
         for index, (_, image_path, _) in enumerate(upload_entries, 1):
             if raw_pack_mode != "merge_16000" and raw_mode != "original":

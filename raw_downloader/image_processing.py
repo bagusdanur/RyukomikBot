@@ -55,7 +55,7 @@ def convert_images_to_webp(
 def merge_images_lossless(
     image_paths: Iterable[str], output_dir: str, stem: str, max_height: int = MAX_MERGED_HEIGHT
 ) -> list[str]:
-    """Vertically pack ordered pages into lossless PNG files without resizing pixels."""
+    """Vertically pack ordered pages into WebP quality 95 without resizing dimensions."""
     if max_height < 1:
         raise ValueError("max_height must be positive")
     paths = list(image_paths)
@@ -95,8 +95,8 @@ def merge_images_lossless(
                         page = page.convert("RGB")
                 canvas.paste(page, ((canvas_width - width) // 2, y))
             y += height
-        output = os.path.join(output_dir, f"{Path(stem).stem}_part{part:03d}.png")
-        canvas.save(output, format="PNG", optimize=True)
+        output = os.path.join(output_dir, f"{Path(stem).stem}_part{part:03d}.webp")
+        canvas.save(output, format="WEBP", quality=RAW_WEBP_QUALITY, method=6)
         canvas.close()
         outputs.append(output)
     return outputs
