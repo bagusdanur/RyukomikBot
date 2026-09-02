@@ -258,7 +258,7 @@ async def create_filebin_download(
                     convert_images_to_webp,
                     [path for _, path, _ in entries],
                     os.path.join(webp_root, safe_chapter),
-                    92,
+                    95,
                 )
                 webp_entries.extend(
                     (chapter_id, path, f"ch-{safe_chapter}_{index:03d}.webp")

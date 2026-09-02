@@ -14,7 +14,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 MAX_RAW_IMAGE_HEIGHT = int(os.getenv("RAW_MAX_IMAGE_HEIGHT", "8192"))
 RAW_MODES = {"editor_safe", "original"}
 MAX_MERGED_HEIGHT = int(os.getenv("RAW_MERGED_HEIGHT", "16000"))
-RAW_WEBP_QUALITY = max(80, min(100, int(os.getenv("RAW_WEBP_QUALITY", "92"))))
+RAW_WEBP_QUALITY = max(80, min(100, int(os.getenv("RAW_WEBP_QUALITY", "95"))))
 
 
 @dataclass(frozen=True)
