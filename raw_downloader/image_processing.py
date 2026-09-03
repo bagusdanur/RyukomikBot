@@ -58,34 +58,48 @@ def merge_images_lossless(
     """Vertically pack ordered pages into WebP quality 95 without resizing dimensions."""
     if max_height < 1:
         raise ValueError("max_height must be positive")
+    # The WebP codec has a hard 16,383-pixel limit on both dimensions.
+    # Keep a little room below it even if an environment override is larger.
+    max_height = min(max_height, 16_000)
     paths = list(image_paths)
     os.makedirs(output_dir, exist_ok=True)
-    groups: list[list[tuple[str, int, int]]] = []
-    current: list[tuple[str, int, int]] = []
+    # Entries are (path, width, slice_height, source_y). A source page may be
+    # taller than the output ceiling, so split it into lossless pixel slices
+    # before packing instead of handing an invalid giant canvas to WebP.
+    groups: list[list[tuple[str, int, int, int]]] = []
+    current: list[tuple[str, int, int, int]] = []
     current_height = 0
     for path in paths:
         with Image.open(path) as source:
             width, height = ImageOps.exif_transpose(source).size
-        if current and current_height + height > max_height:
-            groups.append(current)
-            current, current_height = [], 0
-        current.append((path, width, height))
-        current_height += height
-        if current_height >= max_height:
-            groups.append(current)
-            current, current_height = [], 0
+        if width > 16_383:
+            raise ValueError(f"Lebar gambar {width}px melebihi batas WebP 16.383px: {path}")
+        source_y = 0
+        while source_y < height:
+            slice_height = min(max_height, height - source_y)
+            if current and current_height + slice_height > max_height:
+                groups.append(current)
+                current, current_height = [], 0
+            current.append((path, width, slice_height, source_y))
+            current_height += slice_height
+            source_y += slice_height
+            if current_height >= max_height:
+                groups.append(current)
+                current, current_height = [], 0
     if current:
         groups.append(current)
 
     outputs: list[str] = []
     for part, group in enumerate(groups, 1):
-        canvas_width = max(width for _, width, _ in group)
-        canvas_height = sum(height for _, _, height in group)
+        canvas_width = max(width for _, width, _, _ in group)
+        canvas_height = sum(height for _, _, height, _ in group)
         canvas = Image.new("RGB", (canvas_width, canvas_height), "white")
         y = 0
-        for path, width, height in group:
+        for path, width, height, source_y in group:
             with Image.open(path) as source:
                 page = ImageOps.exif_transpose(source)
+                if source_y or height != page.height:
+                    page = page.crop((0, source_y, width, source_y + height))
                 if page.mode != "RGB":
                     if "A" in page.getbands():
                         layer = Image.new("RGB", page.size, "white")

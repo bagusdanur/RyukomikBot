@@ -39,6 +39,22 @@ class RawImageMergeTests(unittest.TestCase):
                 self.assertEqual(merged.format, "WEBP")
                 self.assertEqual(merged.size, (20, 8))
 
+    def test_single_page_taller_than_limit_is_split_before_webp_encoding(self):
+        with tempfile.TemporaryDirectory() as root:
+            source = os.path.join(root, "very-tall.png")
+            Image.new("RGB", (20, 35), "purple").save(source)
+
+            outputs = merge_images_lossless([source], root, "chapter", max_height=16)
+
+            self.assertEqual(len(outputs), 3)
+            sizes = []
+            for path in outputs:
+                with Image.open(path) as output:
+                    sizes.append(output.size)
+                    self.assertEqual(output.format, "WEBP")
+                    self.assertLessEqual(output.height, 16)
+            self.assertEqual(sizes, [(20, 16), (20, 16), (20, 3)])
+
 
 if __name__ == "__main__":
     unittest.main()
