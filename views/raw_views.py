@@ -651,10 +651,18 @@ async def download_chapters(interaction, source, manga_id, chapter_ids, fallback
             )
         )
 
-    filebin_url, completed, final_source = await create_filebin_download(
-        source, manga_id, chapter_ids, fallbacks, progress=progress, raw_mode=raw_mode,
-        raw_pack_mode=raw_pack_mode,
-    )
+    try:
+        filebin_url, completed, final_source = await create_filebin_download(
+            source, manga_id, chapter_ids, fallbacks, progress=progress, raw_mode=raw_mode,
+            raw_pack_mode=raw_pack_mode,
+        )
+    except Exception as error:
+        print(f"RAW preparation failed for {source}:{manga_id}: {type(error).__name__}: {error}")
+        return await interaction.edit_original_response(embed=discord.Embed(
+            title="Pemrosesan RAW Gagal",
+            description=f"RAW gagal diproses: `{type(error).__name__}`. Silakan coba lagi atau hubungi Administrator.",
+            color=discord.Color.red(),
+        ))
     if not filebin_url:
         return await interaction.edit_original_response(embed=discord.Embed(title="Upload Filebin Gagal", description="RAW tidak tersedia atau Filebin sedang menolak upload. File lokal sudah dibersihkan; coba lagi nanti.", color=discord.Color.red()))
     embed = discord.Embed(title="RAW Siap Diunduh", description=f"Gambar dari **{len(completed)} chapter** sudah tersedia langsung di Filebin tanpa ZIP bertingkat.", color=discord.Color.green())
@@ -663,6 +671,12 @@ async def download_chapters(interaction, source, manga_id, chapter_ids, fallback
     embed.add_field(name="Paket RAW", value=raw_pack_label(raw_pack_mode), inline=False)
     embed.add_field(name="Chapter", value=", ".join(completed), inline=False)
     embed.add_field(name="Link Download", value=f"[Buka Filebin]({filebin_url})", inline=False)
-    embed.add_field(name="Cara Download", value="Buka Filebin lalu pilih **Download files**. ZIP hasil download langsung berisi `ch-1_001.jpg`, `ch-1_002.jpg`, dan seterusnya.", inline=False)
+    if raw_pack_mode == "merge_16000":
+        file_example = "`ch-..._part001.webp`, `ch-..._part002.webp`, dan seterusnya"
+    elif raw_pack_mode == "webp_hd":
+        file_example = "`ch-..._001.webp`, `ch-..._002.webp`, dan seterusnya"
+    else:
+        file_example = "file per halaman dalam format sumber"
+    embed.add_field(name="Cara Download", value=f"Buka Filebin lalu pilih **Download files**. ZIP hasil download langsung berisi {file_example}.", inline=False)
     embed.add_field(name="Penyimpanan", value="File lokal VPS langsung dihapus. Link Filebin berlaku sementara.", inline=False)
     await interaction.edit_original_response(embed=embed)
