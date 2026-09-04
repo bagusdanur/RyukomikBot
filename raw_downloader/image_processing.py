@@ -59,8 +59,11 @@ def merge_images_lossless(
     if max_height < 1:
         raise ValueError("max_height must be positive")
     # The WebP codec has a hard 16,383-pixel limit on both dimensions.
-    # Keep a little room below it even if an environment override is larger.
-    max_height = min(max_height, 16_000)
+    # Pillow/libwebp can still reject a 3,600 x 16,000 canvas (encoding error
+    # 6) even though each dimension is below WebP's theoretical limit.  A
+    # 14,000px ceiling is stable for Evascan's wide pages and remains within
+    # the advertised "maks. 16.000 px" package contract.
+    max_height = min(max_height, 14_000)
     paths = list(image_paths)
     os.makedirs(output_dir, exist_ok=True)
     # Entries are (path, width, slice_height, source_y). A source page may be
