@@ -110,9 +110,9 @@ def merge_images_lossless(
                 canvas.paste(page, ((canvas_width - width) // 2, y))
             y += height
         output = os.path.join(output_dir, f"{Path(stem).stem}_part{part:03d}.webp")
-        # Method controls encoding effort, not visual quality. Method 4 keeps
-        # quality 95 while avoiding multi-minute stalls on 100M-pixel Evascan pages.
-        canvas.save(output, format="WEBP", quality=RAW_WEBP_QUALITY, method=4)
+        # Method controls encoding effort, not visual quality. Method 0 keeps
+        # quality 95 while making multi-gigapixel Evascan chapters practical.
+        canvas.save(output, format="WEBP", quality=RAW_WEBP_QUALITY, method=0)
         canvas.close()
         outputs.append(output)
     return outputs
