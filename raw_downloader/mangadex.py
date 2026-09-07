@@ -29,6 +29,14 @@ def _localized(values: dict[str, str] | None) -> str:
     return next(iter(values.values()), "Unknown")
 
 
+def _matching_title(attributes: dict[str, Any], query: str) -> str:
+    candidates = list((attributes.get("title") or {}).values())
+    for alternative in attributes.get("altTitles") or []:
+        candidates.extend((alternative or {}).values())
+    wanted = query.strip().casefold()
+    return next((title for title in candidates if str(title).strip().casefold() == wanted), None) or _localized(attributes.get("title"))
+
+
 def _extension(url: str) -> str:
     suffix = os.path.splitext(urlparse(url).path)[1].lower().lstrip(".")
     return suffix if suffix in {"jpg", "jpeg", "png", "webp", "gif"} else "jpg"
@@ -53,7 +61,7 @@ class MangaDexDownloader:
             manga_id = str(item.get("id") or "")
             results.append({
                 "id": manga_id,
-                "title": _localized(attributes.get("title")),
+                "title": _matching_title(attributes, query),
                 "status": attributes.get("status", "N/A"),
                 "chapter_count": "",
                 "rating": "",

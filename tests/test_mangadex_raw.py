@@ -17,7 +17,11 @@ class MangaDexDownloaderTests(unittest.IsolatedAsyncioTestCase):
     async def test_search_maps_title_cover_and_id(self):
         payload = {"data": [{
             "id": "manga-id",
-            "attributes": {"title": {"en": "Please Let Me Be Proud"}, "status": "ongoing"},
+            "attributes": {
+                "title": {"en": "Qǐng Yǔnxǔ Wǒ Zìháo"},
+                "altTitles": [{"en": "Please Let Me Be Proud"}],
+                "status": "ongoing",
+            },
             "relationships": [{"type": "cover_art", "attributes": {"fileName": "cover.jpg"}}],
         }]}
         with patch("raw_downloader.mangadex._session", return_value=SessionContext()), patch(
