@@ -9,6 +9,7 @@ from .vortex import VortexDownloader, search_vortex
 from .kagane import KaganeDownloader, search_kagane
 from .mgeko import MgekoDownloader, search_mgeko
 from .dusk import DuskDownloader, search_dusk
+from .mangadex import MangaDexDownloader, search_mangadex
 from config import DIVA_API
 
 asura_downloader = AsuraDownloader()
@@ -23,6 +24,7 @@ vortex_downloader = VortexDownloader()
 kagane_downloader = KaganeDownloader()
 mgeko_downloader = MgekoDownloader()
 dusk_downloader = DuskDownloader()
+mangadex_downloader = MangaDexDownloader()
 
 
 def get_downloader(source: str = "asura"):
@@ -49,6 +51,8 @@ def get_downloader(source: str = "asura"):
         return mgeko_downloader
     if source.casefold() in ("dusk", "duskscans"):
         return dusk_downloader
+    if source.casefold() in ("mangadex", "mdex"):
+        return mangadex_downloader
     if source.casefold() == "asura":
         return asura_downloader
     raise ValueError(f"Sumber RAW tidak dikenal: {source}")
@@ -66,6 +70,7 @@ __all__ = [
     "KaganeDownloader",
     "MgekoDownloader",
     "DuskDownloader",
+    "MangaDexDownloader",
     "search_asura",
     "search_doujiva",
     "search_omega",
@@ -75,6 +80,7 @@ __all__ = [
     "search_kagane",
     "search_mgeko",
     "search_dusk",
+    "search_mangadex",
     "get_downloader",
     "asura_downloader",
     "doujiva_downloader",
@@ -88,4 +94,5 @@ __all__ = [
     "kagane_downloader",
     "mgeko_downloader",
     "dusk_downloader",
+    "mangadex_downloader",
 ]

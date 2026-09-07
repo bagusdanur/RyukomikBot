@@ -35,6 +35,7 @@ from raw_downloader import (
     kagane_downloader,
     mgeko_downloader,
     dusk_downloader,
+    mangadex_downloader,
 )
 from raw_downloader.resolver import normalize_title, resolve_assignment_raw
 
@@ -101,6 +102,7 @@ async def _resolve_raw_images(manga_title: str, chapter: str) -> tuple[List[str]
                     "kagane": kagane_downloader,
                     "mgeko": mgeko_downloader,
                     "dusk": dusk_downloader,
+                    "mangadex": mangadex_downloader,
                 },
                 timeout=8,
             )
