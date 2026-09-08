@@ -56,7 +56,7 @@ import project_scout as scout_service
 import giveaway_service as giveaway_svc
 from yuki_discord import (
     YukiServiceError, chat_with_yuki, ensure_yuki_channel, is_yuki_channel,
-    reset_yuki, response_embeds, setup_yuki_tables, yuki_health,
+    reset_yuki, response_embeds, response_view, setup_yuki_tables, yuki_health,
 )
 from views.giveaway_views import GiveawayJoinDynamic, GiveawayView
 import database as db
@@ -1184,9 +1184,10 @@ async def on_message(message: discord.Message):
     try:
         async with message.channel.typing():
             payload = await chat_with_yuki(message.author, text)
+        view = response_view(payload)
         for index, embed in enumerate(response_embeds(payload)):
             if index == 0:
-                await message.reply(embed=embed, mention_author=False)
+                await message.reply(embed=embed, view=view, mention_author=False)
             else:
                 await message.channel.send(embed=embed)
     except YukiServiceError as error:

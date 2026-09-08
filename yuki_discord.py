@@ -176,6 +176,14 @@ MOOD_COLORS = {"senang": 0xF48FB1, "malu": 0xCE93D8, "sedih": 0x90CAF9,
 
 def response_embeds(payload: dict[str, Any]) -> list[discord.Embed]:
     reply = str(payload.get("reply") or "...").strip()
+    comics = [item for item in (payload.get("comics") or []) if item.get("title") and item.get("url")][:6]
+    if comics:
+        positions = [reply.casefold().find(str(item["title"]).casefold()) for item in comics]
+        positions = [position for position in positions if position >= 0]
+        if positions:
+            reply = reply[:min(positions)].rstrip(" \n:-*#")
+        if len(reply) < 8:
+            reply = "Aku menemukan beberapa komik yang mungkin cocok untukmu. Pilih yang menarik, ya."
     chunks = [reply[index:index + 3900] for index in range(0, len(reply), 3900)] or ["..."]
     mood = str(payload.get("mood") or "tenang").casefold()
     embeds = []
@@ -185,4 +193,33 @@ def response_embeds(payload: dict[str, Any]) -> list[discord.Embed]:
         if index == len(chunks) - 1:
             embed.set_footer(text=f"Mood: {mood.title()} • Kedekatan: {payload.get('bond') or 'kenalan'}")
         embeds.append(embed)
+    for index, comic in enumerate(comics, 1):
+        card = discord.Embed(
+            title=str(comic.get("title") or "Komik")[:256],
+            url=str(comic.get("url") or ""),
+            description="Klik judul atau tombol **Baca sekarang** untuk membuka komik di Ryukomik.",
+            color=0xE85D75,
+        )
+        image = str(comic.get("image") or "")
+        if image.startswith(("https://", "http://")):
+            card.set_thumbnail(url=image)
+        card.add_field(name="Format", value=str(comic.get("format") or "Komik").title(), inline=True)
+        card.add_field(name="Genre", value=str(comic.get("type") or "Belum tersedia")[:1024], inline=True)
+        card.add_field(name="Chapter terbaru", value=str(comic.get("chapter") or "Belum tersedia")[:1024], inline=True)
+        if comic.get("score"):
+            card.add_field(name="Rating", value=f"⭐ {comic['score']}", inline=True)
+        card.set_footer(text=f"Rekomendasi {index} dari {len(comics)} • Ryukomik")
+        embeds.append(card)
     return embeds
+
+
+def response_view(payload: dict[str, Any]) -> discord.ui.View | None:
+    comics = [item for item in (payload.get("comics") or []) if item.get("title") and item.get("url")][:6]
+    if not comics:
+        return None
+    view = discord.ui.View(timeout=300)
+    for index, comic in enumerate(comics):
+        view.add_item(discord.ui.Button(
+            label=f"Baca {str(comic['title'])[:70]}", url=str(comic["url"]), emoji="📖", row=index // 5,
+        ))
+    return view
