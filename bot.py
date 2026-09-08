@@ -54,6 +54,10 @@ from views.pair_views import (
 import pair_workflow as pair_service
 import project_scout as scout_service
 import giveaway_service as giveaway_svc
+from yuki_discord import (
+    YukiServiceError, chat_with_yuki, ensure_yuki_channel, is_yuki_channel,
+    reset_yuki, response_embeds, setup_yuki_tables, yuki_health,
+)
 from views.giveaway_views import GiveawayJoinDynamic, GiveawayView
 import database as db
 from server_management import (
@@ -104,6 +108,7 @@ class RyukomikBot(commands.Bot):
         await scout_service.setup_scout_tables()
         await db.setup_notification_preferences()
         await setup_project_sync()
+        await setup_yuki_tables()
         await operations.recover_outbox()
         
         # Add persistent views
@@ -185,6 +190,8 @@ class RyukomikBot(commands.Bot):
                         apply_server_housekeeping(target_guild),
                         timeout=45,
                     )
+                    yuki_channel = await ensure_yuki_channel(target_guild)
+                    print(f"[OK] Yuki AI channel ready: {yuki_channel.name} ({yuki_channel.id})", flush=True)
                     self.server_housekeeping_done = True
                     print("[OK] Server housekeeping applied without changing layout", flush=True)
                     if not self.website_cleanup_started:
@@ -1061,6 +1068,35 @@ async def raw_update_command(interaction: discord.Interaction, query: str = "", 
         embed.add_field(name=manga.get("title", "Unknown"), value=f"ID: `{manga.get('id', 'N/A')}`", inline=False)
     await interaction.followup.send(embed=embed, ephemeral=False)
 
+
+@bot.tree.command(name="yuki-status", description="Cek apakah layanan Yuki AI sedang aktif")
+async def yuki_status_command(interaction: discord.Interaction):
+    healthy = await yuki_health()
+    embed = discord.Embed(
+        title="Status Yuki AI",
+        description="Yuki siap menemanimu." if healthy else "Yuki sedang tidak dapat dihubungi. Coba lagi nanti.",
+        color=discord.Color.green() if healthy else discord.Color.red(),
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="yuki-reset", description="Hapus memori dan mulai percakapan baru dengan Yuki")
+async def yuki_reset_command(interaction: discord.Interaction):
+    if not is_yuki_channel(interaction.channel):
+        return await interaction.response.send_message(
+            "Perintah ini hanya dapat digunakan di channel Yuki.", ephemeral=True,
+        )
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    try:
+        removed = await reset_yuki(interaction.user)
+        message = (
+            "Memori percakapanmu sudah dihapus. Kita mulai lagi dari awal, ya."
+            if removed else "Kamu belum mempunyai percakapan yang tersimpan."
+        )
+        await interaction.followup.send(message, ephemeral=True)
+    except YukiServiceError as error:
+        await interaction.followup.send(str(error), ephemeral=True)
+
 # ==================== MESSAGE COMMANDS ====================
 
 @bot.command(name="panel")
@@ -1129,6 +1165,44 @@ async def alert_admin(source: str, error: Exception | str, context: str = ""):
         await channel.send(embed=embed)
     except Exception:
         pass
+
+
+@bot.event
+async def on_message(message: discord.Message):
+    """Route ordinary messages in the dedicated channel to Yuki."""
+    if message.author.bot or not message.guild or message.guild.id != GUILD_ID:
+        return
+    if not is_yuki_channel(message.channel):
+        await bot.process_commands(message)
+        return
+    text = message.content.strip()
+    if not text:
+        return await message.reply(
+            "Untuk sekarang Yuki membaca pesan teks. Tulis sesuatu dulu, ya.",
+            mention_author=False,
+        )
+    try:
+        async with message.channel.typing():
+            payload = await chat_with_yuki(message.author, text)
+        for index, embed in enumerate(response_embeds(payload)):
+            if index == 0:
+                await message.reply(embed=embed, mention_author=False)
+            else:
+                await message.channel.send(embed=embed)
+    except YukiServiceError as error:
+        embed = discord.Embed(
+            title="Yuki belum bisa menjawab",
+            description=str(error),
+            color=discord.Color.orange(),
+        )
+        await message.reply(embed=embed, mention_author=False, delete_after=15)
+    except Exception as error:
+        await alert_admin("yuki-discord", error, f"user={message.author.id}")
+        await message.reply(
+            "Maaf, Yuki sedang mengalami gangguan. Coba lagi sebentar, ya.",
+            mention_author=False,
+            delete_after=15,
+        )
 
 
 @bot.event
