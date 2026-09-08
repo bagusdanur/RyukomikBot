@@ -68,6 +68,7 @@ const availableSources = [
   { id: "dusk", label: "Dusk" },
   { id: "mangadex", label: "MangaDex" },
   { id: "lagoon", label: "Lagoon" },
+  { id: "ken", label: "Ken" },
 ];
 
 const statusLabels: Record<string, string> = {

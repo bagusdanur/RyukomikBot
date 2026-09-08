@@ -11,6 +11,7 @@ from .mgeko import MgekoDownloader, search_mgeko
 from .dusk import DuskDownloader, search_dusk
 from .mangadex import MangaDexDownloader, search_mangadex
 from .lagoon import LagoonDownloader, search_lagoon
+from .ken import KenDownloader, search_ken
 from config import DIVA_API
 
 asura_downloader = AsuraDownloader()
@@ -27,6 +28,7 @@ mgeko_downloader = MgekoDownloader()
 dusk_downloader = DuskDownloader()
 mangadex_downloader = MangaDexDownloader()
 lagoon_downloader = LagoonDownloader()
+ken_downloader = KenDownloader()
 
 
 def get_downloader(source: str = "asura"):
@@ -57,6 +59,8 @@ def get_downloader(source: str = "asura"):
         return mangadex_downloader
     if source.casefold() in ("lagoon", "lagoonscans"):
         return lagoon_downloader
+    if source.casefold() in ("ken", "kencomics"):
+        return ken_downloader
     if source.casefold() == "asura":
         return asura_downloader
     raise ValueError(f"Sumber RAW tidak dikenal: {source}")
@@ -76,6 +80,7 @@ __all__ = [
     "DuskDownloader",
     "MangaDexDownloader",
     "LagoonDownloader",
+    "KenDownloader",
     "search_asura",
     "search_doujiva",
     "search_omega",
@@ -87,6 +92,7 @@ __all__ = [
     "search_dusk",
     "search_mangadex",
     "search_lagoon",
+    "search_ken",
     "get_downloader",
     "asura_downloader",
     "doujiva_downloader",
@@ -102,4 +108,5 @@ __all__ = [
     "dusk_downloader",
     "mangadex_downloader",
     "lagoon_downloader",
+    "ken_downloader",
 ]

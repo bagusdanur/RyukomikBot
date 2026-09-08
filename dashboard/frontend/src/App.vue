@@ -2021,6 +2021,7 @@ onMounted(async () => {
                   <option value="dusk">Dusk</option>
                   <option value="mangadex">MangaDex</option>
                   <option value="lagoon">Lagoon</option>
+                  <option value="ken">Ken</option>
                 </select>
               </div>
             </div>

@@ -65,6 +65,7 @@ from raw_downloader import (
     dusk_downloader,
     mangadex_downloader,
     lagoon_downloader,
+    ken_downloader,
 )
 from raw_downloader.resolver import title_score
 from raw_rate_analysis import suggest_assignment_rate
@@ -507,7 +508,7 @@ class RawRateAnalysisRequest(BaseModel):
 
 class ScoutSearchRequest(BaseModel):
     title: str = Field(min_length=2, max_length=180)
-    raw_source: Literal["all", "asura", "omega", "doujiva", "diva", "evascan", "thunder", "vortex", "qimanga", "demon", "kagane", "mgeko", "dusk", "mangadex", "lagoon"] = "all"
+    raw_source: Literal["all", "asura", "omega", "doujiva", "diva", "evascan", "thunder", "vortex", "qimanga", "demon", "kagane", "mgeko", "dusk", "mangadex", "lagoon", "ken"] = "all"
     force: bool = False
 
 
@@ -1692,6 +1693,7 @@ async def raw_search(
         "dusk": dusk_downloader,
         "mangadex": mangadex_downloader,
         "lagoon": lagoon_downloader,
+        "ken": ken_downloader,
     }
 
     if source != "all" and source in all_downloaders:
@@ -1714,6 +1716,7 @@ async def raw_search(
         "dusk": "Dusk",
         "mangadex": "MangaDex",
         "lagoon": "Lagoon",
+        "ken": "Ken",
     }
 
     async def search_single_source(src_key, downloader):
@@ -1769,6 +1772,7 @@ async def raw_rate_analysis(payload: RawRateAnalysisRequest, _user=Depends(admin
         "dusk": dusk_downloader,
         "mangadex": mangadex_downloader,
         "lagoon": lagoon_downloader,
+        "ken": ken_downloader,
     }
 
     if payload.source and payload.source in all_downloaders:
