@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api/scout", tags=["scout"])
 
 class ScoutSearchRequest(BaseModel):
     title: str = Field(min_length=2, max_length=180)
-    raw_source: Literal["all", "asura", "omega", "doujiva", "diva", "evascan", "thunder", "vortex", "qimanga", "demon", "kagane", "mgeko", "dusk", "mangadex"] = "all"
+    raw_source: Literal["all", "asura", "omega", "doujiva", "diva", "evascan", "thunder", "vortex", "qimanga", "demon", "kagane", "mgeko", "dusk", "mangadex", "lagoon"] = "all"
     force: bool = False
 
 

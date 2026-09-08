@@ -41,28 +41,29 @@ def _ext(url: str) -> str:
 
 
 class DuskDownloader:
-    def __init__(self):
-        self.api_url = DUSK_API.rstrip("/")
+    def __init__(self, api_url: str = DUSK_API, source: str = "dusk"):
+        self.api_url = api_url.rstrip("/")
+        self.source = source
 
     async def search_manga(self, query: str) -> List[Dict[str, Any]]:
         async with _session() as session:
-            data = await get_json(session, f"{self.api_url}/search", source="dusk", stage="search", params={"q": query}, timeout=6, validator=lambda p: isinstance(p.get("data"), list))
+            data = await get_json(session, f"{self.api_url}/search", source=self.source, stage="search", params={"q": query}, timeout=6, validator=lambda p: isinstance(p.get("data"), list))
         return [{
             "id": _id(item.get("slug", item.get("id", ""))), "title": item.get("title", "Unknown"),
             "status": item.get("status", item.get("type_genre", "N/A")),
             "chapter_count": item.get("update", item.get("chapter_count", "N/A")),
-            "rating": item.get("rating", "N/A"), "image": item.get("image", ""), "source": "dusk",
+            "rating": item.get("rating", "N/A"), "image": item.get("image", ""), "source": self.source,
         } for item in (data or {}).get("data", []) if item.get("slug") or item.get("id")]
 
     async def get_manga_info(self, manga_id: str) -> Optional[Dict[str, Any]]:
         clean = _id(manga_id)
         async with _session() as session:
-            data = await get_json(session, f"{self.api_url}/detail/{clean}", source="dusk", stage=f"detail:{clean}", timeout=6, validator=lambda p: bool((p.get("data") or p).get("chapters")))
+            data = await get_json(session, f"{self.api_url}/detail/{clean}", source=self.source, stage=f"detail:{clean}", timeout=6, validator=lambda p: bool((p.get("data") or p).get("chapters")))
         return (data.get("data") or data) if data else None
 
     async def get_chapter_list(self, manga_id: str) -> List[Dict[str, Any]]:
         info, clean = await self.get_manga_info(manga_id), _id(manga_id)
-        return [{"id": _chapter(item.get("slug", item.get("title", ""))), "title": item.get("title", "Unknown Chapter"), "date": item.get("date", item.get("time", "")), "manga_id": clean, "source": "dusk", "locked": bool(item.get("locked"))} for item in (info or {}).get("chapters", []) if item.get("slug") or item.get("title")]
+        return [{"id": _chapter(item.get("slug", item.get("title", ""))), "title": item.get("title", "Unknown Chapter"), "date": item.get("date", item.get("time", "")), "manga_id": clean, "source": self.source, "locked": bool(item.get("locked"))} for item in (info or {}).get("chapters", []) if item.get("slug") or item.get("title")]
 
     async def get_chapter_images(self, manga_id: str, chapter_id: str) -> List[str]:
         manga, chapter = _id(manga_id), _chapter(chapter_id)
@@ -73,7 +74,7 @@ class DuskDownloader:
             if matched:
                 chapter = _chapter(matched["id"])
         async with _session() as session:
-            data = await get_json(session, f"{self.api_url}/chapter/{manga}/{chapter}", source="dusk", stage=f"chapter:{manga}:{chapter}", timeout=10, validator=lambda p: bool((p.get("data") or p).get("images")))
+            data = await get_json(session, f"{self.api_url}/chapter/{manga}/{chapter}", source=self.source, stage=f"chapter:{manga}:{chapter}", timeout=10, validator=lambda p: bool((p.get("data") or p).get("images")))
         payload = (data or {}).get("data") or data or {}
         return [str(image).strip() for image in payload.get("images", []) if str(image).strip()]
 
@@ -81,9 +82,9 @@ class DuskDownloader:
         images = await self.get_chapter_images(manga_id, chapter_id)
         if not images:
             return None
-        target = os.path.join(save_dir, "dusk", f"{_id(manga_id)}_{_chapter(chapter_id)}")
+        target = os.path.join(save_dir, self.source, f"{_id(manga_id)}_{_chapter(chapter_id)}")
         async with _session() as session:
-            complete = await download_images(session, images, target, source="dusk", extension_for=_ext, concurrency=4, timeout=20)
+            complete = await download_images(session, images, target, source=self.source, extension_for=_ext, concurrency=4, timeout=20)
         if complete:
             return target
         shutil.rmtree(target, ignore_errors=True)

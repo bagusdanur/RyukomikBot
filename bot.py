@@ -878,7 +878,7 @@ async def download_raw_command(interaction: discord.Interaction, manga_id: str, 
 async def scout_project_command(
     interaction: discord.Interaction,
     judul: str,
-    sumber: Literal["all", "asura", "omega", "doujiva", "diva", "evascan", "thunder", "vortex", "qimanga", "demon", "kagane", "mgeko", "dusk", "mangadex"] = "all",
+    sumber: Literal["all", "asura", "omega", "doujiva", "diva", "evascan", "thunder", "vortex", "qimanga", "demon", "kagane", "mgeko", "dusk", "mangadex", "lagoon"] = "all",
 ):
     if not is_admin(interaction.user):
         return await interaction.response.send_message(
@@ -904,7 +904,7 @@ async def scout_project_command(
 async def raw_search_command(
     interaction: discord.Interaction,
     query: str,
-    source: Literal["asura", "omega", "doujiva", "diva", "evascan", "thunder", "vortex", "qimanga", "demon", "kagane", "mgeko", "dusk", "mangadex"] = "asura",
+    source: Literal["asura", "omega", "doujiva", "diva", "evascan", "thunder", "vortex", "qimanga", "demon", "kagane", "mgeko", "dusk", "mangadex", "lagoon"] = "asura",
     raw_mode: Literal['editor_safe', 'original'] = 'editor_safe',
 ):
     await search_manga_command(interaction, query, source, raw_mode)
@@ -948,6 +948,7 @@ async def status_bot_command(interaction: discord.Interaction):
         mgeko_status,
         dusk_status,
         mangadex_status,
+        lagoon_status,
     ) = await asyncio.gather(
         check_db(),
         check_raw("asura"),
@@ -962,11 +963,12 @@ async def status_bot_command(interaction: discord.Interaction):
         check_raw("mgeko"),
         check_raw("dusk"),
         check_raw("mangadex"),
+        check_raw("lagoon"),
     )
     all_healthy = all(x[0] for x in (
         database_status, asura_status, omega_status, doujiva_status,
         evascan_status, thunder_status, vortex_status, qimanga_status,
-        demon_status, kagane_status, mgeko_status, dusk_status, mangadex_status,
+        demon_status, kagane_status, mgeko_status, dusk_status, mangadex_status, lagoon_status,
     ))
     embed = discord.Embed(title="Status Ryukomik Bot", description="Pemeriksaan langsung komponen utama.", color=discord.Color.green() if all_healthy else discord.Color.orange())
     embed.add_field(name="Discord Gateway", value=f"Online • {round(bot.latency * 1000)} ms", inline=False)
@@ -984,6 +986,7 @@ async def status_bot_command(interaction: discord.Interaction):
         ("Mgeko API", mgeko_status),
         ("Dusk API", dusk_status),
         ("MangaDex API", mangadex_status),
+        ("Lagoon API", lagoon_status),
     ):
         embed.add_field(name=name, value=f"{'Sehat' if result[0] else 'Bermasalah'} • {result[1]} ms")
     await interaction.followup.send(embed=embed)
@@ -991,7 +994,7 @@ async def status_bot_command(interaction: discord.Interaction):
 
 @bot.tree.command(name="raw-chapters", description="Lihat daftar chapter RAW")
 @discord.app_commands.describe(manga_id="Slug komik, contoh: love-cheer", source="Sumber RAW")
-async def raw_chapters_command(interaction: discord.Interaction, manga_id: str, source: Literal["asura", "omega", "doujiva", "diva", "evascan", "thunder", "vortex", "qimanga", "demon", "kagane", "mgeko", "dusk", "mangadex"] = "asura"):
+async def raw_chapters_command(interaction: discord.Interaction, manga_id: str, source: Literal["asura", "omega", "doujiva", "diva", "evascan", "thunder", "vortex", "qimanga", "demon", "kagane", "mgeko", "dusk", "mangadex", "lagoon"] = "asura"):
     if not is_admin(interaction.user):
         return await interaction.response.send_message(
             "Daftar chapter bebas hanya untuk administrator. Staff gunakan **Download RAW** pada Staff Panel.",
@@ -1012,13 +1015,13 @@ async def raw_chapters_command(interaction: discord.Interaction, manga_id: str, 
 
 @bot.tree.command(name="raw-download", description="Download chapter RAW dari sumber pilihan")
 @discord.app_commands.describe(manga_id="Slug komik, contoh: lets-do-it-after-work", chapter_id="Nomor/slug chapter, contoh: 1", source="Sumber RAW")
-async def raw_download_command(interaction: discord.Interaction, manga_id: str, chapter_id: str, source: Literal["asura", "omega", "doujiva", "diva", "evascan", "thunder", "vortex", "qimanga", "demon", "kagane", "mgeko", "dusk", "mangadex"] = "asura", raw_mode: Literal["editor_safe", "original"] = "editor_safe"):
+async def raw_download_command(interaction: discord.Interaction, manga_id: str, chapter_id: str, source: Literal["asura", "omega", "doujiva", "diva", "evascan", "thunder", "vortex", "qimanga", "demon", "kagane", "mgeko", "dusk", "mangadex", "lagoon"] = "asura", raw_mode: Literal["editor_safe", "original"] = "editor_safe"):
     await download_raw_command(interaction, manga_id, chapter_id, source, raw_mode)
 
 
 @bot.tree.command(name="raw-download-batch", description="Batch download chapter RAW")
 @discord.app_commands.describe(manga_id="Slug komik, contoh: lets-do-it-after-work", chapter_ids="Chapter dipisah koma, contoh: 1,2,3", source="Sumber RAW")
-async def raw_download_batch_command(interaction: discord.Interaction, manga_id: str, chapter_ids: str, source: Literal["asura", "omega", "doujiva", "diva", "evascan", "thunder", "vortex", "qimanga", "demon", "kagane", "mgeko", "dusk", "mangadex"] = "asura"):
+async def raw_download_batch_command(interaction: discord.Interaction, manga_id: str, chapter_ids: str, source: Literal["asura", "omega", "doujiva", "diva", "evascan", "thunder", "vortex", "qimanga", "demon", "kagane", "mgeko", "dusk", "mangadex", "lagoon"] = "asura"):
     if not is_admin(interaction.user):
         return await interaction.response.send_message(
             "Batch RAW bebas hanya untuk administrator. Staff gunakan **Download RAW** pada Staff Panel.",
@@ -1052,7 +1055,7 @@ async def raw_download_batch_command(interaction: discord.Interaction, manga_id:
 
 @bot.tree.command(name="raw-update", description="Cek update RAW terbaru")
 @discord.app_commands.describe(query="Kata kunci komik (opsional)", source="Sumber RAW")
-async def raw_update_command(interaction: discord.Interaction, query: str = "", source: Literal["asura", "omega", "doujiva", "diva", "evascan", "thunder", "vortex", "qimanga", "demon", "kagane", "mgeko", "dusk", "mangadex"] = "asura"):
+async def raw_update_command(interaction: discord.Interaction, query: str = "", source: Literal["asura", "omega", "doujiva", "diva", "evascan", "thunder", "vortex", "qimanga", "demon", "kagane", "mgeko", "dusk", "mangadex", "lagoon"] = "asura"):
     if not is_admin(interaction.user):
         return await interaction.response.send_message(
             "Update RAW bebas hanya untuk administrator. Staff gunakan **Download RAW** pada Staff Panel.",
