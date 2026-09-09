@@ -1,349 +1,119 @@
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import Button from "primevue/button";
 import { getCsrfToken } from "../api";
 
-interface OcrResult {
-  name: string;
-  ok: boolean;
-  page_num?: number;
-  text?: string;
-  bubble_count?: number;
-  segments?: number;
-  error?: string;
-}
+interface Job { id:string; status:string; stage:string; progress:number; review_count:number; review_pages?:Array<{page:number;count:number}>; error?:string|null; created_at:number; options?:{original_filename?:string;input_files?:string[];comic_title?:string;chapter?:string;title_slug?:string;comic_id?:string;chapter_id?:string} }
+interface Status { memory:{available:number}; worker:{status:string}; queue:Record<string,number> }
+interface ComicImage { id:string; filename:string; width:number; height:number; status:string; region_count:number }
+interface Box { x:number; y:number; width:number; height:number }
+interface Region { id:string; source_text:string; translation:string; bbox:Box; status:string; metadata:Record<string,unknown> }
+interface ComicFolder { id:string; title:string; slug:string; chapter_count:number; job_count:number }
+interface ChapterFolder { id:string; comic_id:string; number:string; slug:string; job_count:number }
+interface MemoryJob { id:string;chapter_number:string;status:string;stage:string;progress:number;error?:string|null;proposal?:Record<string,any>|null }
+interface MemoryState { profile:Record<string,any>;references:Array<{id:string;chapter_number:string;summary:Record<string,any>}>;jobs:MemoryJob[] }
+interface RawResult { id:string;title:string;source:string;source_name:string;image?:string;latest_chapter?:string }
+interface RawChapter { id:string;title:string;date?:string }
 
-const selectedFiles = ref<File[]>([]);
-const processing = ref(false);
-const downloadingTxt = ref(false);
-const progress = ref(0);
-const progressStep = ref("");
-const error = ref("");
-const success = ref("");
-const results = ref<OcrResult[]>([]);
-const dropActive = ref(false);
-const fileInput = ref<HTMLInputElement | null>(null);
-const copied = ref<number | null>(null);
+const files=ref<File[]>([]), minY=ref(0), uploading=ref(false), progress=ref(0), error=ref("");
+const comics=ref<ComicFolder[]>([]), chapters=ref<ChapterFolder[]>([]), selectedComic=ref<ComicFolder|null>(null), selectedChapter=ref<ChapterFolder|null>(null);
+const newComicTitle=ref(""), newChapterNumber=ref(""), creatingFolder=ref(false);
+const memoryOpen=ref(false), memoryState=ref<MemoryState|null>(null), memoryChapter=ref(""), rawZip=ref<File|null>(null), translatedZip=ref<File|null>(null), memoryUploading=ref(false), memoryProgress=ref(0), memoryProposalText=ref(""), memoryError=ref("");
+const jobs=ref<Job[]>([]), system=ref<Status|null>(null), input=ref<HTMLInputElement|null>(null), drag=ref(false);
+const rawQuery=ref(""),rawResults=ref<RawResult[]>([]),rawSource=ref("all"),rawMangaId=ref(""),rawChapters=ref<RawChapter[]>([]),rawChapterId=ref(""),rawSearching=ref(false),rawLoadingChapters=ref(false),rawAction=ref<""|"download"|"import">("");
+const reviewJob=ref<Job|null>(null), images=ref<ComicImage[]>([]), currentImage=ref<ComicImage|null>(null);
+const regions=ref<Region[]>([]), selected=ref<Region|null>(null), rendering=ref(false), previewKey=ref(Date.now());
+const edit=ref({translation:"",x:0,y:0,width:10,height:10,fontSize:20,alignment:"center",lineSpacing:0.12});
+let timer:number|undefined;
 
-const totalSize = computed(() =>
-  selectedFiles.value.reduce((n, f) => n + f.size, 0)
-);
-const okCount = computed(() => results.value.filter((r) => r.ok).length);
-
-function onDrop(e: DragEvent) {
-  e.preventDefault();
-  dropActive.value = false;
-  if (e.dataTransfer?.files) addFiles(e.dataTransfer.files);
-}
-function onDragOver(e: DragEvent) {
-  e.preventDefault();
-  dropActive.value = true;
-}
-function onFileSelect(e: Event) {
-  const input = e.target as HTMLInputElement;
-  if (input.files) addFiles(input.files);
-  input.value = "";
-}
-function addFiles(fileList: FileList) {
-  const valid = Array.from(fileList).filter((f) => /\.(png|jpe?g|webp)$/i.test(f.name));
-  selectedFiles.value = [...selectedFiles.value, ...valid];
-  error.value = "";
-}
-function removeFile(idx: number) {
-  selectedFiles.value = selectedFiles.value.filter((_, i) => i !== idx);
-}
-function clearAll() {
-  selectedFiles.value = [];
-  results.value = [];
-  error.value = "";
-  success.value = "";
-  progress.value = 0;
-  progressStep.value = "";
-}
-function fmt(bytes: number) {
-  if (bytes < 1024) return bytes + " B";
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + " KB";
-  return (bytes / 1024 / 1024).toFixed(1) + " MB";
-}
-async function copyText(idx: number, text: string) {
-  try {
-    await navigator.clipboard.writeText(text);
-    copied.value = idx;
-    setTimeout(() => { if (copied.value === idx) copied.value = null; }, 1500);
-  } catch {
-    error.value = "Gagal menyalin ke clipboard.";
-  }
-}
-function copyAll() {
-  const combined = results.value
-    .filter((r) => r.ok && r.text)
-    .map((r) => `# ${r.name}\n${r.text}`)
-    .join("\n\n");
-  if (combined) copyText(-1, combined);
-}
-
-async function downloadTxt() {
-  if (!selectedFiles.value.length || downloadingTxt.value) return;
-  // Kalau belum ada hasil OCR, extract dulu
-  if (!results.value.length || !results.value.some((r) => r.ok)) {
-    await extract();
-  }
-  // Generate TXT langsung dari hasil yang sudah ada (instant, gak perlu re-OCR)
-  const okResults = results.value.filter((r) => r.ok);
-  if (!okResults.length) {
-    error.value = "Tidak ada hasil OCR untuk di-download.";
-    return;
-  }
-  downloadingTxt.value = true;
-  error.value = "";
-  success.value = "";
-  try {
-    const lines: string[] = [];
-    okResults.forEach((r, i) => {
-      lines.push(`=== HALAMAN ${i + 1} ===`);
-      lines.push(r.text || "(tidak ada teks)");
-      lines.push("");
-    });
-    const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "ocr_extract.txt";
-    a.click();
-    URL.revokeObjectURL(url);
-    success.value = "ocr_extract.txt berhasil diunduh";
-  } catch (e) {
-    error.value = "Gagal generate file TXT.";
-  } finally {
-    downloadingTxt.value = false;
-  }
-}
-
-async function extract() {
-  if (!selectedFiles.value.length) return;
-  processing.value = true;
-  error.value = "";
-  success.value = "";
-  results.value = [];
-  progress.value = 10;
-  progressStep.value = "Mengupload & memproses (bisa beberapa detik/halaman)...";
-  const formData = new FormData();
-  selectedFiles.value.forEach((f) => formData.append("files", f));
-  try {
-    const res = await new Promise<{ status: number; text: string }>((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open("POST", "/api/tools/ocr-extract");
-      const csrf = getCsrfToken();
-      if (csrf) xhr.setRequestHeader("X-CSRF-Token", csrf);
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) progress.value = Math.round((e.loaded / e.total) * 40);
-      };
-      xhr.upload.onload = () => { progress.value = 50; progressStep.value = "OCR berjalan di MiMo v2.5..."; };
-      xhr.onload = () => { progress.value = 100; resolve({ status: xhr.status, text: xhr.responseText }); };
-      xhr.onerror = () => reject(new Error("Network error"));
-      xhr.send(formData);
-    });
-    const json = JSON.parse(res.text);
-    if (res.status !== 200) throw new Error(json.detail || `Error ${res.status}`);
-    results.value = json.results || [];
-    progressStep.value = "Selesai!";
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : "OCR gagal.";
-    progress.value = 0;
-  } finally {
-    processing.value = false;
-  }
-}
+const active=computed(()=>jobs.value.filter(j=>["QUEUED","WAITING_RESOURCE","PROCESSING"].includes(j.status)).length);
+const globalQueue=computed(()=>jobs.value.filter(job=>["QUEUED","WAITING_RESOURCE","PROCESSING"].includes(job.status)).sort((a,b)=>a.created_at-b.created_at));
+const RAW_SOURCE_OPTIONS=[
+  {id:"all",name:"Semua sumber"},
+  {id:"asura",name:"Asura"},{id:"omega",name:"Omega"},{id:"doujiva",name:"Doujiva"},
+  {id:"diva",name:"Diva"},{id:"evascan",name:"EvaScan"},{id:"thunder",name:"Thunder"},
+  {id:"vortex",name:"Vortex"},{id:"qimanga",name:"QiManga"},{id:"demon",name:"Demon"},
+  {id:"kagane",name:"Kagane"},{id:"mgeko",name:"Mgeko"},{id:"dusk",name:"Dusk"},
+  {id:"lagoon",name:"Lagoon"},{id:"ken",name:"Ken"},{id:"mangadex",name:"MangaDex"},
+];
+const rawSources=computed(()=>RAW_SOURCE_OPTIONS);
+const rawTitles=computed(()=>rawSource.value==="all"?rawResults.value:rawResults.value.filter(item=>item.source===rawSource.value));
+const selectedRawTitle=computed(()=>rawTitles.value.find(item=>item.id===rawMangaId.value)||null);
+const selectedChapterJobs=computed(()=>{if(!selectedComic.value||!selectedChapter.value)return[];return jobs.value.filter(job=>job.options?.chapter_id===selectedChapter.value?.id||(job.options?.comic_title===selectedComic.value?.title&&job.options?.chapter===selectedChapter.value?.number))});
+const ram=computed(()=>system.value?(system.value.memory.available/1024**3).toFixed(1):"-");
+const headers=():Record<string,string>=>{const token=getCsrfToken();return token?{"X-CSRF-Token":token}:{}};
+async function api<T>(url:string,init:RequestInit={}):Promise<T>{const r=await fetch(url,{credentials:"same-origin",...init,headers:{...headers(),...Object.fromEntries(new Headers(init.headers).entries())}});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||d.error||`Error ${r.status}`);return d}
+function select(values?:FileList|null){if(!values)return;const incoming=Array.from(values);if(files.value.length+incoming.length>60){error.value="Maksimal 60 gambar per job.";return}for(const value of incoming){if(!/\.(png|jpe?g|webp|zip)$/i.test(value.name)){error.value="Format harus PNG, JPG, WEBP, atau ZIP.";return}const limit=/\.zip$/i.test(value.name)?100:25;if(value.size>limit*1024*1024){error.value=`${value.name} melebihi ${limit} MB.`;return}}const combined=[...files.value,...incoming];if(combined.reduce((sum,item)=>sum+item.size,0)>100*1024*1024){error.value="Total upload maksimal 100 MB.";return}files.value=combined;error.value=""}
+function picked(e:Event){const el=e.target as HTMLInputElement;select(el.files);el.value=""}
+function dropped(e:DragEvent){e.preventDefault();drag.value=false;select(e.dataTransfer?.files)}
+async function refresh(){try{[jobs.value,system.value,comics.value]=await Promise.all([api<Job[]>("/api/tools/translator/jobs?limit=20"),api<Status>("/api/tools/translator/status"),api<ComicFolder[]>("/api/tools/translator/comics")]);if(selectedComic.value){selectedComic.value=comics.value.find(item=>item.id===selectedComic.value?.id)||null;if(selectedComic.value)await loadChapters(selectedComic.value,false)}error.value=""}catch(e){error.value=e instanceof Error?e.message:"Service translator tidak tersedia."}}
+async function loadChapters(comic:ComicFolder,reset=true){selectedComic.value=comic;chapters.value=await api<ChapterFolder[]>(`/api/tools/translator/comics/${comic.id}/chapters`);if(reset)selectedChapter.value=null;else if(selectedChapter.value)selectedChapter.value=chapters.value.find(item=>item.id===selectedChapter.value?.id)||null}
+async function loadMemory(open=false){if(!selectedComic.value)return;memoryState.value=await api<MemoryState>(`/api/tools/translator/comics/${selectedComic.value.id}/memory`);if(open)memoryOpen.value=true;const pending=memoryState.value.jobs.find(item=>item.status==="WAITING_APPROVAL"&&item.proposal);if(pending)memoryProposalText.value=JSON.stringify(pending.proposal,null,2)}
+async function uploadMemory(){if(!selectedComic.value||!rawZip.value||!translatedZip.value||!memoryChapter.value.trim()||memoryUploading.value)return;memoryUploading.value=true;memoryProgress.value=0;memoryError.value="";const form=new FormData();form.append("chapterNumber",memoryChapter.value.trim());form.append("rawZip",rawZip.value);form.append("translatedZip",translatedZip.value);try{await new Promise<void>((ok,fail)=>{const x=new XMLHttpRequest();x.open("POST",`/api/tools/translator/comics/${selectedComic.value!.id}/memory/analyze`);const token=getCsrfToken();if(token)x.setRequestHeader("X-CSRF-Token",token);x.upload.onprogress=e=>{if(e.lengthComputable)memoryProgress.value=Math.round(e.loaded/e.total*100)};x.onload=()=>{const d=JSON.parse(x.responseText||"{}");x.status>=200&&x.status<300?ok():fail(new Error(d.detail||d.error||`Error ${x.status}`))};x.onerror=()=>fail(new Error("Upload bahan belajar gagal."));x.send(form)});rawZip.value=null;translatedZip.value=null;await loadMemory()}catch(e){memoryError.value=e instanceof Error?e.message:"Analisis gagal dibuat."}finally{memoryUploading.value=false}}
+async function approveMemory(job:MemoryJob){if(!selectedComic.value)return;try{const proposal=JSON.parse(memoryProposalText.value);await api(`/api/tools/translator/comics/${selectedComic.value.id}/memory/jobs/${job.id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({proposal})});await api(`/api/tools/translator/comics/${selectedComic.value.id}/memory/jobs/${job.id}/approve`,{method:"POST"});await loadMemory()}catch(e){error.value=e instanceof Error?e.message:"Gagal menyimpan memory."}}
+async function cancelMemory(job:MemoryJob){if(!selectedComic.value)return;await api(`/api/tools/translator/comics/${selectedComic.value.id}/memory/jobs/${job.id}/cancel`,{method:"POST"});await loadMemory()}
+async function deleteReference(id:string){if(!selectedComic.value||!window.confirm("Hapus bahan referensi ini? Memory yang sudah disetujui tetap tersimpan."))return;await api(`/api/tools/translator/comics/${selectedComic.value.id}/memory/references/${id}`,{method:"DELETE"});await loadMemory()}
+async function createComic(){const title=newComicTitle.value.trim();if(!title||creatingFolder.value)return;creatingFolder.value=true;try{const comic=await api<ComicFolder>("/api/tools/translator/comics",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title})});newComicTitle.value="";await refresh();await loadChapters(comic)}catch(e){error.value=e instanceof Error?e.message:"Gagal membuat folder komik."}finally{creatingFolder.value=false}}
+async function renameComic(){if(!selectedComic.value||creatingFolder.value)return;const value=window.prompt("Nama judul/folder komik baru",selectedComic.value.title);if(value===null)return;const title=value.trim();if(!title||title===selectedComic.value.title)return;creatingFolder.value=true;try{const comic=await api<ComicFolder>(`/api/tools/translator/comics/${selectedComic.value.id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({title})});selectedComic.value=comic;await refresh()}catch(e){error.value=e instanceof Error?e.message:"Gagal mengganti nama folder komik."}finally{creatingFolder.value=false}}
+async function createChapter(){const number=newChapterNumber.value.trim();if(!number||!selectedComic.value||creatingFolder.value)return;creatingFolder.value=true;try{const item=await api<ChapterFolder>(`/api/tools/translator/comics/${selectedComic.value.id}/chapters`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({number})});newChapterNumber.value="";await loadChapters(selectedComic.value);selectedChapter.value=item}catch(e){error.value=e instanceof Error?e.message:"Gagal membuat folder chapter."}finally{creatingFolder.value=false}}
+function openChapter(item:ChapterFolder){selectedChapter.value=item;files.value=[];error.value=""}
+async function openJobFolder(job:Job){const comic=comics.value.find(item=>item.id===job.options?.comic_id)||comics.value.find(item=>item.title===job.options?.comic_title);if(!comic)return;await loadChapters(comic);selectedChapter.value=chapters.value.find(item=>item.id===job.options?.chapter_id)||chapters.value.find(item=>item.number===job.options?.chapter)||null;window.scrollTo({top:0,behavior:"smooth"})}
+async function searchRaw(){const query=rawQuery.value.trim();if(query.length<2||rawSearching.value)return;rawSearching.value=true;error.value="";try{rawResults.value=await api<RawResult[]>(`/api/raw/search?q=${encodeURIComponent(query)}&source=${encodeURIComponent(rawSource.value||"all")}`);rawMangaId.value="";rawChapters.value=[];rawChapterId.value="";if(!rawResults.value.length)error.value=`Judul tidak ditemukan pada ${rawSources.value.find(item=>item.id===rawSource.value)?.name||"source yang dipilih"}.`}catch(e){error.value=e instanceof Error?e.message:"Pencarian RAW gagal."}finally{rawSearching.value=false}}
+function changeRawSource(){rawMangaId.value="";rawChapters.value=[];rawChapterId.value="";if(rawQuery.value.trim().length>=2)void searchRaw()}
+async function loadRawChapters(){rawChapters.value=[];rawChapterId.value="";if(!rawMangaId.value)return;const selected=rawResults.value.find(item=>item.id===rawMangaId.value&&(rawSource.value==="all"||item.source===rawSource.value));if(!selected)return;rawLoadingChapters.value=true;error.value="";try{rawChapters.value=await api<RawChapter[]>(`/api/tools/translator/raw/${encodeURIComponent(selected.source)}/${encodeURIComponent(rawMangaId.value)}/chapters`);rawChapterId.value=rawChapters.value[0]?.id||"";if(!rawChapters.value.length)error.value="Source ini tidak mengembalikan daftar chapter."}catch(e){error.value=e instanceof Error?e.message:"Daftar chapter gagal dimuat."}finally{rawLoadingChapters.value=false}}
+function rawPayload(){return{source:selectedRawTitle.value?.source||rawSource.value,manga_id:rawMangaId.value,chapter_id:rawChapterId.value,comic_id:selectedComic.value?.id,target_chapter_id:selectedChapter.value?.id,title:selectedComic.value?.title,chapter:selectedChapter.value?.number,min_y:Math.max(0,minY.value||0)}}
+async function importRaw(){if(!selectedComic.value||!selectedChapter.value||!rawChapterId.value||rawAction.value)return;rawAction.value="import";error.value="";try{await api("/api/tools/translator/raw/import",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(rawPayload())});await refresh()}catch(e){error.value=e instanceof Error?e.message:"Download dan import RAW gagal."}finally{rawAction.value=""}}
+async function downloadRaw(){if(!rawChapterId.value||rawAction.value)return;rawAction.value="download";error.value="";try{const response=await fetch("/api/tools/translator/raw/download",{method:"POST",credentials:"same-origin",headers:{...headers(),"Content-Type":"application/json"},body:JSON.stringify(rawPayload())});if(!response.ok){const detail=await response.json().catch(()=>({}));throw new Error(detail.detail||`Error ${response.status}`)}const blob=await response.blob();const disposition=response.headers.get("content-disposition")||"";const matched=disposition.match(/filename\*?=(?:UTF-8''|\")?([^";]+)/i);const filename=decodeURIComponent((matched?.[1]||`${rawSource.value}-${rawChapterId.value}.zip`).replace(/"$/,""));const url=URL.createObjectURL(blob);const anchor=document.createElement("a");anchor.href=url;anchor.download=filename;anchor.click();URL.revokeObjectURL(url)}catch(e){error.value=e instanceof Error?e.message:"Download RAW gagal."}finally{rawAction.value=""}}
+async function submit(){if(!files.value.length||uploading.value)return;if(!selectedComic.value||!selectedChapter.value){error.value="Pilih folder komik dan chapter terlebih dahulu.";return}uploading.value=true;progress.value=0;error.value="";const form=new FormData();files.value.forEach(item=>form.append("files",item));form.append("comic_id",selectedComic.value.id);form.append("chapter_id",selectedChapter.value.id);form.append("title",selectedComic.value.title);form.append("chapter",selectedChapter.value.number);form.append("min_y",String(Math.max(0,minY.value||0)));try{await new Promise<void>((ok,fail)=>{const x=new XMLHttpRequest();x.open("POST","/api/tools/translator/jobs");const token=getCsrfToken();if(token)x.setRequestHeader("X-CSRF-Token",token);x.upload.onprogress=e=>{if(e.lengthComputable)progress.value=Math.round(e.loaded/e.total*100)};x.onload=()=>{const d=JSON.parse(x.responseText||"{}");x.status>=200&&x.status<300?ok():fail(new Error(d.detail||d.error||`Error ${x.status}`))};x.onerror=()=>fail(new Error("Upload gagal."));x.send(form)});files.value=[];await refresh()}catch(e){error.value=e instanceof Error?e.message:"Gagal membuat job."}finally{uploading.value=false}}
+async function cancel(job:Job){const running=job.status==="PROCESSING";if(!window.confirm(running?`Stop proses ${name(job)} sekarang? Halaman yang belum selesai tidak akan dilanjutkan.`:`Batalkan ${name(job)}?`))return;try{await api(`/api/tools/translator/jobs/${job.id}/cancel`,{method:"POST"});await refresh()}catch(e){error.value=e instanceof Error?e.message:"Gagal menghentikan job."}}
+async function deleteJob(job:Job){if(!window.confirm(`Hapus ${name(job)} beserta seluruh file hasilnya?`))return;try{await api(`/api/tools/translator/jobs/${job.id}`,{method:"DELETE"});if(reviewJob.value?.id===job.id){reviewJob.value=null;currentImage.value=null}await refresh()}catch(e){error.value=e instanceof Error?e.message:"Gagal menghapus job."}}
+function download(job:Job){window.location.href=`/api/tools/translator/jobs/${job.id}/download`}
+async function openReview(job:Job){try{reviewJob.value=job;images.value=await api(`/api/tools/translator/jobs/${job.id}/images`);const firstReview=Math.max(0,(job.review_pages?.[0]?.page||1)-1);if(images.value[firstReview])await chooseImage(images.value[firstReview]);else if(images.value[0])await chooseImage(images.value[0]);else throw new Error("Belum ada gambar hasil untuk direview.")}catch(e){error.value=e instanceof Error?e.message:"Gagal membuka review."}}
+async function chooseImage(image:ComicImage){currentImage.value=image;regions.value=await api(`/api/tools/translator/images/${image.id}/regions`);selected.value=null;previewKey.value=Date.now();const target=regions.value.find(r=>r.status==="NEEDS_REVIEW")||regions.value[0];if(target)pickRegion(target)}
+function pickRegion(region:Region){selected.value=region;const meta=region.metadata||{};edit.value={translation:region.translation||"",x:region.bbox.x,y:region.bbox.y,width:region.bbox.width,height:region.bbox.height,fontSize:Number(meta.editor_font_size||meta.font_size||20),alignment:String(meta.editor_alignment||"center"),lineSpacing:Number(meta.editor_line_spacing||0.12)}}
+async function saveRender(){if(!selected.value||!currentImage.value||rendering.value)return;rendering.value=true;error.value="";try{await api(`/api/tools/translator/regions/${selected.value.id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(edit.value)});await api(`/api/tools/translator/images/${currentImage.value.id}/render`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({regionId:selected.value.id})});await chooseImage(currentImage.value);await refresh()}catch(e){error.value=e instanceof Error?e.message:"Re-render gagal."}finally{rendering.value=false}}
+const stage=(j:Job)=>({QUEUED:"Menunggu antrean",WAITING_RESOURCE:"Menunggu RAM",STARTING:"Menyiapkan worker",OCR:"Mendeteksi teks",TRANSLATION:"Menerjemahkan",REMOVAL:"Membersihkan teks",TYPESETTING:"Memasang teks",DONE:j.status==="REVIEW"?"Perlu review":"Selesai"}[j.stage]||j.stage);
+const name=(j:Job)=>j.options?.original_filename||`Job ${j.id.slice(0,8)}`;
+const reviewPages=(j:Job)=>j.review_pages?.length?`Halaman ${j.review_pages.map(item=>item.page).join(", ")}`:"";
+const size=(n:number)=>n<1024**2?`${Math.round(n/1024)} KB`:`${(n/1024**2).toFixed(1)} MB`;
+const boxStyle=(r:Region)=>currentImage.value?{left:`${r.bbox.x/currentImage.value.width*100}%`,top:`${r.bbox.y/currentImage.value.height*100}%`,width:`${r.bbox.width/currentImage.value.width*100}%`,height:`${r.bbox.height/currentImage.value.height*100}%`}:{};
+onMounted(async()=>{await refresh();timer=window.setInterval(async()=>{await refresh();if(memoryOpen.value&&selectedComic.value)await loadMemory()},4000)});onBeforeUnmount(()=>{if(timer)clearInterval(timer)});
 </script>
 
 <template>
-  <div class="toolbar">
-    <div>
-      <p class="eyebrow">TOOLS</p>
-      <h3>OCR Extractor</h3>
-      <small>Ekstrak teks dialog English dari RAW webtoon buat translator. Ditenagai MiMo v2.5 vision, otomatis skip SFX Jepang.</small>
-    </div>
-  </div>
-
-  <div class="stats-grid">
-    <article>
-      <span class="stat-icon blue"><i class="pi pi-language"></i></span>
-      <div><small>Bahasa</small><strong>English</strong></div>
-    </article>
-    <article>
-      <span class="stat-icon violet"><i class="pi pi-sparkles"></i></span>
-      <div><small>Engine</small><strong>MiMo v2.5</strong></div>
-    </article>
-    <article>
-      <span class="stat-icon amber"><i class="pi pi-bolt"></i></span>
-      <div><small>Kecepatan</small><strong>~6 dtk/hal</strong></div>
-    </article>
-    <article>
-      <span class="stat-icon green"><i class="pi pi-shield"></i></span>
-      <div><small>Penyimpanan</small><strong>0 B Disk</strong></div>
-    </article>
-  </div>
-
-  <!-- Drop Zone -->
-  <section class="panel drop-zone" :class="{ active: dropActive, compact: selectedFiles.length > 0 }"
-    @drop="onDrop" @dragover="onDragOver" @dragleave="dropActive = false" @click="fileInput?.click()">
-    <i class="pi pi-cloud-upload"></i>
-    <p>Drag & drop RAW atau tap untuk pilih</p>
-    <div class="format-tags"><span>PNG</span><span>JPG</span><span>WEBP</span></div>
-    <input ref="fileInput" type="file" multiple accept=".png,.jpg,.jpeg,.webp" style="display:none" @change="onFileSelect" />
+  <div class="toolbar"><div><p class="eyebrow">TOOLS</p><h3>Auto Comic Translator</h3><small>OCR English ke Indonesia, cleaning, lalu typesetting CC Wild Words.</small></div><Button icon="pi pi-refresh" label="Refresh" size="small" text @click="refresh" /></div>
+  <div class="stats"><article><i class="pi pi-language"></i><div><small>Engine</small><b>PaddleOCR CPU</b></div></article><article><i class="pi pi-sparkles"></i><div><small>Translator</small><b>9router</b></div></article><article><i class="pi pi-list"></i><div><small>Job aktif</small><b>{{active}}</b></div></article><article><i class="pi pi-server"></i><div><small>RAM tersedia</small><b>{{ram}} GB</b></div></article></div>
+  <section class="global-queue"><header><div><b><i class="pi pi-list-check"></i> Antrean Global</b><small>Semua chapter yang sedang menunggu atau dikerjakan.</small></div><span>{{globalQueue.length}} aktif</span></header><div v-if="!globalQueue.length" class="queue-empty"><i class="pi pi-check-circle"></i> Tidak ada chapter dalam antrean.</div><button v-for="(job,index) in globalQueue" :key="job.id" class="queue-row" @click="openJobFolder(job)"><span class="queue-number">{{index+1}}</span><span class="queue-name"><b>{{job.options?.comic_title||name(job)}}</b><small>Chapter {{job.options?.chapter||'-'}} · {{stage(job)}}</small></span><span class="queue-progress"><b>{{Math.round((job.progress||0)*100)}}%</b><small>{{job.status.replace('_',' ')}}</small></span><span class="queue-bar"><i :style="{width:Math.round((job.progress||0)*100)+'%'}"></i></span><i class="pi pi-chevron-right"></i></button></section>
+  <section class="library-browser">
+    <div class="library-crumb"><button v-if="selectedComic" @click="selectedComic=null;selectedChapter=null;chapters=[]"><i class="pi pi-home"></i> Komik</button><i v-if="selectedComic" class="pi pi-angle-right"></i><button v-if="selectedComic" :class="{active:!selectedChapter}" @click="selectedChapter=null">{{selectedComic.title}}</button><i v-if="selectedChapter" class="pi pi-angle-right"></i><b v-if="selectedChapter">Chapter {{selectedChapter.number}}</b></div>
+    <template v-if="!selectedComic"><div class="folder-create"><input v-model.trim="newComicTitle" maxlength="120" placeholder="Judul komik baru"><Button label="Buat Komik" icon="pi pi-folder-plus" :loading="creatingFolder" :disabled="!newComicTitle.trim()" @click="createComic" /></div><div class="folder-grid"><button v-for="comic in comics" :key="comic.id" class="folder-card" @click="loadChapters(comic)"><i class="pi pi-folder"></i><span><b>{{comic.title}}</b><small>{{comic.chapter_count}} chapter · {{comic.job_count}} job</small></span><i class="pi pi-chevron-right"></i></button><div v-if="!comics.length" class="empty">Buat folder komik pertama Anda.</div></div></template>
+    <template v-else-if="!selectedChapter"><div class="folder-tools"><b>{{selectedComic.title}}</b><Button label="Ganti Nama Judul" icon="pi pi-pencil" size="small" outlined :loading="creatingFolder" @click="renameComic" /></div><div class="memory-entry"><div><b>Memory {{selectedComic.title}}</b><small>Pelajari istilah dan gaya dari raw + hasil Indonesia chapter sebelumnya.</small></div><Button label="Pelajari Chapter Sebelumnya" icon="pi pi-graduation-cap" severity="help" @click="loadMemory(true)" /></div><div class="folder-create"><input v-model.trim="newChapterNumber" maxlength="40" placeholder="Nomor chapter, contoh: 1"><Button label="Buat Chapter" icon="pi pi-folder-plus" :loading="creatingFolder" :disabled="!newChapterNumber.trim()" @click="createChapter" /></div><div class="folder-grid"><button v-for="item in chapters" :key="item.id" class="folder-card" @click="openChapter(item)"><i class="pi pi-folder-open"></i><span><b>Chapter {{item.number}}</b><small>{{item.job_count}} job terjemahan</small></span><i class="pi pi-chevron-right"></i></button><div v-if="!chapters.length" class="empty">Belum ada chapter. Buat Chapter 1 untuk mulai.</div></div></template>
   </section>
+  <section v-if="selectedComic&&selectedChapter" class="panel upload"><div class="upload-target"><i class="pi pi-book"></i><div><small>Terjemahkan ke</small><b>{{selectedComic.title}} · Chapter {{selectedChapter.number}}</b></div></div><div class="raw-picker"><header><div><b><i class="pi pi-globe"></i> Ambil RAW dari source</b><small>Cari dan masukkan chapter tanpa upload manual.</small></div></header><form class="raw-search" @submit.prevent="searchRaw"><input v-model.trim="rawQuery" minlength="2" maxlength="120" placeholder="Cari judul RAW Inggris"><Button type="submit" label="Cari" icon="pi pi-search" size="small" :loading="rawSearching" :disabled="rawQuery.trim().length<2" /></form><div v-if="rawResults.length" class="raw-fields"><label>Source<select v-model="rawSource" @change="changeRawSource"><option v-for="item in rawSources" :key="item.id" :value="item.id">{{item.name}}</option></select></label><label>Judul<select v-model="rawMangaId" @change="loadRawChapters"><option value="" disabled>Pilih judul</option><option v-for="item in rawTitles" :key="item.source+item.id" :value="item.id">{{item.title}}</option></select></label><label>Chapter<select v-model="rawChapterId" :disabled="!rawMangaId||rawLoadingChapters"><option value="" disabled>{{rawLoadingChapters?'Memuat chapter...':'Pilih chapter'}}</option><option v-for="item in rawChapters" :key="item.id" :value="item.id">{{item.title}}</option></select></label></div><div v-if="rawMangaId&&rawChapterId" class="raw-actions"><span><b>{{selectedRawTitle?.title}}</b><small>{{rawSource}} · {{rawChapters.find(item=>item.id===rawChapterId)?.title}}</small></span><Button label="Unduh ZIP RAW" icon="pi pi-download" severity="secondary" size="small" outlined :loading="rawAction==='download'" :disabled="!!rawAction" @click="downloadRaw"/><Button label="Unduh & Terjemahkan" icon="pi pi-sparkles" size="small" :loading="rawAction==='import'" :disabled="!!rawAction" @click="importRaw"/></div></div><div class="upload-divider"><span>atau upload manual</span></div><div class="drop" :class="{active:drag}" @click="input?.click()" @drop="dropped" @dragover.prevent="drag=true" @dragleave="drag=false"><i class="pi pi-cloud-upload"></i><b>{{files.length?`${files.length} halaman dipilih`:"Drag RAW/ZIP atau pilih gambar chapter"}}</b><small>{{files.length?size(files.reduce((sum,item)=>sum+item.size,0)):"PNG, JPG, WEBP, ZIP - 60 gambar / 100 MB"}}</small><input ref="input" type="file" multiple accept=".png,.jpg,.jpeg,.webp,.zip" hidden @change="picked" /></div><div v-if="files.length" class="chosen"><span v-for="(item,index) in files" :key="item.name+index">{{item.name}} <button @click="files.splice(index,1)">x</button></span><Button label="Hapus semua" size="small" text severity="danger" @click="files=[]" /></div><label class="min-y"><span>Abaikan area atas (px)</span><input v-model.number="minY" type="number" min="0" step="100"><small>Berlaku untuk semua halaman.</small></label><div v-if="uploading" class="bar"><div :style="{width:progress+'%'}"></div></div><Button label="Mulai terjemahkan chapter" icon="pi pi-sparkles" :loading="uploading" :disabled="!files.length||uploading" @click="submit" /></section>
+  <div v-if="error" class="error"><i class="pi pi-exclamation-triangle"></i>{{error}}</div>
+  <div v-if="memoryOpen&&memoryError" class="error" style="position:fixed;z-index:1100;top:18px;left:50%;width:min(720px,calc(100% - 36px));transform:translateX(-50%);box-shadow:0 12px 35px rgba(0,0,0,.55)"><i class="pi pi-exclamation-triangle"></i>{{memoryError}}</div>
 
-  <!-- File List -->
-  <section v-if="selectedFiles.length" class="panel converter-section">
-    <div class="section-title">
-      <span>{{ selectedFiles.length }} file &middot; {{ fmt(totalSize) }}</span>
-      <Button label="Hapus semua" severity="danger" size="small" text @click="clearAll" />
-    </div>
-    <div class="file-list">
-      <div v-for="(f, i) in selectedFiles" :key="i" class="file-row">
-        <span class="file-icon"><i class="pi pi-image"></i></span>
-        <span class="file-name">{{ f.name }}</span>
-        <span class="file-size">{{ fmt(f.size) }}</span>
-        <button class="file-del" @click="removeFile(i)"><i class="pi pi-times"></i></button>
-      </div>
+  <div v-if="memoryOpen&&selectedComic" class="memory-modal" @click.self="memoryOpen=false"><section><header><div><p class="eyebrow">TITLE MEMORY</p><h3>{{selectedComic.title}}</h3></div><Button icon="pi pi-times" text rounded @click="memoryOpen=false" /></header><div class="memory-upload"><label>Chapter referensi<input v-model="memoryChapter" placeholder="Contoh: 28" maxlength="40"></label><label>ZIP RAW Inggris<input type="file" accept=".zip" @change="rawZip=(($event.target as HTMLInputElement).files||[])[0]||null"><small>{{rawZip?.name||'Belum dipilih'}}</small></label><label>ZIP hasil Indonesia<input type="file" accept=".zip" @change="translatedZip=(($event.target as HTMLInputElement).files||[])[0]||null"><small>{{translatedZip?.name||'Belum dipilih'}}</small></label><div v-if="memoryUploading" class="bar"><div :style="{width:memoryProgress+'%'}"></div></div><Button label="Analisis Chapter" icon="pi pi-sparkles" :loading="memoryUploading" :disabled="!memoryChapter.trim()||!rawZip||!translatedZip" @click="uploadMemory" /></div><div class="memory-jobs"><h4>Proses & proposal</h4><article v-for="job in memoryState?.jobs||[]" :key="job.id"><div><b>Chapter {{job.chapter_number}}</b><small>{{job.stage}} · {{Math.round(job.progress*100)}}%</small><small v-if="job.error" class="bad">{{job.error}}</small></div><span class="pill" :class="job.status.toLowerCase()">{{job.status}}</span><Button v-if="job.status==='QUEUED'" label="Batal" size="small" severity="danger" text @click="cancelMemory(job)"/><template v-if="job.status==='WAITING_APPROVAL'&&job.proposal"><textarea v-model="memoryProposalText" spellcheck="false"></textarea><div class="memory-summary"><span>{{job.proposal.pair_count||0}} pasangan</span><span>{{job.proposal.terminology?.length||0}} istilah</span><span>{{job.proposal.character_voices?.length||0}} karakter</span></div><Button label="Simpan Memory" icon="pi pi-check" severity="success" @click="approveMemory(job)" /></template></article></div><div class="memory-references"><h4>Referensi aktif</h4><article v-for="item in memoryState?.references||[]" :key="item.id"><div><b>Chapter {{item.chapter_number}}</b><small>{{item.summary.pair_count||0}} pasangan dipelajari</small></div><Button icon="pi pi-trash" severity="danger" text size="small" @click="deleteReference(item.id)" /></article><div v-if="!memoryState?.references.length" class="empty">Belum ada memory yang disetujui.</div></div></section></div>
+
+  <section v-if="reviewJob&&currentImage" class="review-editor">
+    <header><div><b>Review: {{name(reviewJob)}}</b><small>Klik kotak bubble untuk mengedit tanpa OCR ulang.</small></div><Button icon="pi pi-times" text rounded @click="reviewJob=null" /></header>
+    <div class="image-tabs"><button v-for="item in images" :key="item.id" :class="{active:item.id===currentImage.id}" @click="chooseImage(item)">{{item.filename}}</button></div>
+    <div class="editor-grid"><div class="preview"><img :src="`/api/tools/translator/images/${currentImage.id}/preview?v=${previewKey}`" :alt="currentImage.filename"><button v-for="region in regions" :key="region.id" class="region-box" :class="{selected:selected?.id===region.id,warning:region.status==='NEEDS_REVIEW'}" :style="boxStyle(region)" :title="region.source_text" @click="pickRegion(region)"></button></div>
+      <form v-if="selected" class="controls" @submit.prevent="saveRender"><label>Original<textarea :value="selected.source_text" readonly></textarea></label><label>Translation<textarea v-model="edit.translation" maxlength="2000"></textarea></label><div class="control-grid"><label>X<input v-model.number="edit.x" type="number" min="0"></label><label>Y<input v-model.number="edit.y" type="number" min="0"></label><label>Width<input v-model.number="edit.width" type="number" min="10"></label><label>Height<input v-model.number="edit.height" type="number" min="10"></label><label>Font size<input v-model.number="edit.fontSize" type="number" min="8" max="96"></label><label>Line spacing<input v-model.number="edit.lineSpacing" type="number" min="0" max="1" step="0.02"></label></div><label>Alignment<select v-model="edit.alignment"><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option></select></label><small v-if="selected.metadata.reason==='REMOVAL_NOT_SAFE'" class="bad">Artwork tidak aman dibersihkan. Region ini tidak dapat di-render otomatis.</small><Button type="submit" label="Simpan dan re-render bubble" icon="pi pi-refresh" :loading="rendering" :disabled="rendering||selected.metadata.reason==='REMOVAL_NOT_SAFE'" /></form>
     </div>
   </section>
 
-  <!-- Progress -->
-  <section v-if="processing || downloadingTxt || progress === 100" class="panel converter-section">
-    <div class="section-title">
-      <span>
-        <i :class="progress === 100 ? 'pi pi-check-circle' : 'pi pi-spinner pi-spin'"></i>
-        {{ downloadingTxt ? 'Download file .txt...' : progressStep }}
-      </span>
-      <span v-if="!downloadingTxt" class="pct">{{ progress }}%</span>
-    </div>
-    <div v-if="!downloadingTxt" class="progress-track"><div class="progress-fill" :style="{ width: progress + '%' }"></div></div>
-  </section>
-
-  <div v-if="error" class="msg msg-error"><i class="pi pi-exclamation-triangle"></i> {{ error }}</div>
-  <div v-if="success" class="msg msg-ok"><i class="pi pi-check-circle"></i> {{ success }}</div>
-
-  <!-- Results -->
-  <section v-if="results.length" class="converter-section">
-    <div class="section-title">
-      <span><i class="pi pi-file-edit"></i> Hasil OCR &middot; {{ okCount }}/{{ results.length }} berhasil</span>
-      <div class="result-actions">
-        <Button label="Salin semua" icon="pi pi-copy" size="small" text @click="copyAll" />
-        <Button label="Download .txt" icon="pi pi-download" size="small" text @click="downloadTxt" :loading="downloadingTxt" :disabled="downloadingTxt" />
-      </div>
-    </div>
-    <div v-for="(r, i) in results" :key="i" class="result-card" :class="{ failed: !r.ok }">
-      <div class="result-head">
-        <span class="result-name"><i :class="r.ok ? 'pi pi-check-circle ok' : 'pi pi-times-circle bad'"></i> {{ r.name }}</span>
-        <span v-if="r.ok" class="result-meta">{{ r.bubble_count }} baris</span>
-        <button v-if="r.ok && r.text" class="copy-btn" @click="copyText(i, r.text!)">
-          <i :class="copied === i ? 'pi pi-check' : 'pi pi-copy'"></i>
-          {{ copied === i ? 'Tersalin' : 'Salin' }}
-        </button>
-      </div>
-      <pre v-if="r.ok" class="result-text">{{ r.text }}</pre>
-      <p v-else class="result-err">{{ r.error }}</p>
-    </div>
-  </section>
-
-  <!-- Actions -->
-  <div class="action-row">
-    <Button v-if="selectedFiles.length" :label="`Ekstrak teks dari ${selectedFiles.length} file`"
-      icon="pi pi-sparkles" class="convert-btn" :loading="processing" :disabled="processing" @click="extract" />
-    <Button v-if="okCount > 1" label="Download hasil .txt" icon="pi pi-download" class="convert-btn txt-btn" severity="secondary"
-      :loading="downloadingTxt" :disabled="downloadingTxt" @click="downloadTxt" />
-  </div>
+  <section v-if="selectedComic&&selectedChapter" class="history chapter-contents"><header><div><b><i class="pi pi-folder-open"></i> Isi Chapter {{selectedChapter.number}}</b><small>{{selectedComic.title}} · {{selectedChapterJobs.length}} job tersimpan</small></div><small>Update setiap 4 detik</small></header><div v-if="!selectedChapterJobs.length" class="empty"><i class="pi pi-folder"></i><b>Folder chapter masih kosong</b><small>Download RAW dari source atau upload manual untuk membuat job pertama.</small></div><article v-for="job in selectedChapterJobs" :key="job.id"><i class="pi pi-images file-icon"></i><div class="copy"><b>{{name(job)}}</b><small>{{stage(job)}} · {{Math.round((job.progress||0)*100)}}% · {{new Date(job.created_at*1000).toLocaleString('id-ID')}}</small><small v-if="job.error" class="bad">{{job.error}}</small></div><span class="pill" :class="job.status.toLowerCase()">{{job.status.replace('_',' ')}}</span><div class="actions"><Button v-if="['QUEUED','WAITING_RESOURCE','PROCESSING'].includes(job.status)" :label="job.status==='PROCESSING'?'Stop proses':'Batalkan'" :icon="job.status==='PROCESSING'?'pi pi-stop-circle':'pi pi-times'" severity="danger" size="small" :text="job.status!=='PROCESSING'" @click="cancel(job)"/><Button v-if="['COMPLETED','REVIEW'].includes(job.status)" label="Review" icon="pi pi-pencil" size="small" text @click="openReview(job)"/><span v-if="job.review_count" class="review-count"><b>{{job.review_count}} review</b><small>{{reviewPages(job)}}</small></span><Button v-if="['COMPLETED','REVIEW'].includes(job.status)" :label="job.options?.input_files?.length&&job.options.input_files.length>1?'ZIP':'Unduh'" icon="pi pi-download" size="small" @click="download(job)"/><Button v-if="job.status!=='PROCESSING'" label="Hapus" icon="pi pi-trash" severity="danger" size="small" text @click="deleteJob(job)"/></div></article></section>
 </template>
 
 <style scoped>
-.stats-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 16px; }
-.stats-grid article {
-  background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);
-  border-radius: 12px; padding: 14px; display: flex; align-items: center; gap: 12px;
-}
-.stats-grid article .stat-icon {
-  width: 36px; height: 36px; border-radius: 10px;
-  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-}
-.stat-icon.blue { background: rgba(59,130,246,0.12); color: #3b82f6; }
-.stat-icon.violet { background: rgba(139,92,246,0.12); color: #8b5cf6; }
-.stat-icon.amber { background: rgba(245,158,11,0.12); color: #f59e0b; }
-.stat-icon.green { background: rgba(34,197,94,0.12); color: #22c55e; }
-.stats-grid article small { color: #666; font-size: 0.75rem; }
-.stats-grid article strong { color: #ccc; font-size: 0.9rem; display: block; margin-top: 1px; }
-
-.converter-section { margin-top: 14px; }
-.section-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
-.section-title span { font-weight: 600; font-size: 0.85rem; display: flex; align-items: center; gap: 8px; }
-.section-title i { color: var(--primary-color, #4f9cf7); }
-.result-actions { display: flex; gap: 6px; }
-
-.drop-zone {
-  margin-top: 14px; border: 2px dashed #222; border-radius: 14px;
-  padding: 36px 20px; text-align: center; cursor: pointer; transition: all 0.2s;
-}
-.drop-zone:hover, .drop-zone.active { border-color: #334155; background: rgba(255,255,255,0.015); }
-.drop-zone.compact { padding: 20px; }
-.drop-zone i { font-size: 2rem; color: #333; display: block; margin-bottom: 8px; }
-.drop-zone p { color: #555; font-size: 0.85rem; margin: 0 0 10px; }
-.format-tags { display: flex; gap: 6px; justify-content: center; }
-.format-tags span {
-  padding: 2px 10px; border-radius: 6px; background: #111; color: #444;
-  font-size: 0.7rem; font-weight: 700; letter-spacing: 0.5px;
-}
-
-.file-list { display: flex; flex-direction: column; gap: 4px; max-height: 280px; overflow-y: auto; }
-.file-row {
-  display: flex; align-items: center; gap: 10px; padding: 9px 12px;
-  background: rgba(255,255,255,0.02); border-radius: 8px; font-size: 0.82rem;
-}
-.file-icon { color: #3b82f6; font-size: 0.85rem; }
-.file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #aaa; }
-.file-size { color: #555; white-space: nowrap; font-size: 0.75rem; }
-.file-del {
-  width: 24px; height: 24px; border: none; border-radius: 6px;
-  background: transparent; color: #555; cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-}
-.file-del:hover { background: rgba(239,68,68,0.1); color: #ef4444; }
-
-.progress-track { height: 6px; background: #111; border-radius: 3px; overflow: hidden; }
-.progress-fill { height: 100%; background: var(--primary-color, #4f9cf7); border-radius: 3px; transition: width 0.4s ease; }
-.pct { color: #555; font-weight: 700; font-size: 0.8rem; }
-
-/* Result cards */
-.result-card {
-  background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06);
-  border-radius: 12px; padding: 12px 14px; margin-bottom: 10px;
-}
-.result-card.failed { border-color: rgba(239,68,68,0.25); }
-.result-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-.result-name { flex: 1; font-size: 0.82rem; color: #bbb; font-weight: 600;
-  display: flex; align-items: center; gap: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.result-name .ok { color: #22c55e; }
-.result-name .bad { color: #ef4444; }
-.result-meta { font-size: 0.72rem; color: #555; white-space: nowrap; }
-.copy-btn {
-  border: 1px solid #2a2a2a; background: #131313; color: #888;
-  border-radius: 7px; padding: 4px 10px; font-size: 0.72rem; font-weight: 600;
-  cursor: pointer; display: flex; align-items: center; gap: 5px; white-space: nowrap;
-}
-.copy-btn:hover { border-color: var(--primary-color, #4f9cf7); color: var(--primary-color, #4f9cf7); }
-.result-text {
-  margin: 0; padding: 10px 12px; background: #0c0c0c; border-radius: 8px;
-  color: #ccc; font-size: 0.82rem; line-height: 1.6; white-space: pre-wrap;
-  word-break: break-word; font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  max-height: 340px; overflow-y: auto;
-}
-.result-err { margin: 0; color: #ef4444; font-size: 0.8rem; }
-
-.msg { margin-top: 12px; padding: 11px 14px; border-radius: 10px; font-size: 0.82rem; display: flex; align-items: center; gap: 8px; }
-.msg-error { background: rgba(239,68,68,0.08); color: #ef4444; }
-.msg-ok { background: rgba(34,197,94,0.08); color: #22c55e; }
-
-.action-row { display: flex; flex-direction: column; gap: 8px; margin-top: 18px; }
-.convert-btn { width: 100%; padding: 13px !important; font-size: 0.9rem !important; border-radius: 10px !important; }
-.txt-btn { background: rgba(34,197,94,0.08) !important; border-color: rgba(34,197,94,0.2) !important; }
-.txt-btn:hover { border-color: #22c55e !important; }
+.stats{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:16px}.stats article{display:flex;align-items:center;gap:11px;padding:14px;border:1px solid rgba(255,255,255,.06);border-radius:12px;background:rgba(255,255,255,.03)}.stats i{width:35px;height:35px;display:grid;place-items:center;border-radius:9px;background:rgba(79,156,247,.1);color:#4f9cf7}.stats small,.stats b,.drop small,.drop b,.review-editor header small{display:block}.stats small,.drop small,.copy small,.history header small,.review-editor small,.chapter-heading small{color:#697386;font-size:.73rem}.upload{margin-top:14px}.chapter-fields{display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-bottom:14px}.upload .chapter-fields label{display:flex;flex-direction:column;align-items:stretch;gap:6px;margin:0}.drop{padding:28px;text-align:center;border:2px dashed #293241;border-radius:14px;cursor:pointer}.drop.active,.drop:hover{border-color:#4f9cf7}.drop>i{display:block;margin-bottom:8px;font-size:2rem;color:#4f9cf7}.drop small{margin-top:5px}.upload .min-y{display:grid;grid-template-columns:180px 120px 1fr;gap:12px;align-items:center;margin:14px 0;font-size:.8rem}.upload input,.controls input,.controls textarea,.controls select{min-width:0;padding:9px;border:1px solid #293241;border-radius:8px;background:#0d131d;color:#fff}.upload>button{width:100%}.bar{height:6px;margin:12px 0;background:#111827;border-radius:6px;overflow:hidden}.bar div{height:100%;background:#4f9cf7}.error{display:flex;gap:8px;margin-top:12px;padding:11px;border-radius:10px;background:rgba(239,68,68,.08);color:#ef4444}.review-editor{margin-top:18px;padding:14px;border:1px solid rgba(79,156,247,.25);border-radius:14px;background:#0b111a}.review-editor>header,.history>header{display:flex;justify-content:space-between;margin-bottom:10px}.image-tabs{display:flex;gap:6px;overflow:auto;margin-bottom:10px}.image-tabs button{padding:6px 9px;border:1px solid #263244;border-radius:7px;background:#111827;color:#8490a2;cursor:pointer}.image-tabs button.active{border-color:#4f9cf7;color:#fff}.editor-grid{display:grid;grid-template-columns:minmax(260px,420px) 1fr;gap:16px;align-items:start}.preview{position:relative;width:100%;line-height:0;background:#05070b;overflow:hidden}.preview img{width:100%;height:auto}.region-box{position:absolute;border:2px solid rgba(59,130,246,.75);background:rgba(59,130,246,.08);cursor:pointer}.region-box.warning{border-color:#f59e0b;background:rgba(245,158,11,.1)}.region-box.selected{border-color:#22c55e;background:rgba(34,197,94,.13)}.controls{display:flex;flex-direction:column;gap:10px}.controls label{display:flex;flex-direction:column;gap:4px;font-size:.76rem;color:#8793a5}.controls textarea{min-height:72px;resize:vertical}.control-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}.bad{color:#ef4444!important}.history{margin-top:20px}.chapter-group{margin-bottom:12px;padding:8px;border:1px solid rgba(255,255,255,.07);border-radius:14px;background:rgba(255,255,255,.018)}.chapter-heading{display:flex;align-items:center;gap:10px;padding:5px 6px 10px}.chapter-heading>i{color:#f6b94a}.chapter-heading b,.chapter-heading small{display:block}.history article{display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:11px;align-items:center;margin-bottom:8px;padding:13px;border:1px solid rgba(255,255,255,.07);border-radius:12px;background:rgba(255,255,255,.025)}.file-icon{display:grid;place-items:center;width:34px;height:34px;border-radius:9px;background:rgba(59,130,246,.1);color:#3b82f6}.copy{min-width:0}.copy>b,.copy small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.pill{padding:4px 8px;border-radius:99px;background:#273142;color:#aab2c0;font-size:.65rem;font-weight:800}.pill.completed{color:#22c55e;background:rgba(34,197,94,.12)}.pill.processing{color:#60a5fa;background:rgba(59,130,246,.12)}.pill.review,.pill.waiting_resource{color:#f59e0b;background:rgba(245,158,11,.12)}.pill.failed,.pill.cancelled{color:#ef4444;background:rgba(239,68,68,.1)}.actions{grid-column:2/4;display:flex;justify-content:flex-end;gap:8px;align-items:center}.review-count{font-size:.75rem;color:#f59e0b}.empty{padding:30px;text-align:center;border:1px dashed #293241;border-radius:12px;color:#697386}@media(max-width:720px){.stats{grid-template-columns:1fr 1fr;gap:7px}.stats article{padding:10px 8px;gap:8px}.stats i{width:30px;height:30px}.chapter-fields,.editor-grid{grid-template-columns:1fr}.upload .min-y{grid-template-columns:1fr;gap:6px}.drop{padding:22px 12px}.history>header small{display:none}.chapter-group{padding:6px}.history article{grid-template-columns:34px minmax(0,1fr) auto;padding:11px 9px;gap:9px}.pill{grid-column:3;grid-row:1}.actions{grid-column:1/4;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}.actions :deep(.p-button){width:100%;min-width:0;padding:.55rem .35rem}.actions :deep(.p-button-label){font-size:.72rem;white-space:nowrap}.review-count{display:flex;align-items:center;justify-content:center}.preview{max-width:420px;margin:auto}}
+.global-queue{margin-top:14px;padding:13px;border:1px solid rgba(59,130,246,.2);border-radius:13px;background:#0b111a}.global-queue>header{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px}.global-queue>header b,.global-queue>header small{display:block}.global-queue>header b i{margin-right:6px;color:#60a5fa}.global-queue>header small{margin-top:3px;color:#697386;font-size:.7rem}.global-queue>header>span{padding:4px 8px;border-radius:99px;background:rgba(59,130,246,.12);color:#60a5fa;font-size:.68rem;font-weight:700}.queue-empty{padding:13px;text-align:center;color:#667386;font-size:.76rem}.queue-empty i{margin-right:5px;color:#22c55e}.queue-row{width:100%;display:grid;grid-template-columns:28px minmax(0,1fr) auto 90px 14px;gap:9px;align-items:center;margin-top:6px;padding:10px;border:1px solid rgba(255,255,255,.06);border-radius:9px;background:rgba(255,255,255,.025);color:#fff;text-align:left;cursor:pointer}.queue-row:hover{border-color:#4f9cf7;background:rgba(79,156,247,.06)}.queue-number{display:grid;place-items:center;width:25px;height:25px;border-radius:7px;background:#172235;color:#7db7ff;font-size:.7rem;font-weight:800}.queue-name,.queue-progress{min-width:0}.queue-name b,.queue-name small,.queue-progress b,.queue-progress small{display:block}.queue-name b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.78rem}.queue-name small,.queue-progress small{margin-top:2px;color:#718096;font-size:.66rem}.queue-progress{text-align:right}.queue-progress b{font-size:.72rem}.queue-bar{height:4px;border-radius:4px;background:#1d2939;overflow:hidden}.queue-bar i{display:block;height:100%;border-radius:4px;background:#4f9cf7}.queue-row>i{color:#536074;font-size:.68rem}@media(max-width:720px){.queue-row{grid-template-columns:25px minmax(0,1fr) auto 12px}.queue-bar{grid-column:2/4;width:100%}.queue-row>i{grid-column:4;grid-row:1}.global-queue>header small{display:none}}
+.chosen{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}.chosen span{padding:5px 8px;border-radius:7px;background:#111827;color:#94a3b8;font-size:.72rem}.chosen span button{margin-left:5px;border:0;background:transparent;color:#ef4444;cursor:pointer}
+.raw-picker{margin:14px 0;padding:14px;border:1px solid rgba(139,92,246,.28);border-radius:13px;background:rgba(139,92,246,.055)}.raw-picker header b,.raw-picker header small,.raw-actions b,.raw-actions small{display:block}.raw-picker header i{margin-right:5px;color:#a78bfa}.raw-picker header small,.raw-actions small{margin-top:3px;color:#7f8b9e;font-size:.7rem}.raw-search{display:grid;grid-template-columns:1fr auto;gap:8px;margin-top:12px}.raw-search input,.raw-fields select{min-width:0;padding:9px 10px;border:1px solid #293241;border-radius:8px;background:#0d131d;color:#fff}.raw-fields{display:grid;grid-template-columns:.7fr 1.5fr 1fr;gap:9px;margin-top:10px}.raw-fields label{display:flex;flex-direction:column;gap:5px;color:#8793a5;font-size:.7rem}.raw-actions{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:center;margin-top:12px;padding-top:11px;border-top:1px solid rgba(255,255,255,.07)}.upload-divider{display:flex;align-items:center;gap:10px;margin:13px 0;color:#596579;font-size:.68rem;text-transform:uppercase;letter-spacing:.08em}.upload-divider:before,.upload-divider:after{content:"";height:1px;flex:1;background:#222d3d}@media(max-width:720px){.raw-search,.raw-fields,.raw-actions{grid-template-columns:1fr}.raw-actions :deep(.p-button){width:100%}}
+.chapter-contents>header>div b,.chapter-contents>header>div small,.chapter-contents>.empty b,.chapter-contents>.empty small{display:block}.chapter-contents>.empty>i{display:block;margin-bottom:10px;color:#f6b94a;font-size:2rem}.chapter-contents>.empty b{color:#aab4c3}.chapter-contents>.empty small{margin-top:5px;font-size:.72rem}
+.library-browser{margin-top:16px;padding:14px;border:1px solid rgba(255,255,255,.07);border-radius:14px;background:#0b111a}.library-crumb{display:flex;align-items:center;gap:6px;min-height:32px;margin-bottom:12px;overflow:auto;white-space:nowrap}.library-crumb button{padding:6px 8px;border:0;border-radius:7px;background:transparent;color:#8793a5;cursor:pointer}.library-crumb button:hover,.library-crumb button.active{background:#151d2a;color:#fff}.library-crumb>b{font-size:.82rem}.folder-create{display:grid;grid-template-columns:1fr auto;gap:8px;margin-bottom:12px}.folder-create input{min-width:0;padding:10px 12px;border:1px solid #293241;border-radius:9px;background:#0d131d;color:#fff}.folder-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.folder-grid>.empty{grid-column:1/-1}.folder-card{display:grid;grid-template-columns:38px minmax(0,1fr) 18px;gap:10px;align-items:center;padding:12px;border:1px solid rgba(255,255,255,.07);border-radius:11px;background:rgba(255,255,255,.025);color:#fff;text-align:left;cursor:pointer}.folder-card:hover{border-color:#4f9cf7;background:rgba(79,156,247,.06)}.folder-card>i:first-child{font-size:1.35rem;color:#f6b94a}.folder-card>i:last-child{font-size:.75rem;color:#536074}.folder-card b,.folder-card small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.folder-card small{margin-top:3px;color:#697386;font-size:.7rem}.upload-target{display:flex;align-items:center;gap:10px;margin-bottom:12px;padding:10px;border-radius:10px;background:rgba(79,156,247,.08);color:#4f9cf7}.upload-target small,.upload-target b{display:block}.upload-target small{font-size:.68rem;color:#7f8b9e}.upload-target b{color:#fff;font-size:.84rem}@media(max-width:720px){.library-browser{padding:10px}.folder-grid{grid-template-columns:1fr}.folder-create{grid-template-columns:1fr}.folder-create :deep(.p-button){width:100%}.folder-card{padding:11px}.library-crumb{margin-bottom:9px}}
+.memory-entry{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;padding:12px;border:1px solid rgba(139,92,246,.25);border-radius:11px;background:rgba(139,92,246,.07)}.memory-entry b,.memory-entry small{display:block}.memory-entry small{margin-top:3px;color:#8793a5;font-size:.72rem}.memory-modal{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;padding:18px;background:rgba(0,0,0,.75)}.memory-modal>section{width:min(760px,100%);max-height:90vh;overflow:auto;padding:18px;border:1px solid #293241;border-radius:16px;background:#0b111a}.memory-modal header{display:flex;align-items:center;justify-content:space-between}.memory-upload{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:14px 0;padding:12px;border-radius:12px;background:#101722}.memory-upload label{display:flex;flex-direction:column;gap:6px;font-size:.75rem;color:#9aa5b5}.memory-upload input{min-width:0;padding:9px;border:1px solid #293241;border-radius:8px;background:#0d131d;color:#fff}.memory-upload>button,.memory-upload>.bar{grid-column:1/-1}.memory-jobs article,.memory-references article{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:center;margin:8px 0;padding:11px;border:1px solid rgba(255,255,255,.07);border-radius:10px}.memory-jobs b,.memory-jobs small,.memory-references b,.memory-references small{display:block}.memory-jobs small,.memory-references small{color:#778397;font-size:.7rem}.memory-jobs textarea{grid-column:1/-1;min-height:220px;padding:10px;border:1px solid #293241;border-radius:8px;background:#080d14;color:#dbe5f2;font:12px/1.45 monospace;resize:vertical}.memory-summary{grid-column:1/3;display:flex;flex-wrap:wrap;gap:7px}.memory-summary span{padding:5px 8px;border-radius:99px;background:rgba(79,156,247,.1);color:#7db7ff;font-size:.7rem}@media(max-width:720px){.memory-entry{align-items:stretch;flex-direction:column}.memory-entry :deep(.p-button){width:100%}.memory-modal{padding:8px}.memory-modal>section{padding:12px;max-height:96vh}.memory-upload{grid-template-columns:1fr}.memory-jobs article{grid-template-columns:minmax(0,1fr) auto}.memory-jobs textarea,.memory-summary{grid-column:1/-1}.memory-jobs article>:deep(.p-button){grid-column:1/-1;width:100%}}
+.review-count{display:flex;flex-direction:column;align-items:flex-end;line-height:1.2}.review-count b{font-size:.75rem}.review-count small{font-size:.64rem;color:#f6b94a;white-space:nowrap}@media(max-width:720px){.review-count{align-items:center;justify-content:center}}
+.folder-tools{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;padding:10px 12px;border-radius:10px;background:rgba(255,255,255,.025)}.folder-tools>b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}@media(max-width:720px){.folder-tools{align-items:stretch;flex-direction:column}.folder-tools :deep(.p-button){width:100%}}
 </style>
