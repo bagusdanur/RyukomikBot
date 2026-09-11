@@ -6,7 +6,7 @@ from difflib import SequenceMatcher
 from chapter_utils import normalize_chapter
 
 
-SOURCE_ORDER = ("asura", "omega", "doujiva", "diva", "evascan", "thunder", "vortex", "qimanga", "demon", "kagane", "mgeko", "dusk", "mangadex", "lagoon", "ken")
+SOURCE_ORDER = ("asura", "omega", "doujiva", "diva", "evascan", "thunder", "vortex", "qimanga", "demon", "kagane", "mgeko", "dusk", "lagoon", "ken", "mgread", "mangadex")
 
 
 def normalize_title(value):

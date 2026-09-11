@@ -30,6 +30,7 @@ from raw_downloader import (
     mangadex_downloader,
     lagoon_downloader,
     ken_downloader,
+    mgread_downloader,
 )
 from raw_downloader.resolver import normalize_title
 
@@ -54,6 +55,7 @@ RAW_DOWNLOADERS = {
     "mangadex": mangadex_downloader,
     "lagoon": lagoon_downloader,
     "ken": ken_downloader,
+    "mgread": mgread_downloader,
 }
 CACHE_HOURS = max(1, int(os.getenv("SCOUT_CACHE_HOURS", "24")))
 MAX_CONCURRENCY = max(1, min(10, int(os.getenv("SCOUT_MAX_CONCURRENCY", "5"))))

@@ -66,6 +66,7 @@ from raw_downloader import (
     mangadex_downloader,
     lagoon_downloader,
     ken_downloader,
+    mgread_downloader,
 )
 from raw_downloader.resolver import title_score
 from raw_rate_analysis import suggest_assignment_rate
@@ -1694,6 +1695,7 @@ async def raw_search(
         "mangadex": mangadex_downloader,
         "lagoon": lagoon_downloader,
         "ken": ken_downloader,
+        "mgread": mgread_downloader,
     }
 
     if source != "all" and source in all_downloaders:
@@ -1773,6 +1775,7 @@ async def raw_rate_analysis(payload: RawRateAnalysisRequest, _user=Depends(admin
         "mangadex": mangadex_downloader,
         "lagoon": lagoon_downloader,
         "ken": ken_downloader,
+        "mgread": mgread_downloader,
     }
 
     if payload.source and payload.source in all_downloaders:

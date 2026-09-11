@@ -34,7 +34,8 @@ const RAW_SOURCE_OPTIONS=[
   {id:"diva",name:"Diva"},{id:"evascan",name:"EvaScan"},{id:"thunder",name:"Thunder"},
   {id:"vortex",name:"Vortex"},{id:"qimanga",name:"QiManga"},{id:"demon",name:"Demon"},
   {id:"kagane",name:"Kagane"},{id:"mgeko",name:"Mgeko"},{id:"dusk",name:"Dusk"},
-  {id:"lagoon",name:"Lagoon"},{id:"ken",name:"Ken"},{id:"mangadex",name:"MangaDex"},
+  {id:"lagoon",name:"Lagoon"},{id:"ken",name:"Ken"},{id:"mgread",name:"MGRead"},
+  {id:"mangadex",name:"MangaDex"},
 ];
 const rawSources=computed(()=>RAW_SOURCE_OPTIONS);
 const rawTitles=computed(()=>rawSource.value==="all"?rawResults.value:rawResults.value.filter(item=>item.source===rawSource.value));
