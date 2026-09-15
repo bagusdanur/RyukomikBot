@@ -8,7 +8,7 @@ from typing import Any
 import aiohttp
 import discord
 
-from config import NEW_PROJECT_CHANNEL_ID, PROJECT_DROP_CHANNEL_ID, PROJECT_EVENTS_TOKEN, PROJECT_EVENTS_URL, PROJECT_PUBLIC_URL, UPDATE_PROJECT_CHANNEL_ID
+from config import NEW_PROJECT_CHANNEL_ID, PROJECT_DROP_CHANNEL_ID, PROJECT_EVENTS_TOKEN, PROJECT_EVENTS_URL, PROJECT_PUBLIC_URL, ROLE_NOTIFICATION_ID, ROLE_NOTIFICATION_NAME, UPDATE_PROJECT_CHANNEL_ID
 from database import get_db
 
 log = logging.getLogger(__name__)
@@ -100,19 +100,20 @@ async def sync_project_events(guild: discord.Guild) -> int:
     if not isinstance(events, list):
         raise RuntimeError("Project event API returned malformed data")
     delivered = 0
+    notification_role = guild.get_role(ROLE_NOTIFICATION_ID) if ROLE_NOTIFICATION_ID else None
+    notification_role = notification_role or discord.utils.get(guild.roles, name=ROLE_NOTIFICATION_NAME)
     for event in events:
         channel_id, embed, view = build_project_embed(event)
         channel = guild.get_channel(channel_id)
         if not isinstance(channel, discord.TextChannel):
             raise RuntimeError(f"Project announcement channel unavailable: {channel_id}")
-        # Project changes are announcements for the whole community.  Keep
-        # every other mention disabled so data from the website cannot ping a
-        # user or role unexpectedly.
         message = await channel.send(
-            content="@everyone",
+            content=notification_role.mention if notification_role else None,
             embed=embed,
             view=view,
-            allowed_mentions=discord.AllowedMentions(everyone=True, users=False, roles=False),
+            allowed_mentions=discord.AllowedMentions(
+                everyone=False, users=False, roles=[notification_role] if notification_role else False
+            ),
         )
         await _record_delivery(event, message.id)
         delivered += 1

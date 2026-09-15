@@ -29,6 +29,8 @@ PROJECT_EVENTS_TOKEN = os.getenv("PROJECT_EVENTS_TOKEN", "")
 # Role IDs
 ROLE_STAFF_ID = int(os.getenv("ROLE_STAFF_ID", "1524458627124166696"))
 ROLE_ADMIN_ID = int(os.getenv("ROLE_ADMIN_ID", "1524457168072343762"))
+ROLE_NOTIFICATION_ID = int(os.getenv("ROLE_NOTIFICATION_ID", "0")) or None
+ROLE_NOTIFICATION_NAME = os.getenv("ROLE_NOTIFICATION_NAME", "Notifikasi Project")
 
 # API
 ASURA_API = os.getenv("ASURA_API", "https://api.ryukomik.web.id/asura")

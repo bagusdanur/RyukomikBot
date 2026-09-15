@@ -13,6 +13,8 @@ from config import (
     PROJECT_CATEGORY_ID,
     PROJECT_DROP_CHANNEL_ID,
     ROLE_ADMIN_ID,
+    ROLE_NOTIFICATION_ID,
+    ROLE_NOTIFICATION_NAME,
     ROLE_STAFF_ID,
     RAW_WATCH_CHANNEL_NAME,
     PROJECT_SCOUT_CHANNEL_NAME,
@@ -22,6 +24,7 @@ from config import (
     STAFF_TASKS_CHANNEL_ID,
     UPDATE_PROJECT_CHANNEL_ID,
 )
+from views.role_views import NotificationRoleView
 
 
 log = logging.getLogger(__name__)
@@ -109,6 +112,46 @@ async def ensure_project_scout_channel(guild: discord.Guild) -> discord.TextChan
     except discord.HTTPException:
         pass
     return channel
+
+
+async def ensure_notification_role_panel(guild: discord.Guild) -> bool:
+    """Create the opt-in project notification role and its self-role panel."""
+    channel = _find_text_channel(guild, names=ROLE_NAMES)
+    if channel is None:
+        log.warning("Role channel unavailable in guild=%s", guild.id)
+        return False
+
+    role = guild.get_role(ROLE_NOTIFICATION_ID) if ROLE_NOTIFICATION_ID else None
+    role = role or discord.utils.get(guild.roles, name=ROLE_NOTIFICATION_NAME)
+    if role is None:
+        role = await guild.create_role(
+            name=ROLE_NOTIFICATION_NAME,
+            colour=discord.Color.blurple(),
+            mentionable=False,
+            reason="Role opt-in untuk notifikasi project Ryukomik",
+        )
+
+    embed = discord.Embed(
+        title="Notifikasi Project Ryukomik",
+        description=(
+            "Klik tombol di bawah untuk menerima notifikasi **project baru, update chapter, "
+            "dan perubahan status project**. Klik lagi kapan saja untuk menonaktifkannya."
+        ),
+        color=discord.Color.blurple(),
+    )
+    embed.add_field(
+        name="Notifikasi tanpa gangguan",
+        value="Yuki hanya akan menandai anggota yang memilih role ini, bukan @everyone.",
+        inline=False,
+    )
+    embed.set_footer(text="Ryukomik Official • Pengaturan notifikasi mandiri")
+    await _upsert_bot_embed(
+        channel,
+        title="Notifikasi Project Ryukomik",
+        embed=embed,
+        view=NotificationRoleView(),
+    )
+    return True
 
 
 async def ensure_giveaway_channel(guild: discord.Guild) -> discord.TextChannel | None:
@@ -525,6 +568,7 @@ async def apply_server_housekeeping(guild: discord.Guild) -> dict[str, bool]:
         "welcome_history": False,
         "raw_watch": False,
         "project_scout": False,
+        "notification_role": False,
         "giveaway": False,
         "website_info": False,
     }
@@ -535,6 +579,7 @@ async def apply_server_housekeeping(guild: discord.Guild) -> dict[str, bool]:
 
     result["raw_watch"] = bool(await ensure_raw_watch_channel(guild))
     result["project_scout"] = bool(await ensure_project_scout_channel(guild))
+    result["notification_role"] = await ensure_notification_role_panel(guild)
     result["giveaway"] = bool(await ensure_giveaway_channel(guild))
 
     result["project_layout"] = await apply_project_layout(guild)

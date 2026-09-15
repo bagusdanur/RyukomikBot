@@ -42,7 +42,7 @@ from views.payment_views import (
     ConfirmPayPayoutDynamic, IncomeMenuView, PayPayoutDynamic, PayoutAdminView, RejectPayoutDynamic,
     RetryInvoiceDynamic,
 )
-from views.role_views import ZodiacRoleView
+from views.role_views import NotificationRoleView, ZodiacRoleView
 from views.staff_question_views import StaffQuestionAnswerDynamic
 from views.support_views import DeadlineExtensionDecisionDynamic
 from views.pair_views import (
@@ -117,6 +117,7 @@ class RyukomikBot(commands.Bot):
         self.add_view(StaffPanelView())
         self.add_view(IncomeMenuView())
         self.add_view(ZodiacRoleView())
+        self.add_view(NotificationRoleView())
         self.add_view(LegacyTaskView())
         self.add_dynamic_items(SubmitDynamicItem, ApproveDynamicItem, ReviseDynamicItem)
         self.add_dynamic_items(
