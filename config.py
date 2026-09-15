@@ -48,6 +48,7 @@ DUSK_API = os.getenv("DUSK_API", "https://api.ryukomik.web.id/dusk")
 LAGOON_API = os.getenv("LAGOON_API", "https://api.ryukomik.web.id/lagoon")
 KEN_API = os.getenv("KEN_API", "https://api.ryukomik.web.id/ken")
 MGREAD_API = os.getenv("MGREAD_API", "https://api.ryukomik.web.id/mgread")
+LUA_API = os.getenv("LUA_API", "https://api.ryukomik.web.id/lua")
 DASHBOARD_URL = os.getenv("DASHBOARD_URL", "https://staff.ryukomik.web.id")
 
 # Recruitment test materials. Keep these configurable because Filebin links
