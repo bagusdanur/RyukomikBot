@@ -35,7 +35,7 @@ def test_channel_lookup_does_not_create_or_rearrange_channels():
 
 def test_helper_private_category_detects_tickets_and_staff_areas():
     assert _helper_private_category(SimpleNamespace(id=REKRUT_CAT_ID, name="Recruitment"))
-    assert _helper_private_category(SimpleNamespace(id=1, name="Staff Internal"))
+    assert not _helper_private_category(SimpleNamespace(id=1, name="Staff Internal"))
     assert _helper_private_category(SimpleNamespace(id=2, name="Tiket Bantuan"))
     assert not _helper_private_category(SimpleNamespace(id=3, name="Info Project"))
 
@@ -44,6 +44,8 @@ def test_helper_private_channel_detects_operational_channels():
     for name in ("・staff-mod", "・raw-watch", "・project-scout", "・server-monitor"):
         assert _helper_private_channel(SimpleNamespace(name=name))
     assert not _helper_private_channel(SimpleNamespace(name="・update-project"))
+    assert _helper_private_channel(SimpleNamespace(name="🔒・tiket-member", category_id=4))
+    assert _helper_private_channel(SimpleNamespace(name="general", category_id=REKRUT_CAT_ID))
 
 
 def test_welcome_and_goodbye_cards_are_mobile_friendly():
