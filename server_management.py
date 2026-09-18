@@ -41,6 +41,7 @@ WEBSITE_INFO_NAMES = ("info-website", "status-website")
 GIVEAWAY_NAMES = ("giveaway", "giveaways", "bagi-bagi-hadiah", "event")
 MEMBER_MENTION_PATTERN = re.compile(r"<@!?(\d+)>")
 HELPER_PRIVATE_CATEGORY_NAMES = ("staff", "admin", "moderator", "rekrut", "recruit", "ticket", "tiket")
+HELPER_PRIVATE_CHANNEL_NAMES = ("staff-mod", "raw-watch", "project-scout", "server-monitor")
 
 PROJECT_CHANNELS = (
     (NEW_PROJECT_CHANNEL_ID, "・new-project", "Informasi project baru yang akan dikerjakan atau segera hadir di Ryukomik."),
@@ -165,6 +166,11 @@ def _helper_private_category(category: discord.CategoryChannel) -> bool:
     )
 
 
+def _helper_private_channel(channel: discord.abc.GuildChannel) -> bool:
+    normalized = _plain_name(channel.name)
+    return any(name == normalized or name in normalized for name in HELPER_PRIVATE_CHANNEL_NAMES)
+
+
 async def ensure_helper_role_permissions(guild: discord.Guild) -> bool:
     """Allow Helper to manage public channels while hard-denying private tickets."""
     role = guild.get_role(ROLE_HELPER_ID) if ROLE_HELPER_ID else None
@@ -219,6 +225,16 @@ async def ensure_helper_role_permissions(guild: discord.Guild) -> bool:
                 manage_roles=False,
                 reason="Helper dapat mengatur channel publik pada kategori ini",
             )
+    for channel in guild.channels:
+        if isinstance(channel, discord.CategoryChannel) or not _helper_private_channel(channel):
+            continue
+        await channel.set_permissions(
+            role,
+            view_channel=False,
+            manage_channels=False,
+            manage_roles=False,
+            reason="Channel operasional privat tidak dapat diakses Helper",
+        )
     return True
 
 

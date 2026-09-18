@@ -5,6 +5,7 @@ import discord
 from server_management import (
     _find_text_channel,
     _helper_private_category,
+    _helper_private_channel,
     _plain_name,
     build_goodbye_embed,
     build_welcome_embed,
@@ -37,6 +38,12 @@ def test_helper_private_category_detects_tickets_and_staff_areas():
     assert _helper_private_category(SimpleNamespace(id=1, name="Staff Internal"))
     assert _helper_private_category(SimpleNamespace(id=2, name="Tiket Bantuan"))
     assert not _helper_private_category(SimpleNamespace(id=3, name="Info Project"))
+
+
+def test_helper_private_channel_detects_operational_channels():
+    for name in ("・staff-mod", "・raw-watch", "・project-scout", "・server-monitor"):
+        assert _helper_private_channel(SimpleNamespace(name=name))
+    assert not _helper_private_channel(SimpleNamespace(name="・update-project"))
 
 
 def test_welcome_and_goodbye_cards_are_mobile_friendly():
