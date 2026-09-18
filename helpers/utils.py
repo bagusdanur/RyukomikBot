@@ -1,6 +1,6 @@
 import discord
 from typing import Optional, Union
-from config import REKRUT_CAT_ID, ROLE_ADMIN_ID, ROLE_STAFF_ID
+from config import REKRUT_CAT_ID, ROLE_ADMIN_ID, ROLE_HELPER_ID, ROLE_HELPER_NAME, ROLE_STAFF_ID
 
 # Status emojis for assignments
 STATUS_EMOJI = {
@@ -151,6 +151,14 @@ def build_private_ticket_overwrites(
             manage_messages=True,
             attach_files=True,
             embed_links=True,
+        )
+    helper_role = guild.get_role(ROLE_HELPER_ID) if ROLE_HELPER_ID else None
+    helper_role = helper_role or discord.utils.get(guild.roles, name=ROLE_HELPER_NAME)
+    if helper_role:
+        overwrites[helper_role] = discord.PermissionOverwrite(
+            view_channel=False,
+            manage_channels=False,
+            manage_roles=False,
         )
     if guild.me:
         overwrites[guild.me] = discord.PermissionOverwrite(

@@ -12,7 +12,10 @@ from config import (
     NEW_PROJECT_CHANNEL_ID,
     PROJECT_CATEGORY_ID,
     PROJECT_DROP_CHANNEL_ID,
+    REKRUT_CAT_ID,
     ROLE_ADMIN_ID,
+    ROLE_HELPER_ID,
+    ROLE_HELPER_NAME,
     ROLE_NOTIFICATION_ID,
     ROLE_NOTIFICATION_NAME,
     ROLE_STAFF_ID,
@@ -37,6 +40,7 @@ RECRUITMENT_NAMES = ("staff-rekrutmen", "rekrutmen", "recruitment")
 WEBSITE_INFO_NAMES = ("info-website", "status-website")
 GIVEAWAY_NAMES = ("giveaway", "giveaways", "bagi-bagi-hadiah", "event")
 MEMBER_MENTION_PATTERN = re.compile(r"<@!?(\d+)>")
+HELPER_PRIVATE_CATEGORY_NAMES = ("staff", "admin", "moderator", "rekrut", "recruit", "ticket", "tiket")
 
 PROJECT_CHANNELS = (
     (NEW_PROJECT_CHANNEL_ID, "・new-project", "Informasi project baru yang akan dikerjakan atau segera hadir di Ryukomik."),
@@ -151,6 +155,70 @@ async def ensure_notification_role_panel(guild: discord.Guild) -> bool:
         embed=embed,
         view=NotificationRoleView(),
     )
+    return True
+
+
+def _helper_private_category(category: discord.CategoryChannel) -> bool:
+    normalized = _plain_name(category.name)
+    return category.id == REKRUT_CAT_ID or any(
+        marker in normalized for marker in HELPER_PRIVATE_CATEGORY_NAMES
+    )
+
+
+async def ensure_helper_role_permissions(guild: discord.Guild) -> bool:
+    """Allow Helper to manage public channels while hard-denying private tickets."""
+    role = guild.get_role(ROLE_HELPER_ID) if ROLE_HELPER_ID else None
+    role = role or discord.utils.get(guild.roles, name=ROLE_HELPER_NAME)
+    if role is None:
+        safe_permissions = discord.Permissions.none()
+        role = await guild.create_role(
+            name=ROLE_HELPER_NAME,
+            permissions=safe_permissions,
+            colour=discord.Color.teal(),
+            mentionable=False,
+            reason="Role helper dengan akses channel publik terbatas",
+        )
+    else:
+        safe_permissions = discord.Permissions(role.permissions.value)
+        safe_permissions.update(
+            administrator=False,
+            manage_guild=False,
+            manage_roles=False,
+            manage_channels=False,
+            view_audit_log=False,
+            mention_everyone=False,
+        )
+        if role.permissions.value != safe_permissions.value:
+            await role.edit(
+                permissions=safe_permissions,
+                reason="Mencegah Helper memiliki izin global atau akses tiket",
+            )
+
+    for category in guild.categories:
+        if _helper_private_category(category):
+            await category.set_permissions(
+                role,
+                view_channel=False,
+                manage_channels=False,
+                manage_roles=False,
+                reason="Helper tidak boleh melihat atau mengatur area privat",
+            )
+            for channel in category.channels:
+                await channel.set_permissions(
+                    role,
+                    view_channel=False,
+                    manage_channels=False,
+                    manage_roles=False,
+                    reason="Perlindungan eksplisit tiket dari Helper",
+                )
+        else:
+            await category.set_permissions(
+                role,
+                view_channel=True,
+                manage_channels=True,
+                manage_roles=False,
+                reason="Helper dapat mengatur channel publik pada kategori ini",
+            )
     return True
 
 
@@ -569,6 +637,7 @@ async def apply_server_housekeeping(guild: discord.Guild) -> dict[str, bool]:
         "raw_watch": False,
         "project_scout": False,
         "notification_role": False,
+        "helper_permissions": False,
         "giveaway": False,
         "website_info": False,
     }
@@ -580,6 +649,7 @@ async def apply_server_housekeeping(guild: discord.Guild) -> dict[str, bool]:
     result["raw_watch"] = bool(await ensure_raw_watch_channel(guild))
     result["project_scout"] = bool(await ensure_project_scout_channel(guild))
     result["notification_role"] = await ensure_notification_role_panel(guild)
+    result["helper_permissions"] = await ensure_helper_role_permissions(guild)
     result["giveaway"] = bool(await ensure_giveaway_channel(guild))
 
     result["project_layout"] = await apply_project_layout(guild)
