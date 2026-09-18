@@ -177,6 +177,7 @@ async def ensure_helper_role_permissions(guild: discord.Guild) -> bool:
     role = role or discord.utils.get(guild.roles, name=ROLE_HELPER_NAME)
     if role is None:
         safe_permissions = discord.Permissions.none()
+        safe_permissions.update(manage_roles=True, mention_everyone=True)
         role = await guild.create_role(
             name=ROLE_HELPER_NAME,
             permissions=safe_permissions,
@@ -189,10 +190,10 @@ async def ensure_helper_role_permissions(guild: discord.Guild) -> bool:
         safe_permissions.update(
             administrator=False,
             manage_guild=False,
-            manage_roles=False,
+            manage_roles=True,
             manage_channels=False,
             view_audit_log=False,
-            mention_everyone=False,
+            mention_everyone=True,
         )
         if role.permissions.value != safe_permissions.value:
             await role.edit(
@@ -222,7 +223,7 @@ async def ensure_helper_role_permissions(guild: discord.Guild) -> bool:
                 role,
                 view_channel=True,
                 manage_channels=True,
-                manage_roles=False,
+                manage_roles=True,
                 reason="Helper dapat mengatur channel publik pada kategori ini",
             )
     for channel in guild.channels:
