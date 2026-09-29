@@ -228,8 +228,8 @@ onMounted(async()=>{await refresh();timer=window.setInterval(async()=>{await ref
     <div v-else class="editor-grid"><div class="preview"><img :src="`/api/tools/translator/images/${currentImage.id}/preview?v=${previewKey}`" :alt="currentImage.filename"><button v-for="region in regions" :key="region.id" class="region-box" :class="{selected:selected?.id===region.id,warning:region.status==='NEEDS_REVIEW'}" :style="boxStyle(region)" :title="region.source_text" @click="pickRegion(region)"></button>
       <div class="crop-shade" :style="{height:`${cropTopPercent}%`}"></div>
       <div class="crop-shade bottom" :style="{height:`${cropBottomPercent}%`}"></div>
-      <div class="crop-line" :class="{active:cropTop>0}" :style="{top:`${cropTopPercent}%`}" title="Geser untuk memotong bagian atas" @pointerdown="dragCrop($event,'top')"><span>Potong atas</span></div>
-      <div class="crop-line" :class="{active:cropBottom>0}" :style="{bottom:`${cropBottomPercent}%`}" title="Geser untuk memotong bagian bawah" @pointerdown="dragCrop($event,'bottom')"><span>Potong bawah</span></div>
+      <div class="crop-line top" :class="{active:cropTop>0}" :style="{top:`${cropTopPercent}%`}" title="Geser untuk memotong bagian atas" @pointerdown="dragCrop($event,'top')"><span>Potong atas</span></div>
+      <div class="crop-line bottom" :class="{active:cropBottom>0}" :style="{bottom:`${cropBottomPercent}%`}" title="Geser untuk memotong bagian bawah" @pointerdown="dragCrop($event,'bottom')"><span>Potong bawah</span></div>
     </div>
       <div class="crop-panel">
         <header><b><i class="pi pi-crop"></i> Potong halaman</b><small>Hilangkan sisa logo/banner raw. <b>Geser garis</b> di gambar (atau isi angka) — hasil ikut ke ZIP chapter &amp; unduhan.</small></header>
@@ -301,6 +301,9 @@ onMounted(async()=>{await refresh();timer=window.setInterval(async()=>{await ref
 .crop-line{position:absolute;left:0;right:0;height:0;border-top:2px dashed #f59e0b;cursor:ns-resize;z-index:4;touch-action:none}
 .crop-line.active{border-top-style:solid;border-top-color:#ef4444}
 .crop-line span{position:absolute;right:4px;top:-9px;padding:1px 6px;border-radius:5px;background:#f59e0b;color:#1a1205;font-size:.6rem;font-weight:800;white-space:nowrap}
+/* Labels would be clipped at the page edges, so they move inside the page. */
+.crop-line.top span{top:2px}
+.crop-line.bottom span{top:auto;bottom:2px}
 .crop-line.active span{background:#ef4444;color:#fff}
 .crop-line::before{content:"";position:absolute;left:0;right:0;top:-11px;height:22px}
 /* Continuous webtoon reader: pages stack full-width with no gap so the strip
