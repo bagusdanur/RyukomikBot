@@ -66,6 +66,8 @@ from raw_downloader import (
     mangadex_downloader,
     lagoon_downloader,
     ken_downloader,
+    mgread_downloader,
+    lua_downloader,
     mist_downloader,
 )
 from raw_downloader.resolver import title_score
@@ -509,7 +511,7 @@ class RawRateAnalysisRequest(BaseModel):
 
 class ScoutSearchRequest(BaseModel):
     title: str = Field(min_length=2, max_length=180)
-    raw_source: Literal["all", "asura", "omega", "doujiva", "diva", "evascan", "thunder", "vortex", "qimanga", "demon", "kagane", "mgeko", "dusk", "mangadex", "lagoon", "ken", "mist"] = "all"
+    raw_source: Literal["all", "asura", "omega", "doujiva", "diva", "evascan", "thunder", "vortex", "qimanga", "demon", "kagane", "mgeko", "dusk", "mangadex", "lagoon", "ken", "lua", "mgread", "mist"] = "all"
     force: bool = False
 
 
@@ -1695,6 +1697,8 @@ async def raw_search(
         "mangadex": mangadex_downloader,
         "lagoon": lagoon_downloader,
         "ken": ken_downloader,
+        "mgread": mgread_downloader,
+        "lua": lua_downloader,
         "mist": mist_downloader,
     }
 
@@ -1719,6 +1723,8 @@ async def raw_search(
         "mangadex": "MangaDex",
         "lagoon": "Lagoon",
         "ken": "Ken",
+        "lua": "Lua Comic",
+        "mgread": "MGRead",
         "mist": "Mist Scans",
     }
 
@@ -1776,6 +1782,8 @@ async def raw_rate_analysis(payload: RawRateAnalysisRequest, _user=Depends(admin
         "mangadex": mangadex_downloader,
         "lagoon": lagoon_downloader,
         "ken": ken_downloader,
+        "mgread": mgread_downloader,
+        "lua": lua_downloader,
         "mist": mist_downloader,
     }
 

@@ -12,6 +12,8 @@ from .dusk import DuskDownloader, search_dusk
 from .mangadex import MangaDexDownloader, search_mangadex
 from .lagoon import LagoonDownloader, search_lagoon
 from .ken import KenDownloader, search_ken
+from .mgread import MgreadDownloader, search_mgread
+from .lua import LuaDownloader, search_lua
 from .mist import MistDownloader, search_mist
 from config import DIVA_API
 
@@ -30,6 +32,8 @@ dusk_downloader = DuskDownloader()
 mangadex_downloader = MangaDexDownloader()
 lagoon_downloader = LagoonDownloader()
 ken_downloader = KenDownloader()
+mgread_downloader = MgreadDownloader()
+lua_downloader = LuaDownloader()
 mist_downloader = MistDownloader()
 
 
@@ -63,6 +67,10 @@ def get_downloader(source: str = "asura"):
         return lagoon_downloader
     if source.casefold() in ("ken", "kencomics"):
         return ken_downloader
+    if source.casefold() in ("mgread", "mgreadio", "mgread.io"):
+        return mgread_downloader
+    if source.casefold() in ("lua", "luacomic", "luacomic.org"):
+        return lua_downloader
     if source.casefold() in ("mist", "mistscan", "mistscans", "mistscans.com"):
         return mist_downloader
     if source.casefold() == "asura":
@@ -85,6 +93,8 @@ __all__ = [
     "MangaDexDownloader",
     "LagoonDownloader",
     "KenDownloader",
+    "MgreadDownloader",
+    "LuaDownloader",
     "MistDownloader",
     "search_asura",
     "search_doujiva",
@@ -98,6 +108,8 @@ __all__ = [
     "search_mangadex",
     "search_lagoon",
     "search_ken",
+    "search_mgread",
+    "search_lua",
     "search_mist",
     "get_downloader",
     "asura_downloader",
@@ -115,5 +127,7 @@ __all__ = [
     "mangadex_downloader",
     "lagoon_downloader",
     "ken_downloader",
+    "mgread_downloader",
+    "lua_downloader",
     "mist_downloader",
 ]
