@@ -137,6 +137,52 @@ function downloadPage(image:ComicImage){window.location.href=`/api/tools/transla
 // download are built, so it can be adjusted or cleared at any time.
 const cropTop=ref(0), cropBottom=ref(0), cropSaving=ref(false), cropMessage=ref("");
 function loadCrop(image:ComicImage|null){cropTop.value=Number(image?.crop_top||0);cropBottom.value=Number(image?.crop_bottom||0);cropMessage.value=""}
+// Lines and shades drawn over the preview so the operator drags the cut instead
+// of guessing a pixel count. Positions are percentages of the rendered page, so
+// they stay correct at any preview width.
+const cropTopPercent=computed(()=>currentImage.value?cropTop.value/currentImage.value.height*100:0);
+const cropBottomPercent=computed(()=>currentImage.value?cropBottom.value/currentImage.value.height*100:0);
+const cropRemaining=computed(()=>currentImage.value?Math.max(1,currentImage.value.height-cropTop.value-cropBottom.value):0);
+function dragCrop(event:PointerEvent, edge:"top"|"bottom"){
+  if(!currentImage.value)return;
+  const image=(event.currentTarget as HTMLElement).closest(".preview")?.querySelector("img");
+  if(!image)return;
+  event.preventDefault();
+  const rect=image.getBoundingClientRect();
+  if(!rect.height)return;
+  const height=currentImage.value.height;
+  const scale=height/rect.height;
+  const apply=(clientY:number)=>{
+    const y=Math.max(0,Math.min(rect.height,clientY-rect.top));
+    const px=Math.round(y*scale);
+    if(edge==="top")cropTop.value=Math.max(0,Math.min(px,height-1-cropBottom.value));
+    else cropBottom.value=Math.max(0,Math.min(height-px,height-1-cropTop.value));
+  };
+  apply(event.clientY);
+  const move=(moveEvent:PointerEvent)=>apply(moveEvent.clientY);
+  const stop=()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",stop);window.removeEventListener("pointercancel",stop)};
+  window.addEventListener("pointermove",move);
+  window.addEventListener("pointerup",stop);
+  window.addEventListener("pointercancel",stop);
+}
+// Suggest a cut from the pipeline's own regions: everything the OCR marked
+// PRESERVED above the first translated bubble (and below the last) is leftover
+// source branding, so those are the natural boundaries. Only suggested where
+// such a region actually exists, so a page with no banner keeps 0.
+function detectCrop(){
+  if(!currentImage.value)return;
+  const height=currentImage.value.height;
+  const translated=regions.value.filter(region=>region.status!=="PRESERVED").sort((a,b)=>a.bbox.y-b.bbox.y);
+  if(!translated.length){cropMessage.value="Tidak ada bubble terjemahan untuk dijadikan patokan.";return}
+  const first=translated[0], last=translated[translated.length-1];
+  const lastBottom=last.bbox.y+last.bbox.height;
+  const above=regions.value.filter(region=>region.status==="PRESERVED"&&region.bbox.y<first.bbox.y);
+  const below=regions.value.filter(region=>region.status==="PRESERVED"&&region.bbox.y>=lastBottom);
+  cropTop.value=above.length?Math.min(first.bbox.y,height-1):0;
+  const bottomEdge=below.length?Math.min(...below.map(region=>region.bbox.y)):height;
+  cropBottom.value=Math.max(0,Math.min(height-bottomEdge,height-1-cropTop.value));
+  cropMessage.value=above.length||below.length?"Saran diisi dari sisa banner terdeteksi. Geser garis bila perlu.":"Tidak terdeteksi sisa banner di halaman ini.";
+}
 async function saveCrop(applyToAll:boolean){if(!currentImage.value||cropSaving.value)return;cropSaving.value=true;cropMessage.value="";error.value="";try{const result=await api(`/api/tools/translator/images/${currentImage.value.id}/crop`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({cropTop:cropTop.value,cropBottom:cropBottom.value,applyToAll})}) as {cropTop:number;cropBottom:number;appliedTo:number};currentImage.value.crop_top=result.cropTop;currentImage.value.crop_bottom=result.cropBottom;if(applyToAll)for(const item of images.value){item.crop_top=result.cropTop;item.crop_bottom=result.cropBottom}cropMessage.value=applyToAll?`Potongan diterapkan ke ${result.appliedTo} halaman.`:"Potongan diterapkan.";previewKey.value=Date.now();await refresh()}catch(e){error.value=e instanceof Error?e.message:"Gagal menyimpan potongan."}finally{cropSaving.value=false}}
 async function openReview(job:Job){try{reviewJob.value=job;images.value=await api(`/api/tools/translator/jobs/${job.id}/images`);const firstReview=Math.max(0,(job.review_pages?.[0]?.page||1)-1);if(images.value[firstReview])await chooseImage(images.value[firstReview]);else if(images.value[0])await chooseImage(images.value[0]);else throw new Error("Belum ada gambar hasil untuk direview.")}catch(e){error.value=e instanceof Error?e.message:"Gagal membuka review."}}
 async function chooseImage(image:ComicImage){currentImage.value=image;regions.value=await api(`/api/tools/translator/images/${image.id}/regions`);selected.value=null;previewKey.value=Date.now();loadCrop(image);const target=regions.value.find(r=>r.status==="NEEDS_REVIEW")||regions.value[0];if(target)pickRegion(target)}
@@ -179,19 +225,25 @@ onMounted(async()=>{await refresh();timer=window.setInterval(async()=>{await ref
       <div v-if="!webtoonPages.length" class="empty">Belum ada gambar hasil untuk direview.</div>
     </div>
 
-    <div v-else class="editor-grid"><div class="preview"><img :src="`/api/tools/translator/images/${currentImage.id}/preview?v=${previewKey}`" :alt="currentImage.filename"><button v-for="region in regions" :key="region.id" class="region-box" :class="{selected:selected?.id===region.id,warning:region.status==='NEEDS_REVIEW'}" :style="boxStyle(region)" :title="region.source_text" @click="pickRegion(region)"></button></div>
+    <div v-else class="editor-grid"><div class="preview"><img :src="`/api/tools/translator/images/${currentImage.id}/preview?v=${previewKey}`" :alt="currentImage.filename"><button v-for="region in regions" :key="region.id" class="region-box" :class="{selected:selected?.id===region.id,warning:region.status==='NEEDS_REVIEW'}" :style="boxStyle(region)" :title="region.source_text" @click="pickRegion(region)"></button>
+      <div class="crop-shade" :style="{height:`${cropTopPercent}%`}"></div>
+      <div class="crop-shade bottom" :style="{height:`${cropBottomPercent}%`}"></div>
+      <div class="crop-line" :class="{active:cropTop>0}" :style="{top:`${cropTopPercent}%`}" title="Geser untuk memotong bagian atas" @pointerdown="dragCrop($event,'top')"><span>Potong atas</span></div>
+      <div class="crop-line" :class="{active:cropBottom>0}" :style="{bottom:`${cropBottomPercent}%`}" title="Geser untuk memotong bagian bawah" @pointerdown="dragCrop($event,'bottom')"><span>Potong bawah</span></div>
+    </div>
       <div class="crop-panel">
-        <header><b><i class="pi pi-crop"></i> Potong halaman</b><small>Hilangkan sisa logo/banner raw di atas atau bawah. Hasil ikut ke ZIP chapter &amp; unduhan.</small></header>
+        <header><b><i class="pi pi-crop"></i> Potong halaman</b><small>Hilangkan sisa logo/banner raw. <b>Geser garis</b> di gambar (atau isi angka) — hasil ikut ke ZIP chapter &amp; unduhan.</small></header>
         <div class="crop-fields">
           <label>Potong atas (px)<input v-model.number="cropTop" type="number" min="0" :max="currentImage.height"></label>
           <label>Potong bawah (px)<input v-model.number="cropBottom" type="number" min="0" :max="currentImage.height"></label>
         </div>
+        <Button label="Deteksi otomatis dari sisa banner" icon="pi pi-search" size="small" severity="secondary" outlined @click="detectCrop" />
         <div class="crop-actions">
           <Button label="Terapkan" icon="pi pi-check" size="small" :loading="cropSaving" :disabled="cropSaving" @click="saveCrop(false)" />
           <Button label="Semua halaman" icon="pi pi-copy" size="small" outlined :loading="cropSaving" :disabled="cropSaving" title="Banner biasanya muncul di semua halaman; terapkan potongan yang sama ke seluruh halaman chapter ini" @click="saveCrop(true)" />
           <Button label="Reset" icon="pi pi-undo" size="small" text :disabled="cropSaving||(!cropTop&&!cropBottom)" @click="cropTop=0;cropBottom=0;saveCrop(false)" />
         </div>
-        <small v-if="cropTop||cropBottom" class="crop-active">Aktif: tinggi {{currentImage.height}} → {{Math.max(1,currentImage.height-cropTop-cropBottom)}}px</small>
+        <small v-if="cropTop||cropBottom" class="crop-active">Aktif: tinggi {{currentImage.height}} → {{cropRemaining}}px</small>
         <small v-if="cropMessage" class="crop-done">{{cropMessage}}</small>
       </div>
       <form v-if="selected" class="controls" @submit.prevent="saveRender"><label>Original<textarea :value="selected.source_text" readonly></textarea></label><label>Translation<textarea v-model="edit.translation" maxlength="2000"></textarea></label><div class="control-grid"><label>X<input v-model.number="edit.x" type="number" min="0"></label><label>Y<input v-model.number="edit.y" type="number" min="0"></label><label>Width<input v-model.number="edit.width" type="number" min="10"></label><label>Height<input v-model.number="edit.height" type="number" min="10"></label><label>Font size<input v-model.number="edit.fontSize" type="number" min="8" max="96"></label><label>Line spacing<input v-model.number="edit.lineSpacing" type="number" min="0" max="1" step="0.02"></label></div><label>Alignment<select v-model="edit.alignment"><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option></select></label><small v-if="selected.metadata.reason==='REMOVAL_NOT_SAFE'" class="bad">Artwork tidak aman dibersihkan. Region ini tidak dapat di-render otomatis.</small><Button type="submit" label="Simpan dan re-render bubble" icon="pi pi-refresh" :loading="rendering" :disabled="rendering||selected.metadata.reason==='REMOVAL_NOT_SAFE'" /></form>
@@ -242,6 +294,15 @@ onMounted(async()=>{await refresh();timer=window.setInterval(async()=>{await ref
 .crop-fields input{padding:7px 9px;border:1px solid #263244;border-radius:7px;background:#080c13;color:#e6edf6;font-size:.78rem}
 .crop-actions{display:flex;flex-wrap:wrap;gap:7px}
 .crop-active{font-size:.7rem;color:#f0b37e}.crop-done{font-size:.7rem;color:#66d19e}
+/* Draggable cut lines over the preview. The shaded band is exactly what the
+   crop removes, so the operator sees the result before applying it. */
+.crop-shade{position:absolute;left:0;right:0;top:0;background:rgba(239,68,68,.28);pointer-events:none;z-index:3}
+.crop-shade.bottom{top:auto;bottom:0}
+.crop-line{position:absolute;left:0;right:0;height:0;border-top:2px dashed #f59e0b;cursor:ns-resize;z-index:4;touch-action:none}
+.crop-line.active{border-top-style:solid;border-top-color:#ef4444}
+.crop-line span{position:absolute;right:4px;top:-9px;padding:1px 6px;border-radius:5px;background:#f59e0b;color:#1a1205;font-size:.6rem;font-weight:800;white-space:nowrap}
+.crop-line.active span{background:#ef4444;color:#fff}
+.crop-line::before{content:"";position:absolute;left:0;right:0;top:-11px;height:22px}
 /* Continuous webtoon reader: pages stack full-width with no gap so the strip
    reads like the published source. max-width keeps very wide pages from
    stretching past comfortable line length on large monitors. */
