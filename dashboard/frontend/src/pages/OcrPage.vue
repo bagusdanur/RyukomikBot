@@ -152,6 +152,11 @@ function toggleCropped(){showCropped.value=!showCropped.value;previewKey.value=D
 const cropTopPercent=computed(()=>currentImage.value?cropTop.value/currentImage.value.height*100:0);
 const cropBottomPercent=computed(()=>currentImage.value?cropBottom.value/currentImage.value.height*100:0);
 const cropRemaining=computed(()=>currentImage.value?Math.max(1,currentImage.value.height-cropTop.value-cropBottom.value):0);
+// Drag a cut line. The delta from the grab point is applied instead of jumping
+// the line to the cursor, so grabbing anywhere near the line continues from the
+// current value — a click on the handle used to snap the value to the click
+// position (measured: a 200px crop jumped to 217 on grab, 880 on a 50px move),
+// which read as "the line does not work".
 function dragCrop(event:PointerEvent, edge:"top"|"bottom"){
   if(!currentImage.value)return;
   const image=(event.currentTarget as HTMLElement).closest(".preview")?.querySelector("img");
@@ -161,13 +166,13 @@ function dragCrop(event:PointerEvent, edge:"top"|"bottom"){
   if(!rect.height)return;
   const height=currentImage.value.height;
   const scale=height/rect.height;
+  const startY=event.clientY;
+  const startValue=edge==="top"?cropTop.value:cropBottom.value;
   const apply=(clientY:number)=>{
-    const y=Math.max(0,Math.min(rect.height,clientY-rect.top));
-    const px=Math.round(y*scale);
-    if(edge==="top")cropTop.value=Math.max(0,Math.min(px,height-1-cropBottom.value));
-    else cropBottom.value=Math.max(0,Math.min(height-px,height-1-cropTop.value));
+    const delta=Math.round((clientY-startY)*scale);
+    if(edge==="top")cropTop.value=Math.max(0,Math.min(startValue+delta,height-1-cropBottom.value));
+    else cropBottom.value=Math.max(0,Math.min(startValue-delta,height-1-cropTop.value));
   };
-  apply(event.clientY);
   const move=(moveEvent:PointerEvent)=>apply(moveEvent.clientY);
   const stop=()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",stop);window.removeEventListener("pointercancel",stop)};
   window.addEventListener("pointermove",move);
@@ -315,16 +320,17 @@ onMounted(async()=>{await refresh();timer=window.setInterval(async()=>{await ref
 .crop-shade.bottom{top:auto;bottom:0}
 .crop-line{position:absolute;left:0;right:0;height:0;border-top:2px dashed #f59e0b;cursor:ns-resize;z-index:4;touch-action:none}
 .crop-line.active{border-top-style:solid;border-top-color:#ef4444}
-.crop-line span{position:absolute;right:4px;top:-9px;padding:1px 6px;border-radius:5px;background:#f59e0b;color:#1a1205;font-size:.6rem;font-weight:800;white-space:nowrap}
+.crop-line span{position:absolute;right:4px;top:-9px;padding:1px 6px;border-radius:5px;background:#f59e0b;color:#1a1205;font-size:.6rem;font-weight:800;white-space:nowrap;pointer-events:none}
 /* Labels would be clipped at the page edges, so they move inside the page. */
 .crop-line.top span{top:2px}
 .crop-line.bottom span{top:auto;bottom:2px}
 .crop-line.active span{background:#ef4444;color:#fff}
-/* `.preview` has overflow:hidden, so a grab strip placed outside the page would
-   be cut off and the line could not be dragged. Each strip therefore sits on the
-   inside of its line, where it is always visible. */
-.crop-line.top::before{content:"";position:absolute;left:0;right:0;top:0;height:16px}
-.crop-line.bottom::before{content:"";position:absolute;left:0;right:0;bottom:0;height:16px}
+/* `.preview` has overflow:hidden, so a grab strip reaching outside the page is
+   clipped and the line becomes hard (bottom: impossible) to grab. Each strip
+   therefore extends 20px to the INSIDE of its line, giving a symmetric target
+   that stays within the page at any position. */
+.crop-line.top::before{content:"";position:absolute;left:0;right:0;top:0;height:20px}
+.crop-line.bottom::before{content:"";position:absolute;left:0;right:0;bottom:0;height:20px}
 /* The cropped view shows the delivered result; region boxes are hidden because
    they are positioned against the full page. */
 .preview.cropped{outline:2px solid rgba(239,68,68,.35)}
