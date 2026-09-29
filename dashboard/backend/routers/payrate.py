@@ -10,7 +10,7 @@ from dashboard.backend.deps import (
     admin_user, audit, dashboard_db, DEV_BYPASS, current_user,
     DEFAULT_RATE_RANGES, PayrateUpdate,
 )
-from dashboard.backend.helpers import discord_api
+from dashboard.backend.helpers import discord_api, _live_discord_allowed
 from dashboard.backend.helpers import role_rate_range
 
 router = APIRouter(prefix="/api", tags=["payrate"])
@@ -58,7 +58,7 @@ def payrate_embed_payload(ranges: dict[str, tuple[int, int]]) -> dict:
 
 
 async def update_discord_payrate_panel() -> bool:
-    if DEV_BYPASS:
+    if not _live_discord_allowed():
         return True
     ranges = {role: await role_rate_range(role) for role in DEFAULT_RATE_RANGES}
     messages = await discord_api(
@@ -81,7 +81,10 @@ async def update_discord_payrate_panel() -> bool:
 
 
 async def broadcast_payrate_to_staff(role: str, min_rate: int, max_rate: int) -> int:
-    if DEV_BYPASS:
+    # Cek saat panggilan: DEV_BYPASS beku saat impor, dan modul ini dimuat
+    # sebelum test suite menyetel DASHBOARD_DEV_BYPASS -- tanpa ini tes
+    # benar-benar mengirim notifikasi payrate ke tiket staff di Discord.
+    if not _live_discord_allowed():
         return 0
     members = await discord_api("GET", f"/guilds/{GUILD_ID}/members?limit=1000") or []
     staff_ids = {

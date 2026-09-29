@@ -8,6 +8,14 @@ import unittest
 from unittest.mock import AsyncMock, patch
 from cryptography.fernet import Fernet
 
+# WAJIB di level modul, sebelum impor apa pun yang menyentuh
+# dashboard.backend.deps: DEV_BYPASS dibaca sekali saat modul dimuat, jadi
+# menyetelnya di setUp sudah terlambat ketika test suite lain (mis.
+# test_projects_tracker) lebih dulu menarik deps. Dulu akibatnya tes payrate
+# benar-benar mengirim notifikasi ke staff di Discord.
+os.environ["DASHBOARD_DEV_BYPASS"] = "true"
+os.environ["DASHBOARD_NO_DISCORD"] = "true"
+
 
 class DashboardApiTests(unittest.TestCase):
     def setUp(self):

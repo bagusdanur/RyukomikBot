@@ -1,6 +1,7 @@
 """Shared Discord/staff helper functions used across multiple routers."""
 
 import hashlib
+import os
 import json
 import re
 import time
@@ -18,7 +19,38 @@ from dashboard.backend.deps import (
 )
 
 
+def _live_discord_allowed() -> bool:
+    """Apakah panggilan Discord asli boleh dilakukan?
+
+    Diperiksa saat panggilan, bukan saat impor. `deps.DEV_BYPASS` dibaca
+    sekali waktu modul dimuat, dan modul itu dimuat jauh sebelum test suite
+    sempat menyetel `DASHBOARD_DEV_BYPASS` -- jadi nilainya beku `False`
+    selama tes berjalan. Akibatnya tes yang menyentuh `broadcast_payrate_to_staff`
+    atau `update_discord_payrate_panel` benar-benar mengirim pesan ke staff
+    di Discord saat suite dijalankan.
+
+    Pembacaan env secara langsung membuat niat "ini mode pengembangan"
+    berlaku walau modul sudah terlanjur dimuat, dan variabel eksplisit
+    HERMES_/DASHBOARD_* memberi jalan untuk mematikan jaringan di CI.
+    """
+    if os.getenv("DASHBOARD_DEV_BYPASS", "").lower() == "true":
+        return False
+    if os.getenv("DASHBOARD_NO_DISCORD", "").lower() == "true":
+        return False
+    if os.getenv("DASHBOARD_TEST_MODE", "").lower() == "true":
+        return False
+    try:
+        from dashboard.backend.deps import DEV_BYPASS
+        if DEV_BYPASS:
+            return False
+    except Exception:
+        pass
+    return True
+
+
 async def discord_api(method: str, path: str, payload=None):
+    if not _live_discord_allowed():
+        return None
     if not TOKEN:
         return None
     try:
