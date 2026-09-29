@@ -64,6 +64,7 @@ from server_management import (
     apply_server_housekeeping,
     cleanup_website_info_history,
     ensure_raw_watch_channel,
+    ensure_project_scout_channel,
     ensure_giveaway_channel,
     send_goodbye,
     send_welcome,
@@ -147,6 +148,8 @@ class RyukomikBot(commands.Bot):
             project_event_sync_loop.start()
         if not raw_chapter_watch_loop.is_running():
             raw_chapter_watch_loop.start()
+        if not thunder_latest_loop.is_running():
+            thunder_latest_loop.start()
         if not giveaway_expiration_loop.is_running():
             giveaway_expiration_loop.start()
         if not daily_backup_loop.is_running():
@@ -531,6 +534,54 @@ async def raw_chapter_watch_loop():
 
 @raw_chapter_watch_loop.before_loop
 async def before_raw_chapter_watch_loop():
+    await bot.wait_until_ready()
+
+
+@tasks.loop(minutes=30)
+async def thunder_latest_loop():
+    """Report titles newly added on Thunderscans to #・project-scout."""
+    try:
+        guild = bot.get_guild(GUILD_ID)
+        channel = await ensure_project_scout_channel(guild) if guild else None
+        if channel is None:
+            return
+        events = await scout_service.poll_thunder_latest()
+        for event in events:
+            embed = discord.Embed(
+                title="Project Baru di Thunderscans",
+                description=f"**{event['title']}** baru ditambahkan di Thunderscans.",
+                url=event.get("detail_link") or None,
+                color=discord.Color.gold(),
+            )
+            if event.get("status"):
+                embed.add_field(name="Status", value=event["status"], inline=True)
+            published = ""
+            raw_published = str(event.get("published_at") or "")
+            if raw_published:
+                try:
+                    published = datetime.fromisoformat(
+                        raw_published.replace("Z", "+00:00")
+                    ).astimezone(ZoneInfo("Asia/Jakarta")).strftime("%d %b %Y %H:%M")
+                except ValueError:
+                    published = ""
+            if published:
+                embed.add_field(name="Ditambahkan", value=f"{published} WIB", inline=True)
+            embed.set_footer(text="Project Scout • daftar komik baru (sort Added) • Thunderscans EN")
+            view = discord.ui.View(timeout=None)
+            view.add_item(discord.ui.Button(
+                label="Buka di Thunderscans",
+                style=discord.ButtonStyle.link,
+                url=event.get("detail_link") or "https://en-thunderscans.com/comics/",
+            ))
+            await channel.send(embed=embed, view=view)
+        if events:
+            print(f"[THUNDER LATEST] {len(events)} project baru dilaporkan", flush=True)
+    except Exception as error:
+        print(f"[THUNDER LATEST] gagal: {error}", flush=True)
+
+
+@thunder_latest_loop.before_loop
+async def before_thunder_latest_loop():
     await bot.wait_until_ready()
 
 

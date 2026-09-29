@@ -74,3 +74,15 @@ async def scout_decision(scout_id: int, payload: ScoutDecisionRequest, user=Depe
         "status": result["scout_status"], "notes": payload.notes.strip() or None,
     })
     return result
+
+
+@router.get("/thunder/latest")
+async def scout_thunder_latest(
+    page: int = Query(1, ge=1, le=20), user=Depends(admin_user),
+):
+    """Komik baru ditambahkan di Thunderscans (sort Added).
+
+    Setiap baris membawa `seen` — sudah pernah dikirim ke #・project-scout
+    atau belum. Payload kosong berarti API backend sedang tidak tersedia.
+    """
+    return await scout_service.list_thunder_latest(page)

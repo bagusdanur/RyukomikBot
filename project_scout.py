@@ -481,6 +481,16 @@ async def setup_scout_tables() -> None:
                 UNIQUE(scout_title_id, source, source_id)
             );
             CREATE INDEX IF NOT EXISTS idx_raw_watch_title ON raw_chapter_watches(scout_title_id, source);
+            CREATE TABLE IF NOT EXISTS thunder_latest_seen (
+                source TEXT NOT NULL DEFAULT 'thunder',
+                slug TEXT NOT NULL,
+                title TEXT NOT NULL,
+                published_at TEXT,
+                status TEXT,
+                first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                notified_at DATETIME,
+                PRIMARY KEY (source, slug)
+            );
         """)
         columns = {str(row['name']) for row in await (await db.execute("PRAGMA table_info(raw_chapter_watches)")).fetchall()}
         if 'last_notified_project_chapter' not in columns:
@@ -904,3 +914,147 @@ async def record_raw_update_message(watch_id: int, message_id: int) -> None:
         await db.commit()
     finally:
         await db.close()
+
+
+# --- Thunderscans: komik baru ditambahkan (sort "Added") -------------------
+#
+# The listing carries no release date, so the API folds in the RSS pubDate as
+# `published_at`; a missing value simply means the feed did not cover that slug.
+
+THUNDER_LATEST_URL = os.getenv("THUNDER_LATEST_URL", f"{API_BASE}/thunder/latest")
+THUNDER_LATEST_MAX = max(1, int(os.getenv("THUNDER_LATEST_MAX", "5")))
+
+
+async def fetch_thunder_latest(page: int = 1) -> dict[str, Any]:
+    """Daftar project baru di Thunderscans (sort Added) dari API backend."""
+    timeout = aiohttp.ClientTimeout(total=30)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        return await _request_json(session, f"{THUNDER_LATEST_URL}?page={page}")
+
+
+def _thunder_rows(payload: Any) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return []
+    data = payload.get("data")
+    if not isinstance(data, list):
+        return []
+    rows: list[dict[str, Any]] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        slug = str(item.get("slug") or "").strip()
+        title = str(item.get("title") or "").strip()
+        if not slug or not title:
+            continue
+        rows.append({
+            "slug": slug,
+            "title": title,
+            "detail_link": str(item.get("detail_link") or "").strip(),
+            "published_at": str(item.get("published_at") or "").strip(),
+            "status": str(item.get("info") or "").strip(),
+        })
+    return rows
+
+
+async def _thunder_baseline_rows(max_pages: int = 5) -> list[dict[str, Any]]:
+    """Every listed title, not just page one.
+
+    Baseline only ever runs once, but limiting it to page one would leave the
+    titles sitting on page two unmarked: as soon as a new title pushes one of
+    them up, it would be reported as brand new.
+    """
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for page in range(1, max_pages + 1):
+        payload = await fetch_thunder_latest(page)
+        page_rows = _thunder_rows(payload)
+        fresh = [row for row in page_rows if row["slug"] not in seen]
+        rows.extend(fresh)
+        seen.update(row["slug"] for row in fresh)
+        meta = payload.get("meta") if isinstance(payload, dict) else None
+        if not isinstance(meta, dict) or not meta.get("hasNextPage"):
+            break
+    return rows
+
+
+async def poll_thunder_latest(limit: int = THUNDER_LATEST_MAX) -> list[dict[str, Any]]:
+    """Return newly added Thunderscans titles that have not been reported yet.
+
+    The very first run stores every listed title as a baseline and reports
+    nothing, so the older titles already on the site never flood the channel.
+    Later runs report at most `limit` titles per pass and only after a title
+    has been reported is it marked seen, so nothing is dropped while a burst
+    drains over successive passes.
+    """
+    rows = _thunder_rows(await fetch_thunder_latest(1))
+    if not rows:
+        return []
+
+    db = await db_module.get_db()
+    try:
+        known = {
+            str(row["slug"])
+            for row in await (await db.execute(
+                "SELECT slug FROM thunder_latest_seen WHERE source='thunder'"
+            )).fetchall()
+        }
+        if not known:
+            baseline = await _thunder_baseline_rows()
+            if not baseline:
+                baseline = rows
+            await db.executemany(
+                """INSERT INTO thunder_latest_seen (source, slug, title, published_at, status)
+                   VALUES ('thunder', ?, ?, ?, ?)""",
+                [(row["slug"], row["title"], row["published_at"], row["status"]) for row in baseline],
+            )
+            await db.commit()
+            return []
+
+        events: list[dict[str, Any]] = []
+        for row in rows:
+            if len(events) >= limit:
+                break
+            if row["slug"] in known:
+                continue
+            await db.execute(
+                """INSERT INTO thunder_latest_seen
+                       (source, slug, title, published_at, status, notified_at)
+                   VALUES ('thunder', ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+                (row["slug"], row["title"], row["published_at"], row["status"]),
+            )
+            events.append(row)
+        await db.commit()
+        return events
+    except Exception:
+        await db.rollback()
+        raise
+    finally:
+        await db.close()
+
+
+async def list_thunder_latest(page: int = 1) -> dict[str, Any]:
+    """Daftar terbaru digabung dengan tanda sudah dilaporkan."""
+    payload = await fetch_thunder_latest(page)
+    rows = _thunder_rows(payload)
+    db = await db_module.get_db()
+    try:
+        known = {
+            str(row["slug"])
+            for row in await (await db.execute(
+                "SELECT slug FROM thunder_latest_seen WHERE source='thunder'"
+            )).fetchall()
+        }
+    finally:
+        await db.close()
+    for row in rows:
+        row["seen"] = row["slug"] in known
+    meta = payload.get("meta") if isinstance(payload, dict) else None
+    return {
+        "success": True,
+        "source": "thunder",
+        "order": "latest",
+        "page": page,
+        "total": len(rows),
+        "meta": meta,
+        "data": rows,
+    }
