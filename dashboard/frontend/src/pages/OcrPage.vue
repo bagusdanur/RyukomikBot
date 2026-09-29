@@ -5,7 +5,7 @@ import { getCsrfToken } from "../api";
 
 interface Job { id:string; status:string; stage:string; progress:number; review_count:number; review_pages?:Array<{page:number;count:number}>; error?:string|null; created_at:number; options?:{original_filename?:string;input_files?:string[];comic_title?:string;chapter?:string;title_slug?:string;comic_id?:string;chapter_id?:string} }
 interface Status { memory:{available:number}; worker:{status:string}; queue:Record<string,number> }
-interface ComicImage { id:string; filename:string; width:number; height:number; status:string; region_count:number }
+interface ComicImage { id:string; filename:string; width:number; height:number; status:string; region_count:number; crop_top?:number; crop_bottom?:number }
 interface Box { x:number; y:number; width:number; height:number }
 interface Region { id:string; source_text:string; translation:string; bbox:Box; status:string; metadata:Record<string,unknown> }
 interface ComicFolder { id:string; title:string; slug:string; chapter_count:number; job_count:number }
@@ -132,8 +132,14 @@ async function deleteComic(comic:ComicFolder){
 }
 function download(job:Job){window.location.href=`/api/tools/translator/jobs/${job.id}/download?v=${Date.now()}`}
 function downloadPage(image:ComicImage){window.location.href=`/api/tools/translator/images/${image.id}/download?v=${Date.now()}`}
+// Crop the leftover source banner off a page. The master PNG is never modified:
+// the trim is stored per page and applied when the chapter ZIP and the per-page
+// download are built, so it can be adjusted or cleared at any time.
+const cropTop=ref(0), cropBottom=ref(0), cropSaving=ref(false), cropMessage=ref("");
+function loadCrop(image:ComicImage|null){cropTop.value=Number(image?.crop_top||0);cropBottom.value=Number(image?.crop_bottom||0);cropMessage.value=""}
+async function saveCrop(applyToAll:boolean){if(!currentImage.value||cropSaving.value)return;cropSaving.value=true;cropMessage.value="";error.value="";try{const result=await api(`/api/tools/translator/images/${currentImage.value.id}/crop`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({cropTop:cropTop.value,cropBottom:cropBottom.value,applyToAll})}) as {cropTop:number;cropBottom:number;appliedTo:number};currentImage.value.crop_top=result.cropTop;currentImage.value.crop_bottom=result.cropBottom;if(applyToAll)for(const item of images.value){item.crop_top=result.cropTop;item.crop_bottom=result.cropBottom}cropMessage.value=applyToAll?`Potongan diterapkan ke ${result.appliedTo} halaman.`:"Potongan diterapkan.";previewKey.value=Date.now();await refresh()}catch(e){error.value=e instanceof Error?e.message:"Gagal menyimpan potongan."}finally{cropSaving.value=false}}
 async function openReview(job:Job){try{reviewJob.value=job;images.value=await api(`/api/tools/translator/jobs/${job.id}/images`);const firstReview=Math.max(0,(job.review_pages?.[0]?.page||1)-1);if(images.value[firstReview])await chooseImage(images.value[firstReview]);else if(images.value[0])await chooseImage(images.value[0]);else throw new Error("Belum ada gambar hasil untuk direview.")}catch(e){error.value=e instanceof Error?e.message:"Gagal membuka review."}}
-async function chooseImage(image:ComicImage){currentImage.value=image;regions.value=await api(`/api/tools/translator/images/${image.id}/regions`);selected.value=null;previewKey.value=Date.now();const target=regions.value.find(r=>r.status==="NEEDS_REVIEW")||regions.value[0];if(target)pickRegion(target)}
+async function chooseImage(image:ComicImage){currentImage.value=image;regions.value=await api(`/api/tools/translator/images/${image.id}/regions`);selected.value=null;previewKey.value=Date.now();loadCrop(image);const target=regions.value.find(r=>r.status==="NEEDS_REVIEW")||regions.value[0];if(target)pickRegion(target)}
 function pickRegion(region:Region){selected.value=region;const meta=region.metadata||{};edit.value={translation:region.translation||"",x:region.bbox.x,y:region.bbox.y,width:region.bbox.width,height:region.bbox.height,fontSize:Number(meta.editor_font_size||meta.font_size||20),alignment:String(meta.editor_alignment||"center"),lineSpacing:Number(meta.editor_line_spacing||0.12)}}
 async function saveRender(){if(!selected.value||!currentImage.value||rendering.value)return;rendering.value=true;error.value="";try{await api(`/api/tools/translator/regions/${selected.value.id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(edit.value)});await api(`/api/tools/translator/images/${currentImage.value.id}/render`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({regionId:selected.value.id})});await chooseImage(currentImage.value);await refresh()}catch(e){error.value=e instanceof Error?e.message:"Re-render gagal."}finally{rendering.value=false}}
 const stage=(j:Job)=>({QUEUED:"Menunggu antrean",WAITING_RESOURCE:"Menunggu RAM",STARTING:"Menyiapkan worker",OCR:"Mendeteksi teks",TRANSLATION:"Menerjemahkan",REMOVAL:"Membersihkan teks",TYPESETTING:"Memasang teks",DONE:j.status==="REVIEW"?"Perlu review":"Selesai"}[j.stage]||j.stage);
@@ -168,12 +174,26 @@ onMounted(async()=>{await refresh();timer=window.setInterval(async()=>{await ref
     <div v-if="webtoon" class="webtoon-view">
       <article v-for="page in webtoonPages" :id="`wt-${page.id}`" :key="page.id" class="webtoon-page">
         <header class="webtoon-page-head"><b>{{page.filename}}</b><small>{{page.width}}×{{page.height}} · {{page.region_count}} region</small></header>
-        <img :src="`/api/tools/translator/images/${page.id}/preview?w=1000&v=${previewKey}`" :alt="page.filename" loading="lazy">
+        <img :src="`/api/tools/translator/images/${page.id}/preview?w=1000&crop=1&v=${previewKey}`" :alt="page.filename" loading="lazy">
       </article>
       <div v-if="!webtoonPages.length" class="empty">Belum ada gambar hasil untuk direview.</div>
     </div>
 
     <div v-else class="editor-grid"><div class="preview"><img :src="`/api/tools/translator/images/${currentImage.id}/preview?v=${previewKey}`" :alt="currentImage.filename"><button v-for="region in regions" :key="region.id" class="region-box" :class="{selected:selected?.id===region.id,warning:region.status==='NEEDS_REVIEW'}" :style="boxStyle(region)" :title="region.source_text" @click="pickRegion(region)"></button></div>
+      <div class="crop-panel">
+        <header><b><i class="pi pi-crop"></i> Potong halaman</b><small>Hilangkan sisa logo/banner raw di atas atau bawah. Hasil ikut ke ZIP chapter &amp; unduhan.</small></header>
+        <div class="crop-fields">
+          <label>Potong atas (px)<input v-model.number="cropTop" type="number" min="0" :max="currentImage.height"></label>
+          <label>Potong bawah (px)<input v-model.number="cropBottom" type="number" min="0" :max="currentImage.height"></label>
+        </div>
+        <div class="crop-actions">
+          <Button label="Terapkan" icon="pi pi-check" size="small" :loading="cropSaving" :disabled="cropSaving" @click="saveCrop(false)" />
+          <Button label="Semua halaman" icon="pi pi-copy" size="small" outlined :loading="cropSaving" :disabled="cropSaving" title="Banner biasanya muncul di semua halaman; terapkan potongan yang sama ke seluruh halaman chapter ini" @click="saveCrop(true)" />
+          <Button label="Reset" icon="pi pi-undo" size="small" text :disabled="cropSaving||(!cropTop&&!cropBottom)" @click="cropTop=0;cropBottom=0;saveCrop(false)" />
+        </div>
+        <small v-if="cropTop||cropBottom" class="crop-active">Aktif: tinggi {{currentImage.height}} → {{Math.max(1,currentImage.height-cropTop-cropBottom)}}px</small>
+        <small v-if="cropMessage" class="crop-done">{{cropMessage}}</small>
+      </div>
       <form v-if="selected" class="controls" @submit.prevent="saveRender"><label>Original<textarea :value="selected.source_text" readonly></textarea></label><label>Translation<textarea v-model="edit.translation" maxlength="2000"></textarea></label><div class="control-grid"><label>X<input v-model.number="edit.x" type="number" min="0"></label><label>Y<input v-model.number="edit.y" type="number" min="0"></label><label>Width<input v-model.number="edit.width" type="number" min="10"></label><label>Height<input v-model.number="edit.height" type="number" min="10"></label><label>Font size<input v-model.number="edit.fontSize" type="number" min="8" max="96"></label><label>Line spacing<input v-model.number="edit.lineSpacing" type="number" min="0" max="1" step="0.02"></label></div><label>Alignment<select v-model="edit.alignment"><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option></select></label><small v-if="selected.metadata.reason==='REMOVAL_NOT_SAFE'" class="bad">Artwork tidak aman dibersihkan. Region ini tidak dapat di-render otomatis.</small><Button type="submit" label="Simpan dan re-render bubble" icon="pi pi-refresh" :loading="rendering" :disabled="rendering||selected.metadata.reason==='REMOVAL_NOT_SAFE'" /></form>
     </div>
   </section>
@@ -191,7 +211,7 @@ onMounted(async()=>{await refresh();timer=window.setInterval(async()=>{await ref
     </header>
     <div class="wt-full-scroll" id="wt-full-scroll" ref="wtScrollEl" @scroll="onWtScroll">
       <article v-for="page in webtoonPages" :id="`wt-scroll-${page.id}`" :key="page.id" class="wt-full-page">
-        <img :src="`/api/tools/translator/images/${page.id}/preview?w=1400&v=${previewKey}`" :alt="page.filename" loading="lazy">
+        <img :src="`/api/tools/translator/images/${page.id}/preview?w=1400&crop=1&v=${previewKey}`" :alt="page.filename" loading="lazy">
       </article>
       <div v-if="!webtoonPages.length" class="empty">Belum ada gambar hasil untuk direview.</div>
     </div>
@@ -216,6 +236,12 @@ onMounted(async()=>{await refresh();timer=window.setInterval(async()=>{await ref
 .review-count{display:flex;flex-direction:column;align-items:flex-end;line-height:1.2}.review-count b{font-size:.75rem}.review-count small{font-size:.64rem;color:#f6b94a;white-space:nowrap}@media(max-width:720px){.review-count{align-items:center;justify-content:center}}
 .folder-tools{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;padding:10px 12px;border-radius:10px;background:rgba(255,255,255,.025)}.folder-tools>b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}@media(max-width:720px){.folder-tools{align-items:stretch;flex-direction:column}.folder-tools :deep(.p-button){width:100%}}
 .review-tools{display:flex;align-items:center;gap:8px}.mode-switch{display:flex;padding:3px;border:1px solid #263244;border-radius:9px;background:#0d131d}.mode-switch button{display:flex;align-items:center;gap:5px;padding:6px 10px;border:0;border-radius:6px;background:transparent;color:#8793a5;font-size:.72rem;font-weight:600;cursor:pointer}.mode-switch button:hover{color:#fff}.mode-switch button.active{background:#1c2941;color:#7db7ff}.mode-switch i{font-size:.72rem}
+.crop-panel{display:flex;flex-direction:column;gap:9px;padding:13px;border:1px solid #263244;border-radius:11px;background:#0d131d}
+.crop-panel header{display:flex;flex-direction:column;gap:2px}.crop-panel header b{display:flex;align-items:center;gap:7px;font-size:.8rem;color:#c7d0dd}.crop-panel header b i{color:#7db7ff}.crop-panel header small{font-size:.68rem;color:#6d798b;line-height:1.45}
+.crop-fields{display:grid;grid-template-columns:1fr 1fr;gap:9px}.crop-fields label{display:flex;flex-direction:column;gap:4px;font-size:.7rem;color:#8793a5}
+.crop-fields input{padding:7px 9px;border:1px solid #263244;border-radius:7px;background:#080c13;color:#e6edf6;font-size:.78rem}
+.crop-actions{display:flex;flex-wrap:wrap;gap:7px}
+.crop-active{font-size:.7rem;color:#f0b37e}.crop-done{font-size:.7rem;color:#66d19e}
 /* Continuous webtoon reader: pages stack full-width with no gap so the strip
    reads like the published source. max-width keeps very wide pages from
    stretching past comfortable line length on large monitors. */
