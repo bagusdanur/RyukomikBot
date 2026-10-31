@@ -1,3 +1,7 @@
+const { readFileSync } = require('node:fs');
+const translatorToken = readFileSync('/home/ryukomik/ryukomik-auto-comic-translator/.api-token', 'utf8').trim();
+const rawApiKey = readFileSync('/home/ryukomik/RyukomikBot/dashboard/.raw-api-key', 'utf8').trim();
+
 module.exports = {
   apps: [{
     name: 'ryukomik-dashboard-api',
@@ -7,5 +11,10 @@ module.exports = {
     interpreter: 'none',
     autorestart: true,
     max_memory_restart: '300M',
+    env: {
+      TRANSLATOR_API_URL: 'http://127.0.0.1:3210',
+      TRANSLATOR_API_TOKEN: translatorToken,
+      RAW_API_KEY: rawApiKey,
+    },
   }],
 }

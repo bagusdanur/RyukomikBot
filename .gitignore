@@ -32,3 +32,5 @@ dashboard/frontend/*.tsbuildinfo
 
 # Backups
 data/backups/
+
+dashboard/.raw-api-key

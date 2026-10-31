@@ -86,6 +86,7 @@ from dashboard.backend.deps import (
 
 # Routers
 from dashboard.backend.routers.tools import router as tools_router
+from dashboard.backend.routers.raw_api import router as raw_api_router
 from dashboard.backend.routers.assignments import (
     router as assignments_router,
     AssignmentCreate, AssignmentUpdate, TlTsPairCreate,
@@ -356,6 +357,7 @@ app.add_middleware(
 
 # Include routers (auth stays in app.py — uses local helpers)
 app.include_router(tools_router)
+app.include_router(raw_api_router)
 app.include_router(assignments_router)
 app.include_router(invoices_router)
 app.include_router(payouts_router)
