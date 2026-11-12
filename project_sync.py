@@ -16,7 +16,6 @@ log = logging.getLogger(__name__)
 # Tipe event yang layak menandai @everyone. Update chapter sengaja hanya
 # menyebut role, supaya channel tidak berisik tiap ada chapter baru.
 EVERYONE_EVENT_TYPES = {"project_published", "scanlator_series_published"}
-SCANLATOR_EVENT_TYPES = {"scanlator_chapter_published", "scanlator_series_published"}
 
 
 async def setup_project_sync() -> None:
@@ -84,17 +83,20 @@ def build_project_embed(event: dict[str, Any]) -> tuple[int, discord.Embed, disc
         link = _chapter_url(payload)
     elif event_type == "scanlator_series_published":
         team = _team_label(payload)
-        channel_id, heading, color = SCANLATOR_UPDATE_CHANNEL_ID or UPDATE_PROJECT_CHANNEL_ID, "Seri Baru · Scanlator", discord.Color.blurple()
-        description = f"**{title}** — seri baru dari **{team}**."
+        handle = str(payload.get("scanlator_handle") or "")
+        channel_id, heading, color = SCANLATOR_UPDATE_CHANNEL_ID or UPDATE_PROJECT_CHANNEL_ID, "Project Baru", discord.Color.blurple()
+        description = f"**{title}** resmi masuk ke project Ryukomik."
+        description += f"\noleh **{team}**" + (f" (@{handle})" if handle else "")
         link = _project_url(payload)
     elif event_type == "scanlator_chapter_published":
         team = _team_label(payload)
-        channel_id, heading, color = SCANLATOR_UPDATE_CHANNEL_ID or UPDATE_PROJECT_CHANNEL_ID, "Chapter Baru · Scanlator", discord.Color.green()
+        handle = str(payload.get("scanlator_handle") or "")
+        channel_id, heading, color = SCANLATOR_UPDATE_CHANNEL_ID or UPDATE_PROJECT_CHANNEL_ID, "Project Update", discord.Color.green()
         chapter = payload.get("chapter_number")
-        chapter_label = f"Chapter {chapter}" if chapter is not None else "Chapter terbaru"
-        description = f"**{title}** — **{chapter_label}** oleh **{team}**."
+        description = f"**{title}** — **{'Chapter ' + str(chapter) if chapter is not None else 'Chapter terbaru'}** telah dirilis."
         if payload.get("chapter_title"):
             description += f"\n{str(payload['chapter_title']).strip()}"
+        description += f"\noleh **{team}**" + (f" (@{handle})" if handle else "")
         link = _chapter_url(payload)
     elif event_type == "project_status_changed":
         channel_id = PROJECT_DROP_CHANNEL_ID
@@ -108,9 +110,6 @@ def build_project_embed(event: dict[str, Any]) -> tuple[int, discord.Embed, disc
     embed = discord.Embed(title=heading, description=description, color=color)
     embed.add_field(name="Status", value=status, inline=True)
     embed.add_field(name="Tipe", value=str(payload.get("type") or "-").upper(), inline=True)
-    if event_type in SCANLATOR_EVENT_TYPES:
-        handle = str(payload.get("scanlator_handle") or "")
-        embed.add_field(name="Tim", value=f"{_team_label(payload)}" + (f" · @{handle}" if handle else ""), inline=True)
     genres = payload.get("genres") or []
     if genres:
         embed.add_field(name="Genre", value=", ".join(map(str, genres))[:1024], inline=False)
