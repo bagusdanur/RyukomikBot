@@ -42,7 +42,7 @@ from views.payment_views import (
     ConfirmPayPayoutDynamic, IncomeMenuView, PayPayoutDynamic, PayoutAdminView, RejectPayoutDynamic,
     RetryInvoiceDynamic,
 )
-from views.role_views import ZodiacRoleView
+from views.role_views import NotificationRoleView, ZodiacRoleView
 from views.staff_question_views import StaffQuestionAnswerDynamic
 from views.support_views import DeadlineExtensionDecisionDynamic
 from views.pair_views import (
@@ -62,12 +62,16 @@ from views.giveaway_views import GiveawayJoinDynamic, GiveawayView
 import database as db
 from server_management import (
     apply_server_housekeeping,
+    build_domain_message,
     cleanup_website_info_history,
     ensure_raw_watch_channel,
     ensure_project_scout_channel,
+    ensure_scanlator_update_channel,
     ensure_giveaway_channel,
+    is_web_keyword,
     send_goodbye,
     send_welcome,
+    web_reply_allowed,
 )
 
 
@@ -99,6 +103,7 @@ class RyukomikBot(commands.Bot):
         self.payrate_panel_synced = False
         self.pair_panels_reconciled = False
         self.website_cleanup_started = False
+        self.scanlator_channel_ready = False
     
     async def setup_hook(self):
         """Called when the bot is starting up."""
@@ -118,6 +123,7 @@ class RyukomikBot(commands.Bot):
         self.add_view(StaffPanelView())
         self.add_view(IncomeMenuView())
         self.add_view(ZodiacRoleView())
+        self.add_view(NotificationRoleView())
         self.add_view(LegacyTaskView())
         self.add_dynamic_items(SubmitDynamicItem, ApproveDynamicItem, ReviseDynamicItem)
         self.add_dynamic_items(
@@ -205,6 +211,22 @@ class RyukomikBot(commands.Bot):
                 print("[ERROR] Server housekeeping timed out after 45 seconds", flush=True)
             except Exception as exc:
                 print(f"[ERROR] Server housekeeping failed: {exc}", flush=True)
+
+        if not self.scanlator_channel_ready:
+            # Terpisah dari housekeeping: housekeeping sering timeout, dan channel
+            # notifikasi tidak boleh bergantung padanya.
+            try:
+                target_guild = self.get_guild(GUILD_ID)
+                if target_guild is not None:
+                    scanlator_channel = await ensure_scanlator_update_channel(target_guild)
+                    if scanlator_channel:
+                        print(
+                            f"[OK] Scanlator update channel ready: {scanlator_channel.name} ({scanlator_channel.id})",
+                            flush=True,
+                        )
+                    self.scanlator_channel_ready = True
+            except Exception as exc:
+                print(f"[ERROR] Scanlator update channel failed: {exc}", flush=True)
 
         if not self.recruitment_reconciled:
             try:
@@ -1225,6 +1247,13 @@ async def alert_admin(source: str, error: Exception | str, context: str = ""):
 async def on_message(message: discord.Message):
     """Route ordinary messages in the dedicated channel to Yuki."""
     if message.author.bot or not message.guild or message.guild.id != GUILD_ID:
+        return
+    # Keyword auto-reply: typing exactly "web" anywhere posts the domain card.
+    if is_web_keyword(message.content) and web_reply_allowed(message.channel):
+        try:
+            await message.channel.send(build_domain_message())
+        except discord.HTTPException:
+            pass
         return
     if not is_yuki_channel(message.channel):
         await bot.process_commands(message)

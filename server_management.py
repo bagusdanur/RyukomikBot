@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from typing import Iterable
 
 import discord
@@ -12,16 +13,27 @@ from config import (
     NEW_PROJECT_CHANNEL_ID,
     PROJECT_CATEGORY_ID,
     PROJECT_DROP_CHANNEL_ID,
+    REKRUT_CAT_ID,
+    REQUEST_PROJECT_CHANNEL_ID,
     ROLE_ADMIN_ID,
+    ROLE_HELPER_ID,
+    ROLE_HELPER_NAME,
+    ROLE_NOTIFICATION_ID,
+    ROLE_NOTIFICATION_NAME,
     ROLE_STAFF_ID,
     RAW_WATCH_CHANNEL_NAME,
     PROJECT_SCOUT_CHANNEL_NAME,
+    SCANLATOR_UPDATE_CHANNEL_NAME,
     GIVEAWAY_CHANNEL_NAME,
     GIVEAWAY_CHANNEL_ID,
     STAFF_LOG_CHANNEL_ID,
     STAFF_TASKS_CHANNEL_ID,
     UPDATE_PROJECT_CHANNEL_ID,
+    WEB_DOMAIN_ALT,
+    WEB_DOMAIN_PRIMARY,
+    WEB_DOMAIN_READ,
 )
+from views.role_views import NotificationRoleView
 
 
 log = logging.getLogger(__name__)
@@ -34,11 +46,13 @@ RECRUITMENT_NAMES = ("staff-rekrutmen", "rekrutmen", "recruitment")
 WEBSITE_INFO_NAMES = ("info-website", "status-website")
 GIVEAWAY_NAMES = ("giveaway", "giveaways", "bagi-bagi-hadiah", "event")
 MEMBER_MENTION_PATTERN = re.compile(r"<@!?(\d+)>")
+HELPER_PRIVATE_CHANNEL_NAMES = ("staff-mod", "raw-watch", "project-scout", "server-monitor")
+HELPER_TICKET_MARKERS = ("ticket", "tiket")
 
 PROJECT_CHANNELS = (
     (NEW_PROJECT_CHANNEL_ID, "・new-project", "Informasi project baru yang akan dikerjakan atau segera hadir di Ryukomik."),
     (UPDATE_PROJECT_CHANNEL_ID, "・update-project", "Pembaruan progres dan status project Ryukomik."),
-    (None, "・request-project", "Ajukan judul project yang ingin kamu lihat di Ryukomik. Satu judul per pesan."),
+    (REQUEST_PROJECT_CHANNEL_ID, "・request-project", "Ajukan judul project yang ingin kamu lihat di Ryukomik. Satu judul per pesan."),
     (PROJECT_DROP_CHANNEL_ID, "・project-drop", "Informasi project yang dihentikan atau tidak dilanjutkan."),
 )
 
@@ -79,8 +93,7 @@ async def ensure_raw_watch_channel(guild: discord.Guild) -> discord.TextChannel 
             topic="Notifikasi chapter RAW baru untuk project Ryukomik aktif. Admin only.",
             reason="Memisahkan notifikasi RAW Watch dari staff-mod",
         )
-    elif channel.name != RAW_WATCH_CHANNEL_NAME:
-        await channel.edit(name=RAW_WATCH_CHANNEL_NAME, reason="Menyamakan nama channel RAW Watch")
+    # Existing channel: never force a rename, so manual names/emojis survive restarts.
     try:
         await channel.edit(position=admin_channel.position + 1, reason="Menempatkan RAW Watch di samping staff-mod")
     except discord.HTTPException:
@@ -102,13 +115,174 @@ async def ensure_project_scout_channel(guild: discord.Guild) -> discord.TextChan
             topic="Kandidat project Indonesia lama yang RAW-nya masih lanjut. Admin only.",
             reason="Membuat channel khusus Auto Revival Scout",
         )
-    elif channel.name != PROJECT_SCOUT_CHANNEL_NAME:
-        await channel.edit(name=PROJECT_SCOUT_CHANNEL_NAME, reason="Menyamakan nama channel Project Scout")
+    # Existing channel: never force a rename, so manual names/emojis survive restarts.
     try:
         await channel.edit(position=admin_channel.position + 2, reason="Menempatkan Project Scout setelah RAW Watch")
     except discord.HTTPException:
         pass
     return channel
+
+
+async def ensure_scanlator_update_channel(guild: discord.Guild) -> discord.TextChannel | None:
+    """Channel notifikasi chapter/seri baru dari tim Scanlator (di bawah #update-project)."""
+    anchor = _find_text_channel(guild, channel_id=UPDATE_PROJECT_CHANNEL_ID)
+    if not anchor:
+        log.warning("Anchor #update-project tidak ditemukan; channel scanlator dilewati")
+        return None
+    channel = _find_text_channel(guild, names=(SCANLATOR_UPDATE_CHANNEL_NAME,))
+    if channel is None:
+        try:
+            channel = await guild.create_text_channel(
+                SCANLATOR_UPDATE_CHANNEL_NAME,
+                category=anchor.category,
+                overwrites=dict(anchor.overwrites),
+                topic="Chapter & seri baru dari tim Scanlator Ryukomik. Dikelola otomatis.",
+                reason="Memisahkan notifikasi Scanlator dari notifikasi project umum",
+            )
+        except discord.HTTPException as error:
+            log.warning("Gagal membuat channel scanlator: %s", error)
+            return None
+    # Jangan paksa rename kalau channel sudah ada (nama manual user dipertahankan).
+    try:
+        await channel.edit(
+            position=anchor.position + 1,
+            reason="Menempatkan notifikasi Scanlator di bawah update-project",
+        )
+    except discord.HTTPException:
+        pass
+    print(f"[PROJECT] scanlator-update channel id={channel.id}", flush=True)
+    return channel
+
+
+async def ensure_notification_role_panel(guild: discord.Guild) -> bool:
+    """Create the opt-in project notification role and its self-role panel."""
+    channel = _find_text_channel(guild, names=ROLE_NAMES)
+    if channel is None:
+        log.warning("Role channel unavailable in guild=%s", guild.id)
+        return False
+
+    role = guild.get_role(ROLE_NOTIFICATION_ID) if ROLE_NOTIFICATION_ID else None
+    role = role or discord.utils.get(guild.roles, name=ROLE_NOTIFICATION_NAME)
+    if role is None:
+        role = await guild.create_role(
+            name=ROLE_NOTIFICATION_NAME,
+            colour=discord.Color.blurple(),
+            mentionable=False,
+            reason="Role opt-in untuk notifikasi project Ryukomik",
+        )
+
+    embed = discord.Embed(
+        title="Notifikasi Project Ryukomik",
+        description=(
+            "Klik tombol di bawah untuk menerima notifikasi **project baru, update chapter, "
+            "dan perubahan status project**. Klik lagi kapan saja untuk menonaktifkannya."
+        ),
+        color=discord.Color.blurple(),
+    )
+    embed.add_field(
+        name="Notifikasi tanpa gangguan",
+        value="Yuki hanya akan menandai anggota yang memilih role ini, bukan @everyone.",
+        inline=False,
+    )
+    embed.set_footer(text="Ryukomik Official • Pengaturan notifikasi mandiri")
+    await _upsert_bot_embed(
+        channel,
+        title="Notifikasi Project Ryukomik",
+        embed=embed,
+        view=NotificationRoleView(),
+    )
+    return True
+
+
+def _helper_private_category(category: discord.CategoryChannel) -> bool:
+    normalized = _plain_name(category.name)
+    return category.id == REKRUT_CAT_ID or any(marker in normalized for marker in HELPER_TICKET_MARKERS)
+
+
+def _helper_private_channel(channel: discord.abc.GuildChannel) -> bool:
+    normalized = _plain_name(channel.name)
+    return (
+        any(name == normalized or name in normalized for name in HELPER_PRIVATE_CHANNEL_NAMES)
+        or any(marker in normalized for marker in HELPER_TICKET_MARKERS)
+        or getattr(channel, "category_id", None) == REKRUT_CAT_ID
+    )
+
+
+async def ensure_helper_role_permissions(guild: discord.Guild) -> bool:
+    """Allow Helper to manage public channels while hard-denying private tickets."""
+    role = guild.get_role(ROLE_HELPER_ID) if ROLE_HELPER_ID else None
+    role = role or discord.utils.get(guild.roles, name=ROLE_HELPER_NAME)
+    if role is None:
+        safe_permissions = discord.Permissions.none()
+        safe_permissions.update(manage_roles=True, mention_everyone=True)
+        role = await guild.create_role(
+            name=ROLE_HELPER_NAME,
+            permissions=safe_permissions,
+            colour=discord.Color.teal(),
+            mentionable=False,
+            reason="Role helper dengan akses channel publik terbatas",
+        )
+    else:
+        safe_permissions = discord.Permissions(role.permissions.value)
+        safe_permissions.update(
+            administrator=False,
+            manage_guild=False,
+            manage_roles=True,
+            manage_channels=False,
+            view_audit_log=False,
+            mention_everyone=True,
+        )
+        if role.permissions.value != safe_permissions.value:
+            await role.edit(
+                permissions=safe_permissions,
+                reason="Mencegah Helper memiliki izin global atau akses tiket",
+            )
+
+    for category in guild.categories:
+        if _helper_private_category(category):
+            await category.set_permissions(
+                role,
+                view_channel=False,
+                manage_channels=False,
+                manage_roles=False,
+                reason="Helper tidak boleh melihat atau mengatur area privat",
+            )
+            for channel in category.channels:
+                await channel.set_permissions(
+                    role,
+                    view_channel=False,
+                    manage_channels=False,
+                    manage_roles=False,
+                    reason="Perlindungan eksplisit tiket dari Helper",
+                )
+        else:
+            await category.set_permissions(
+                role,
+                view_channel=True,
+                manage_channels=True,
+                manage_roles=True,
+                reason="Helper dapat mengatur channel publik pada kategori ini",
+            )
+    for channel in guild.channels:
+        if isinstance(channel, discord.CategoryChannel):
+            continue
+        if _helper_private_channel(channel):
+            await channel.set_permissions(
+                role,
+                view_channel=False,
+                manage_channels=False,
+                manage_roles=False,
+                reason="Channel tiket/operasional privat tidak dapat diakses Helper",
+            )
+        else:
+            await channel.set_permissions(
+                role,
+                view_channel=True,
+                manage_channels=True,
+                manage_roles=True,
+                reason="Helper dapat mengatur dan mengganti nama channel ini",
+            )
+    return True
 
 
 async def ensure_giveaway_channel(guild: discord.Guild) -> discord.TextChannel | None:
@@ -281,6 +455,43 @@ def build_website_view() -> discord.ui.View:
     view.add_item(discord.ui.Button(label="Buka Anime", emoji="🎬", style=discord.ButtonStyle.link, url="https://ryukomik.my.id/anime"))
     view.add_item(discord.ui.Button(label="Buka Donghua", emoji="🐉", style=discord.ButtonStyle.link, url="https://ryukomik.my.id/donghua"))
     return view
+
+
+# Keyword auto-reply: any member typing exactly "web" gets the domain card.
+WEB_KEYWORDS = ("web",)
+WEB_REPLY_COOLDOWN_SECONDS = 10
+_web_reply_last: dict[int, float] = {}
+
+
+def is_web_keyword(content: str) -> bool:
+    """True when the whole message is just a trigger keyword like 'web' or 'web?'."""
+    text = content.strip().rstrip("?！!。.,;:~*_-—").lower()
+    return text in WEB_KEYWORDS
+
+
+def web_reply_allowed(channel: discord.abc.Messageable) -> bool:
+    """Per-channel cooldown so one loud member cannot flood the card."""
+    now = time.monotonic()
+    channel_id = getattr(channel, "id", 0)
+    last = _web_reply_last.get(channel_id, 0.0)
+    if now - last < WEB_REPLY_COOLDOWN_SECONDS:
+        return False
+    _web_reply_last[channel_id] = now
+    return True
+
+
+def build_domain_message() -> str:
+    """Plain-text domain card; angle brackets keep Discord from embedding previews."""
+    lines = [
+        "🌐 SAVE DOMAIN UTAMA",
+        f"<{WEB_DOMAIN_PRIMARY}>",
+        "",
+        "🌐 DOMAIN BACA KOMIK",
+        f"<{WEB_DOMAIN_READ}>",
+    ]
+    if WEB_DOMAIN_ALT:
+        lines += ["", "🌐 DOMAIN BACA ALTERNATIF", f"<{WEB_DOMAIN_ALT}>"]
+    return "\n".join(lines)
 
 
 def build_trakteer_embed() -> discord.Embed:
@@ -459,57 +670,45 @@ async def _repair_welcome_history(
 
 
 async def apply_project_layout(guild: discord.Guild) -> bool:
-    """Keep the public project category compact and consistently ordered."""
+    """Ensure the public project channels exist WITHOUT touching the layout.
+
+    Non-destructive by design: it never renames, reorders, recategorizes, or
+    overwrites topics of existing channels. Admins curate names, emojis and
+    order by hand; this routine only fills in a channel when it is missing so
+    that a restart can never undo manual edits (see Discord audit log).
+    """
     category = guild.get_channel(PROJECT_CATEGORY_ID)
     if not isinstance(category, discord.CategoryChannel):
         log.warning("Project category not found: guild=%s id=%s", guild.id, PROJECT_CATEGORY_ID)
         return False
 
-    if category.name != "Info Project":
-        await category.edit(name="Info Project", reason="Merombak Info Series menjadi Info Project")
-
-    channels: list[discord.TextChannel] = []
     for channel_id, name, topic in PROJECT_CHANNELS:
         channel = guild.get_channel(channel_id) if channel_id else None
         if not isinstance(channel, discord.TextChannel):
+            # Fall back to a name match so a manually recreated channel is not
+            # duplicated. Match on the emoji-stripped name to tolerate prefixes.
             normalized = _plain_name(name)
             channel = next(
                 (
                     item
                     for item in category.text_channels
                     if _plain_name(item.name) == normalized
+                    or _plain_name(item.name).endswith(normalized)
                 ),
                 None,
             )
-        if channel is None and channel_id is None:
-            channel = await guild.create_text_channel(
-                name,
-                category=category,
-                topic=topic,
-                reason="Melengkapi pusat informasi project",
-            )
-        if not isinstance(channel, discord.TextChannel):
+        if isinstance(channel, discord.TextChannel):
+            # Already exists: leave name, topic, category and position alone.
+            continue
+        if channel_id is not None:
             log.warning("Project channel missing: guild=%s id=%s name=%s", guild.id, channel_id, name)
-            return False
-
-        changes = {}
-        if channel.name != name:
-            changes["name"] = name
-        if channel.topic != topic:
-            changes["topic"] = topic
-        if channel.category_id != category.id:
-            changes["category"] = category
-            changes["sync_permissions"] = False
-        if changes:
-            await channel.edit(reason="Merapikan layout Info Project", **changes)
-        channels.append(channel)
-
-    current_ids = [channel.id for channel in category.text_channels]
-    desired_ids = [channel.id for channel in channels]
-    if [channel_id for channel_id in current_ids if channel_id in desired_ids] != desired_ids:
-        await channels[0].move(beginning=True, reason="Mengurutkan channel Info Project")
-        for previous, channel in zip(channels, channels[1:]):
-            await channel.move(after=previous, reason="Mengurutkan channel Info Project")
+            continue
+        await guild.create_text_channel(
+            name,
+            category=category,
+            topic=topic,
+            reason="Melengkapi pusat informasi project",
+        )
 
     return True
 
@@ -525,6 +724,8 @@ async def apply_server_housekeeping(guild: discord.Guild) -> dict[str, bool]:
         "welcome_history": False,
         "raw_watch": False,
         "project_scout": False,
+        "notification_role": False,
+        "helper_permissions": False,
         "giveaway": False,
         "website_info": False,
     }
@@ -535,6 +736,8 @@ async def apply_server_housekeeping(guild: discord.Guild) -> dict[str, bool]:
 
     result["raw_watch"] = bool(await ensure_raw_watch_channel(guild))
     result["project_scout"] = bool(await ensure_project_scout_channel(guild))
+    result["notification_role"] = await ensure_notification_role_panel(guild)
+    result["helper_permissions"] = await ensure_helper_role_permissions(guild)
     result["giveaway"] = bool(await ensure_giveaway_channel(guild))
 
     result["project_layout"] = await apply_project_layout(guild)
@@ -626,14 +829,13 @@ async def apply_server_housekeeping(guild: discord.Guild) -> dict[str, bool]:
 
     website_channel = _find_text_channel(guild, names=WEBSITE_INFO_NAMES)
     if website_channel:
-        changes = {}
-        if website_channel.name != "・info-website":
-            changes["name"] = "・info-website"
-        website_topic = "Tautan resmi Ryukomik: Komik, Anime, dan Donghua."
-        if website_channel.topic != website_topic:
-            changes["topic"] = website_topic
-        if changes:
-            await website_channel.edit(reason="Mengganti Status Website menjadi Info Website", **changes)
+        # Non-destructive: keep the admin's chosen name. Only fill in a topic
+        # when it is empty, so restarts never overwrite manual curation.
+        if not website_channel.topic:
+            await website_channel.edit(
+                topic="Tautan resmi Ryukomik: Komik, Anime, dan Donghua.",
+                reason="Mengisi topic Info Website yang masih kosong",
+            )
         if website_channel.type != discord.ChannelType.news:
             try:
                 website_channel = await website_channel.edit(

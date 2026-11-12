@@ -8,10 +8,15 @@ from typing import Any
 import aiohttp
 import discord
 
-from config import NEW_PROJECT_CHANNEL_ID, PROJECT_DROP_CHANNEL_ID, PROJECT_EVENTS_TOKEN, PROJECT_EVENTS_URL, PROJECT_PUBLIC_URL, UPDATE_PROJECT_CHANNEL_ID
+from config import NEW_PROJECT_CHANNEL_ID, PROJECT_DROP_CHANNEL_ID, PROJECT_EVENTS_TOKEN, PROJECT_EVENTS_URL, PROJECT_PUBLIC_URL, ROLE_NOTIFICATION_ID, ROLE_NOTIFICATION_NAME, SCANLATOR_UPDATE_CHANNEL_ID, UPDATE_PROJECT_CHANNEL_ID
 from database import get_db
 
 log = logging.getLogger(__name__)
+
+# Tipe event yang layak menandai @everyone. Update chapter sengaja hanya
+# menyebut role, supaya channel tidak berisik tiap ada chapter baru.
+EVERYONE_EVENT_TYPES = {"project_published", "scanlator_series_published"}
+SCANLATOR_EVENT_TYPES = {"scanlator_chapter_published", "scanlator_series_published"}
 
 
 async def setup_project_sync() -> None:
@@ -49,6 +54,18 @@ def _project_url(payload: dict[str, Any]) -> str:
     return f"{PROJECT_PUBLIC_URL}/komik/project/{slug}" if slug else PROJECT_PUBLIC_URL
 
 
+def _chapter_url(payload: dict[str, Any]) -> str:
+    slug = str(payload.get("slug") or "").strip("/")
+    number = payload.get("chapter_number")
+    if slug and number is not None:
+        return f"{PROJECT_PUBLIC_URL}/chapter/project/{slug}/chapter-{number}"
+    return _project_url(payload)
+
+
+def _team_label(payload: dict[str, Any]) -> str:
+    return str(payload.get("scanlator_team") or payload.get("scanlator_handle") or "Scanlator")
+
+
 def build_project_embed(event: dict[str, Any]) -> tuple[int, discord.Embed, discord.ui.View]:
     payload = event.get("payload") or {}
     title = str(payload.get("title") or "Project Ryukomik")
@@ -57,23 +74,43 @@ def build_project_embed(event: dict[str, Any]) -> tuple[int, discord.Embed, disc
     if event_type == "project_published":
         channel_id, heading, color = NEW_PROJECT_CHANNEL_ID, "Project Baru", discord.Color.blurple()
         description = f"**{title}** resmi masuk ke project Ryukomik."
+        link = _project_url(payload)
     elif event_type == "chapter_published":
         channel_id, heading, color = UPDATE_PROJECT_CHANNEL_ID, "Project Update", discord.Color.green()
         chapter = payload.get("chapter_number")
         description = f"**{title}** — **{'Chapter ' + str(chapter) if chapter is not None else 'Chapter terbaru'}** telah dirilis."
         if payload.get("chapter_title"):
             description += f"\n{str(payload['chapter_title']).strip()}"
+        link = _chapter_url(payload)
+    elif event_type == "scanlator_series_published":
+        team = _team_label(payload)
+        channel_id, heading, color = SCANLATOR_UPDATE_CHANNEL_ID or UPDATE_PROJECT_CHANNEL_ID, "Seri Baru · Scanlator", discord.Color.blurple()
+        description = f"**{title}** — seri baru dari **{team}**."
+        link = _project_url(payload)
+    elif event_type == "scanlator_chapter_published":
+        team = _team_label(payload)
+        channel_id, heading, color = SCANLATOR_UPDATE_CHANNEL_ID or UPDATE_PROJECT_CHANNEL_ID, "Chapter Baru · Scanlator", discord.Color.green()
+        chapter = payload.get("chapter_number")
+        chapter_label = f"Chapter {chapter}" if chapter is not None else "Chapter terbaru"
+        description = f"**{title}** — **{chapter_label}** oleh **{team}**."
+        if payload.get("chapter_title"):
+            description += f"\n{str(payload['chapter_title']).strip()}"
+        link = _chapter_url(payload)
     elif event_type == "project_status_changed":
         channel_id = PROJECT_DROP_CHANNEL_ID
         cancelled = str(payload.get("status") or "").casefold() == "cancelled"
         heading = "Project Dibatalkan" if cancelled else "Project Dihentikan"
         color = discord.Color.red() if cancelled else discord.Color.orange()
         description = f"**{title}** berstatus **{status}**."
+        link = _project_url(payload)
     else:
         raise ValueError(f"Unsupported project event: {event_type}")
     embed = discord.Embed(title=heading, description=description, color=color)
     embed.add_field(name="Status", value=status, inline=True)
     embed.add_field(name="Tipe", value=str(payload.get("type") or "-").upper(), inline=True)
+    if event_type in SCANLATOR_EVENT_TYPES:
+        handle = str(payload.get("scanlator_handle") or "")
+        embed.add_field(name="Tim", value=f"{_team_label(payload)}" + (f" · @{handle}" if handle else ""), inline=True)
     genres = payload.get("genres") or []
     if genres:
         embed.add_field(name="Genre", value=", ".join(map(str, genres))[:1024], inline=False)
@@ -82,7 +119,14 @@ def build_project_embed(event: dict[str, Any]) -> tuple[int, discord.Embed, disc
         embed.set_thumbnail(url=cover_url)
     embed.set_footer(text="Ryukomik Official • Informasi project")
     view = discord.ui.View()
-    view.add_item(discord.ui.Button(label="Buka Project", style=discord.ButtonStyle.link, url=_project_url(payload)))
+    chapter_event = event_type in {"chapter_published", "scanlator_chapter_published"}
+    view.add_item(
+        discord.ui.Button(
+            label="Baca Chapter" if chapter_event else "Buka Project",
+            style=discord.ButtonStyle.link,
+            url=link,
+        )
+    )
     return channel_id, embed, view
 
 
@@ -100,20 +144,34 @@ async def sync_project_events(guild: discord.Guild) -> int:
     if not isinstance(events, list):
         raise RuntimeError("Project event API returned malformed data")
     delivered = 0
+    notification_role = guild.get_role(ROLE_NOTIFICATION_ID) if ROLE_NOTIFICATION_ID else None
+    notification_role = notification_role or discord.utils.get(guild.roles, name=ROLE_NOTIFICATION_NAME)
     for event in events:
-        channel_id, embed, view = build_project_embed(event)
-        channel = guild.get_channel(channel_id)
-        if not isinstance(channel, discord.TextChannel):
-            raise RuntimeError(f"Project announcement channel unavailable: {channel_id}")
-        # Project changes are announcements for the whole community.  Keep
-        # every other mention disabled so data from the website cannot ping a
-        # user or role unexpectedly.
-        message = await channel.send(
-            content="@everyone",
-            embed=embed,
-            view=view,
-            allowed_mentions=discord.AllowedMentions(everyone=True, users=False, roles=False),
-        )
+        event_type = event.get("event_type")
+        mentions: list[str] = ["@everyone"] if event_type in EVERYONE_EVENT_TYPES else []
+        if notification_role:
+            mentions.append(notification_role.mention)
+        try:
+            channel_id, embed, view = build_project_embed(event)
+            channel = guild.get_channel(channel_id)
+            if not isinstance(channel, discord.TextChannel):
+                raise RuntimeError(f"Project announcement channel unavailable: {channel_id}")
+            message = await channel.send(
+                content=" ".join(mentions) or None,
+                embed=embed,
+                view=view,
+                allowed_mentions=discord.AllowedMentions(
+                    everyone="@everyone" in mentions,
+                    users=False,
+                    roles=[notification_role] if notification_role else False,
+                ),
+            )
+        except Exception as error:  # noqa: BLE001 - satu event gagal tidak boleh memblokir antrean
+            log.warning("Project event %s gagal dikirim: %s", event.get("id"), error)
+            print(f"[PROJECT] Event {event.get('id')} gagal: {error}", flush=True)
+            # message_id 0 = sudah diproses tapi tidak terkirim; antrean lanjut.
+            await _record_delivery(event, 0)
+            continue
         await _record_delivery(event, message.id)
         delivered += 1
     return delivered
