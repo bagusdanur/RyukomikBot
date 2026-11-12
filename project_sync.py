@@ -65,6 +65,25 @@ def _team_label(payload: dict[str, Any]) -> str:
     return str(payload.get("scanlator_team") or payload.get("scanlator_handle") or "Scanlator")
 
 
+def _chapter_title_suffix(payload: dict[str, Any]) -> str:
+    """Baris judul chapter, dilewati kalau isinya cuma "Chapter <nomor>"."""
+    raw = str(payload.get("chapter_title") or "").strip()
+    if not raw:
+        return ""
+    number = payload.get("chapter_number")
+    if number is not None:
+        normalized = raw.casefold()
+        generic = {
+            f"chapter {number}".casefold(),
+            f"chapter {number}.0".casefold(),
+            f"ch. {number}".casefold(),
+            f"ch {number}".casefold(),
+        }
+        if normalized in generic:
+            return ""
+    return f"\n{raw}"
+
+
 def build_project_embed(event: dict[str, Any]) -> tuple[int, discord.Embed, discord.ui.View]:
     payload = event.get("payload") or {}
     title = str(payload.get("title") or "Project Ryukomik")
@@ -78,8 +97,7 @@ def build_project_embed(event: dict[str, Any]) -> tuple[int, discord.Embed, disc
         channel_id, heading, color = UPDATE_PROJECT_CHANNEL_ID, "Project Update", discord.Color.green()
         chapter = payload.get("chapter_number")
         description = f"**{title}** — **{'Chapter ' + str(chapter) if chapter is not None else 'Chapter terbaru'}** telah dirilis."
-        if payload.get("chapter_title"):
-            description += f"\n{str(payload['chapter_title']).strip()}"
+        description += _chapter_title_suffix(payload)
         link = _chapter_url(payload)
     elif event_type == "scanlator_series_published":
         team = _team_label(payload)
@@ -94,8 +112,7 @@ def build_project_embed(event: dict[str, Any]) -> tuple[int, discord.Embed, disc
         channel_id, heading, color = SCANLATOR_UPDATE_CHANNEL_ID or UPDATE_PROJECT_CHANNEL_ID, "Project Update", discord.Color.green()
         chapter = payload.get("chapter_number")
         description = f"**{title}** — **{'Chapter ' + str(chapter) if chapter is not None else 'Chapter terbaru'}** telah dirilis."
-        if payload.get("chapter_title"):
-            description += f"\n{str(payload['chapter_title']).strip()}"
+        description += _chapter_title_suffix(payload)
         description += f"\noleh **{team}**" + (f" (@{handle})" if handle else "")
         link = _chapter_url(payload)
     elif event_type == "project_status_changed":
@@ -110,6 +127,9 @@ def build_project_embed(event: dict[str, Any]) -> tuple[int, discord.Embed, disc
     embed = discord.Embed(title=heading, description=description, color=color)
     embed.add_field(name="Status", value=status, inline=True)
     embed.add_field(name="Tipe", value=str(payload.get("type") or "-").upper(), inline=True)
+    synopsis = " ".join(str(payload.get("description") or "").split())
+    if synopsis:
+        embed.add_field(name="Sinopsis", value=(synopsis[:400] + "…") if len(synopsis) > 400 else synopsis, inline=False)
     genres = payload.get("genres") or []
     if genres:
         embed.add_field(name="Genre", value=", ".join(map(str, genres))[:1024], inline=False)
