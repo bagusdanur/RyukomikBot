@@ -127,9 +127,12 @@ def build_project_embed(event: dict[str, Any]) -> tuple[int, discord.Embed, disc
     embed = discord.Embed(title=heading, description=description, color=color)
     embed.add_field(name="Status", value=status, inline=True)
     embed.add_field(name="Tipe", value=str(payload.get("type") or "-").upper(), inline=True)
-    synopsis = " ".join(str(payload.get("description") or "").split())
-    if synopsis:
-        embed.add_field(name="Sinopsis", value=(synopsis[:400] + "…") if len(synopsis) > 400 else synopsis, inline=False)
+    # Sinopsis hanya untuk pengumuman seri baru — di update chapter bikin pesan
+    # kepanjangan (permintaan user).
+    if event_type in {"project_published", "scanlator_series_published"}:
+        synopsis = " ".join(str(payload.get("description") or "").split())
+        if synopsis:
+            embed.add_field(name="Sinopsis", value=(synopsis[:400] + "…") if len(synopsis) > 400 else synopsis, inline=False)
     genres = payload.get("genres") or []
     if genres:
         embed.add_field(name="Genre", value=", ".join(map(str, genres))[:1024], inline=False)
