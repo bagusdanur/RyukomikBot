@@ -298,7 +298,7 @@ def build_winner_announcement(giveaway: dict, winner_ids: Sequence[int]) -> str:
         f"📩 **CARA KLAIM HADIAH (PENTING):**\n"
         f"Untuk para pemenang, silakan segera **DM / Chat Admin** ({host_mention} atau Administrator Ryukomik) dengan mengirimkan:\n"
         f"1. Screenshot pesan kemenangan ini\n"
-        f"2. Email / Username akun Ryukomik kamu di website (https://ryukomik.my.id)\n\n"
+        f"2. Email / Username akun Ryukomik kamu di website (https://ryukomik.web.id)\n\n"
         f"⚡ *Akses Premium Ryukomik akan langsung diaktifkan ke akunmu setelah konfirmasi!* Selamat membaca! 📖✨"
     )
     return msg

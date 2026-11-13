@@ -52,7 +52,7 @@ def test_projects_list_and_raw_tracking(monkeypatch):
             {
                 "title": "Get Out!",
                 "slug": "get-out",
-                "image": "https://storage.ryukomik.my.id/covers/get-out/cover.jpg",
+                "image": "https://storage.ryukomik.web.id/covers/get-out/cover.jpg",
                 "status": "ongoing",
                 "type_genre": "18+",
                 "chapter_terbaru": "Chapter 4",

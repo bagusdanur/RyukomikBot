@@ -451,9 +451,9 @@ def build_website_embed() -> discord.Embed:
 
 def build_website_view() -> discord.ui.View:
     view = discord.ui.View(timeout=None)
-    view.add_item(discord.ui.Button(label="Buka Komik", emoji="📚", style=discord.ButtonStyle.link, url="https://ryukomik.my.id/"))
-    view.add_item(discord.ui.Button(label="Buka Anime", emoji="🎬", style=discord.ButtonStyle.link, url="https://ryukomik.my.id/anime"))
-    view.add_item(discord.ui.Button(label="Buka Donghua", emoji="🐉", style=discord.ButtonStyle.link, url="https://ryukomik.my.id/donghua"))
+    view.add_item(discord.ui.Button(label="Buka Komik", emoji="📚", style=discord.ButtonStyle.link, url="https://ryukomik.web.id/"))
+    view.add_item(discord.ui.Button(label="Buka Anime", emoji="🎬", style=discord.ButtonStyle.link, url="https://ryukomik.web.id/anime"))
+    view.add_item(discord.ui.Button(label="Buka Donghua", emoji="🐉", style=discord.ButtonStyle.link, url="https://ryukomik.web.id/donghua"))
     return view
 
 

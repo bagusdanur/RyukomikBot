@@ -54,7 +54,7 @@ def test_qc_details_and_actions(monkeypatch):
         # Mock RAW image resolver and Submission images extractor
         import dashboard.backend.routers.qc as qc_mod
         async def mock_raw_images(manga_title, chapter):
-            return ["https://storage.ryukomik.my.id/page1.jpg", "https://storage.ryukomik.my.id/page2.jpg"], "omega"
+            return ["https://storage.ryukomik.web.id/page1.jpg", "https://storage.ryukomik.web.id/page2.jpg"], "omega"
         monkeypatch.setattr(qc_mod, "_resolve_raw_images", mock_raw_images)
 
         async def mock_extract_submission(link):
@@ -69,8 +69,8 @@ def test_qc_details_and_actions(monkeypatch):
         assert detail["assignment"]["id"] == task_id
         assert detail["assignment"]["manga"] == "Let’s Do It After Work"
         assert detail["raw_pages"] == [
-            "https://storage.ryukomik.my.id/page1.jpg",
-            "https://storage.ryukomik.my.id/page2.jpg",
+            "https://storage.ryukomik.web.id/page1.jpg",
+            "https://storage.ryukomik.web.id/page2.jpg",
         ]
         assert detail["raw_source"] == "omega"
         assert detail["gdrive_folder_id"] == "test-folder-123"

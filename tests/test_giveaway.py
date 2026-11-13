@@ -113,7 +113,7 @@ class GiveawayServiceUnitTests(unittest.TestCase):
         self.assertIn("<@2002>", text)
         self.assertIn("DM / Chat Admin", text)
         self.assertIn("<@1001>", text)
-        self.assertIn("https://ryukomik.my.id", text)
+        self.assertIn("https://ryukomik.web.id", text)
 
     def test_draw_random_winners(self):
         candidates = [1, 2, 3, 4, 5]

@@ -931,7 +931,7 @@ const demoApi = {
         id: 1,
         title: "Get Out!",
         slug: "get-out",
-        cover_url: "https://storage.ryukomik.my.id/covers/get-out/cover.jpg",
+        cover_url: "https://storage.ryukomik.web.id/covers/get-out/cover.jpg",
         publication_status: "ongoing",
         type_genre: "18+",
         info: "2 jam lalu",
@@ -948,7 +948,7 @@ const demoApi = {
         active_tasks: [],
         status: "raw_available",
         last_checked_at: new Date().toISOString(),
-        project_url: "https://ryukomik.my.id/komik/project/get-out",
+        project_url: "https://ryukomik.web.id/komik/project/get-out",
       },
       {
         id: 2,
@@ -971,7 +971,7 @@ const demoApi = {
         active_tasks: [{ id: 101, chapter: "211", role: "TL", staff_name: "Aira", status: "claimed" }],
         status: "in_progress",
         last_checked_at: new Date().toISOString(),
-        project_url: "https://ryukomik.my.id/komik/project/secret-class",
+        project_url: "https://ryukomik.web.id/komik/project/secret-class",
       },
     ],
     summary: {
@@ -1020,8 +1020,8 @@ const demoApi = {
   qcDetail: async (assignmentId: number): Promise<QcDetailResponse> => ({
     assignment: (await demoApi.assignments()).find((a) => a.id === assignmentId) || (await demoApi.assignments())[0],
     raw_pages: [
-      "https://storage.ryukomik.my.id/covers/get-out/cover.jpg",
-      "https://storage.ryukomik.my.id/covers/get-out/cover.jpg",
+      "https://storage.ryukomik.web.id/covers/get-out/cover.jpg",
+      "https://storage.ryukomik.web.id/covers/get-out/cover.jpg",
     ],
     raw_source: "omega",
     raw_page_count: 2,

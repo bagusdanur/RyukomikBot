@@ -22,7 +22,7 @@ from raw_downloader.resolver import normalize_title
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
 PROJECT_CATALOG_URL = os.getenv(
-    "PROJECT_CATALOG_URL", "https://ryukomik.my.id/api/project/pustaka?limit=100"
+    "PROJECT_CATALOG_URL", "https://ryukomik.web.id/api/project/pustaka?limit=100"
 )
 
 RAW_DOWNLOADERS = scout_service.RAW_DOWNLOADERS

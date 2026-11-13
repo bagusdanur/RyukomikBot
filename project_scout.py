@@ -39,7 +39,7 @@ from raw_downloader.resolver import normalize_title
 
 API_BASE = os.getenv("SCOUT_API_BASE", "https://api.ryukomik.web.id").rstrip("/")
 PROJECT_CATALOG_URL = os.getenv(
-    "PROJECT_CATALOG_URL", "https://ryukomik.my.id/api/project/pustaka?limit=100"
+    "PROJECT_CATALOG_URL", "https://ryukomik.web.id/api/project/pustaka?limit=100"
 )
 INDONESIAN_SOURCES = ("komiku", "kiryuu", "ikiru", "sekte", "doujindesu", "komikid")
 RAW_DOWNLOADERS = {
