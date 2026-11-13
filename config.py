@@ -72,7 +72,7 @@ RECRUITMENT_TEST_EXPIRES_AT = os.getenv("RECRUITMENT_TEST_EXPIRES_AT", "2026-08-
 
 # Public website domains used for the "web" keyword reply in any channel.
 # WEB_DOMAIN_ALT is optional: leave it empty to hide the alternative row.
-WEB_DOMAIN_PRIMARY = os.getenv("WEB_DOMAIN_PRIMARY", "https://ryukomik.id/")
+WEB_DOMAIN_PRIMARY = os.getenv("WEB_DOMAIN_PRIMARY", "https://ryukomik.web.id/")
 WEB_DOMAIN_READ = os.getenv("WEB_DOMAIN_READ", "https://ryukomik.web.id/")
 WEB_DOMAIN_ALT = os.getenv("WEB_DOMAIN_ALT", "")
 
