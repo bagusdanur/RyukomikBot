@@ -5,7 +5,7 @@ import numpy as np
 from PIL import Image
 
 TITLE_SLUG = 'when-i-lied-on-a-dating-app'
-VERSION = 2
+VERSION = 3
 
 def prepare_inputs(paths, directory, *, max_height=15000, search_rows=4000):
     """Join RAW pages up to `max_height` rows without exceeding memory.
@@ -50,8 +50,10 @@ def prepare_inputs(paths, directory, *, max_height=15000, search_rows=4000):
                 left.append(dict(s, start_y=s['start_y'] + take, output_y=max(0, y - count)))
         pages.append({'name': name, 'width': buffer.shape[1], 'height': count,
                       'cut': reason, 'spans': used})
-        # Shift the untouched remainder to the front of the same buffer.
-        remainder = max_height - count
+        # Shift only the unwritten tail currently present in the buffer.
+        # The remainder is not the whole unfilled canvas: on a width-change
+        # flush, the entire buffer was consumed, so no rows can survive.
+        remainder = filled - count
         if remainder > 0:
             buffer[:remainder] = buffer[count:count + remainder]
         filled = remainder
@@ -60,9 +62,11 @@ def prepare_inputs(paths, directory, *, max_height=15000, search_rows=4000):
     for path in paths:
         with Image.open(path) as source:
             arr = np.asarray(source.convert('RGB'))
-        ensure(arr.shape[1])
-        if filled and buffer.shape[1] != arr.shape[1]:
+        if filled and buffer is not None and buffer.shape[1] != arr.shape[1]:
+            # Flush the old-width content before allocating a new canvas.
+            # Doing this after ensure() would overwrite it with empty rows.
             flush(filled, 'WIDTH_CHANGE')
+        ensure(arr.shape[1])
         offset = 0
         while offset < len(arr):
             take = min(max_height - filled, len(arr) - offset)

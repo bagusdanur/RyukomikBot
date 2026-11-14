@@ -25,8 +25,8 @@ PROJECT_DROP_CHANNEL_ID = int(os.getenv("PROJECT_DROP_CHANNEL_ID", "152446770707
 SCANLATOR_UPDATE_CHANNEL_ID = int(os.getenv("SCANLATOR_UPDATE_CHANNEL_ID", "0")) or None
 SCANLATOR_UPDATE_CHANNEL_NAME = os.getenv("SCANLATOR_UPDATE_CHANNEL_NAME", "🖌️・scanlator-update")
 REQUEST_PROJECT_CHANNEL_ID = int(os.getenv("REQUEST_PROJECT_CHANNEL_ID", "1531572730715967502"))
-PROJECT_PUBLIC_URL = os.getenv("PROJECT_PUBLIC_URL", "https://ryukomik.web.id").rstrip("/")
-PROJECT_EVENTS_URL = os.getenv("PROJECT_EVENTS_URL", "https://ryukomik.web.id/api/internal/project-discord-events")
+PROJECT_PUBLIC_URL = os.getenv("PROJECT_PUBLIC_URL", "https://ryukomik.com").rstrip("/")
+PROJECT_EVENTS_URL = os.getenv("PROJECT_EVENTS_URL", "https://ryukomik.com/api/internal/project-discord-events")
 PROJECT_EVENTS_TOKEN = os.getenv("PROJECT_EVENTS_TOKEN", "")
 
 # Role IDs
@@ -38,24 +38,24 @@ ROLE_HELPER_ID = int(os.getenv("ROLE_HELPER_ID", "0")) or None
 ROLE_HELPER_NAME = os.getenv("ROLE_HELPER_NAME", "Helper")
 
 # API
-ASURA_API = os.getenv("ASURA_API", "https://api.ryukomik.web.id/asura")
-DOUJIVA_API = os.getenv("DOUJIVA_API", "https://api.ryukomik.web.id/doujiva")
-DIVA_API = os.getenv("DIVA_API", "https://api.ryukomik.web.id/diva")
-OMEGA_API = os.getenv("OMEGA_API", "https://api.ryukomik.web.id/omega")
-EVASCAN_API = os.getenv("EVASCAN_API", "https://api.ryukomik.web.id/evascan")
-THUNDER_API = os.getenv("THUNDER_API", "https://api.ryukomik.web.id/thunder")
-QIMANGA_API = os.getenv("QIMANGA_API", "https://api.ryukomik.web.id/qimanga")
-DEMON_API = os.getenv("DEMON_API", "https://api.ryukomik.web.id/demon")
-VORTEX_API = os.getenv("VORTEX_API", "https://api.ryukomik.web.id/vortex")
-KAGANE_API = os.getenv("KAGANE_API", "https://api.ryukomik.web.id/kagane")
-MGEKO_API = os.getenv("MGEKO_API", "https://api.ryukomik.web.id/mgeko")
-DUSK_API = os.getenv("DUSK_API", "https://api.ryukomik.web.id/dusk")
-LAGOON_API = os.getenv("LAGOON_API", "https://api.ryukomik.web.id/lagoon")
-KEN_API = os.getenv("KEN_API", "https://api.ryukomik.web.id/ken")
-MGREAD_API = os.getenv("MGREAD_API", "https://api.ryukomik.web.id/mgread")
-LUA_API = os.getenv("LUA_API", "https://api.ryukomik.web.id/lua")
-MIST_API = os.getenv("MIST_API", "https://api.ryukomik.web.id/mist")
-DASHBOARD_URL = os.getenv("DASHBOARD_URL", "https://staff.ryukomik.web.id")
+ASURA_API = os.getenv("ASURA_API", "https://api.ryukomik.com/asura")
+DOUJIVA_API = os.getenv("DOUJIVA_API", "https://api.ryukomik.com/doujiva")
+DIVA_API = os.getenv("DIVA_API", "https://api.ryukomik.com/diva")
+OMEGA_API = os.getenv("OMEGA_API", "https://api.ryukomik.com/omega")
+EVASCAN_API = os.getenv("EVASCAN_API", "https://api.ryukomik.com/evascan")
+THUNDER_API = os.getenv("THUNDER_API", "https://api.ryukomik.com/thunder")
+QIMANGA_API = os.getenv("QIMANGA_API", "https://api.ryukomik.com/qimanga")
+DEMON_API = os.getenv("DEMON_API", "https://api.ryukomik.com/demon")
+VORTEX_API = os.getenv("VORTEX_API", "https://api.ryukomik.com/vortex")
+KAGANE_API = os.getenv("KAGANE_API", "https://api.ryukomik.com/kagane")
+MGEKO_API = os.getenv("MGEKO_API", "https://api.ryukomik.com/mgeko")
+DUSK_API = os.getenv("DUSK_API", "https://api.ryukomik.com/dusk")
+LAGOON_API = os.getenv("LAGOON_API", "https://api.ryukomik.com/lagoon")
+KEN_API = os.getenv("KEN_API", "https://api.ryukomik.com/ken")
+MGREAD_API = os.getenv("MGREAD_API", "https://api.ryukomik.com/mgread")
+LUA_API = os.getenv("LUA_API", "https://api.ryukomik.com/lua")
+MIST_API = os.getenv("MIST_API", "https://api.ryukomik.com/mist")
+DASHBOARD_URL = os.getenv("DASHBOARD_URL", "https://staff.ryukomik.com")
 
 # Recruitment test materials. Keep these configurable because Filebin links
 # are temporary and must be replaceable without changing the workflow code.
@@ -72,7 +72,7 @@ RECRUITMENT_TEST_EXPIRES_AT = os.getenv("RECRUITMENT_TEST_EXPIRES_AT", "2026-08-
 
 # Public website domains used for the "web" keyword reply in any channel.
 # WEB_DOMAIN_ALT is optional: leave it empty to hide the alternative row.
-WEB_DOMAIN_PRIMARY = os.getenv("WEB_DOMAIN_PRIMARY", "https://ryukomik.web.id/")
-WEB_DOMAIN_READ = os.getenv("WEB_DOMAIN_READ", "https://ryukomik.web.id/")
+WEB_DOMAIN_PRIMARY = os.getenv("WEB_DOMAIN_PRIMARY", "https://ryukomik.com/")
+WEB_DOMAIN_READ = os.getenv("WEB_DOMAIN_READ", "https://ryukomik.com/")
 WEB_DOMAIN_ALT = os.getenv("WEB_DOMAIN_ALT", "")
 

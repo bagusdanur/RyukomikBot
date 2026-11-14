@@ -9,7 +9,7 @@ tanpa mengakses server Ryukomik lewat SSH. Semua akses lewat HTTP + API key.
 
 | Item | Nilai |
 |---|---|
-| Base URL | `https://staff.ryukomik.web.id` |
+| Base URL | `https://staff.ryukomik.com` |
 | Prefix API | `/api/v1/raw` |
 | Auth | header `X-API-Key: <RAW_API_KEY>` (alternatif: `Authorization: Bearer <key>`) |
 | Format hasil | ZIP (isi: `001.webp`, `002.webp`, … atau `001.png`, … sesuai source) |
@@ -19,7 +19,7 @@ tanpa mengakses server Ryukomik lewat SSH. Semua akses lewat HTTP + API key.
 Simpan sebagai environment variable di VPS kamu:
 
 ```bash
-echo 'export RAW_API_URL="https://staff.ryukomik.web.id"' >> ~/.bashrc
+echo 'export RAW_API_URL="https://staff.ryukomik.com"' >> ~/.bashrc
 echo 'export RAW_API_KEY="<tempel-key-di-sini>"' >> ~/.bashrc
 source ~/.bashrc
 ```

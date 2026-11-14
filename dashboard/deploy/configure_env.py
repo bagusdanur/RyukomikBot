@@ -7,8 +7,8 @@ import secrets
 ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
 SETTINGS = {
     "DISCORD_CLIENT_ID": "1524449203944816680",
-    "DASHBOARD_ORIGIN": "https://staff.ryukomik.web.id",
-    "DASHBOARD_API_ORIGIN": "https://staff.ryukomik.web.id",
+    "DASHBOARD_ORIGIN": "https://staff.ryukomik.com",
+    "DASHBOARD_API_ORIGIN": "https://staff.ryukomik.com",
     "DASHBOARD_DEV_BYPASS": "false",
 }
 

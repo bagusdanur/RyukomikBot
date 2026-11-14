@@ -29,13 +29,13 @@ def main():
             "put_object", Params={"Bucket": bucket, "Key": key, "ContentType": "text/plain"}, ExpiresIn=300
         )
         request = Request(upload_url, method="OPTIONS", headers={
-            "Origin": "https://staff.ryukomik.web.id",
+            "Origin": "https://staff.ryukomik.com",
             "Access-Control-Request-Method": "PUT",
             "Access-Control-Request-Headers": "content-type",
         })
         with urlopen(request, timeout=20) as response:
             allowed = response.headers.get("Access-Control-Allow-Origin")
-        if allowed not in ("*", "https://staff.ryukomik.web.id"):
+        if allowed not in ("*", "https://staff.ryukomik.com"):
             raise RuntimeError("CORS belum mengizinkan origin dashboard.")
         print("R2 read/write, private object, presigned URL, dan browser CORS: OK")
     finally:

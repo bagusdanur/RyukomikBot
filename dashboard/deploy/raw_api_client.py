@@ -2,7 +2,7 @@
 """Klien RAW API: tinggal pasang judul, server yang mengunduh.
 
 Contoh:
-    export RAW_API_URL=https://staff.ryukomik.web.id
+    export RAW_API_URL=https://staff.ryukomik.com
     export RAW_API_KEY=<isi dari dashboard/.raw-api-key di server>
     python raw_api_client.py "Koshaku no Tsukibito Ossan, Yonaoshi Tabi de Harem to Naru" --chapter 1 --out raw.zip
 
@@ -28,7 +28,7 @@ def main() -> int:
     parser.add_argument("--wait", type=int, default=900, help="detik menunggu (polling)")
     args = parser.parse_args()
 
-    base = os.getenv("RAW_API_URL", "https://staff.ryukomik.web.id").rstrip("/")
+    base = os.getenv("RAW_API_URL", "https://staff.ryukomik.com").rstrip("/")
     key = os.getenv("RAW_API_KEY", "").strip()
     if not key:
         print("RAW_API_KEY belum di-set.", file=sys.stderr)

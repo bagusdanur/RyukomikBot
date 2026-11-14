@@ -1,4 +1,4 @@
-const CACHE = 'ryukomik-staff-shell-v12'
+const CACHE = 'ryukomik-staff-shell-v16'
 const SHELL = ['/', '/manifest.webmanifest?v=staff-20260804-2', '/icons/ryukomik-staff-20260804.png?v=staff-2']
 
 self.addEventListener('install', (event) => {
@@ -19,11 +19,17 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(fetch(request).catch(() => caches.match('/')))
     return
   }
-  event.respondWith(caches.match(request).then((cached) => cached || fetch(request).then((response) => {
+  // Hashed assets (index-<hash>.js, OcrPage-<hash>.js, ...) are immutable: a new
+  // deploy always ships new filenames, so a stale cached copy can never be
+  // "correct". Serve the cache only when the network is unavailable, so a
+  // freshly deployed bundle is picked up immediately instead of after a
+  // manual hard refresh. Non-hashed files keep the network as the source of
+  // truth too, which is what previously hid new releases behind cache-first.
+  event.respondWith(fetch(request).then((response) => {
     if (response.ok && ['script', 'style', 'image', 'font'].includes(request.destination)) {
       const copy = response.clone()
       caches.open(CACHE).then((cache) => cache.put(request, copy))
     }
     return response
-  })))
+  }).catch(() => caches.match(request)))
 })

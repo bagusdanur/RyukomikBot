@@ -192,14 +192,55 @@ async function downloadRaw(){if(!rawPreview.value?.token||!rawChosenPackage.valu
 // Clean-only: komik yang SUDAH diterjemahkan cukup dibersihkan logo scanlator-nya
 // lalu ditempeli branding Ryukomik. Tidak ada OCR translasi maupun typeset.
 const cleanOpen=ref(false),cleanFiles=ref<File[]>([]),cleanErase=ref(false),cleanTitle=ref(""),cleanUploading=ref(false),cleanProgress=ref(0),cleanError=ref("");
-function pickClean(event:Event){const input=event.target as HTMLInputElement;cleanFiles.value=Array.from(input.files||[])}
+// Pratinjau + potong atas/bawah sebelum job dijalankan.
+const cleanComicId=ref(""),cleanChapterId=ref(""),cleanNewChapter=ref(""),cleanChapters=ref<ChapterFolder[]>([]),cleanPreview=ref(""),cleanWidth=ref(0),cleanHeight=ref(0),cleanCropTop=ref(0),cleanCropBottom=ref(0),cleanCropOnly=ref(false),cleanCutStart=ref(0),cleanCutEnd=ref(0),cleanPrevCrop=ref<{top:number;bottom:number}|null>(null);
+const cleanTopPercent=computed(()=>cleanHeight.value?Math.min(45,cleanCropTop.value/cleanHeight.value*100):0);
+const cleanBottomPercent=computed(()=>cleanHeight.value?Math.min(45,cleanCropBottom.value/cleanHeight.value*100):0);
+async function loadCleanChapters(){
+  cleanChapters.value=[];
+  if(!cleanComicId.value)return;
+  try{cleanChapters.value=await api<ChapterFolder[]>(`/api/tools/translator/comics/${cleanComicId.value}/chapters`)}catch{cleanChapters.value=[]}
+  const match=cleanChapters.value.find(item=>item.number===(selectedChapter.value?.number));
+  cleanChapterId.value=match?.id||cleanChapters.value[0]?.id||"__new__";
+}
+function openCleaner(){
+  cleanOpen.value=true;
+  if(!cleanComicId.value)cleanComicId.value=selectedComic.value?.id||comics.value[0]?.id||"";
+  void loadCleanChapters();
+}
+function resetCleanCrop(){cleanCropTop.value=0;cleanCropBottom.value=0;cleanCropOnly.value=false;cleanCutStart.value=0;cleanCutEnd.value=0;cleanPrevCrop.value=null}
+function pickClean(event:Event){
+  const input=event.target as HTMLInputElement;cleanFiles.value=Array.from(input.files||[]);
+  resetCleanCrop();cleanError.value="";
+  if(cleanPreview.value)URL.revokeObjectURL(cleanPreview.value);
+  cleanPreview.value="";
+  const first=cleanFiles.value[0];
+  if(!first||!first.type.startsWith("image/"))return;
+  cleanPreview.value=URL.createObjectURL(first);
+  const probe=new Image();probe.onload=()=>{cleanWidth.value=probe.naturalWidth;cleanHeight.value=probe.naturalHeight};probe.src=cleanPreview.value;
+}
 async function submitClean(){
   if(!cleanFiles.value.length||cleanUploading.value)return;
   cleanUploading.value=true;cleanProgress.value=0;cleanError.value="";
+  let chapterId=cleanChapterId.value;
+  try{
+    if(chapterId==="__new__"){
+      const number=cleanNewChapter.value.trim();
+      if(!number){cleanError.value="Isi nomor chapter baru dulu.";cleanUploading.value=false;return}
+      const created=await api<ChapterFolder>(`/api/tools/translator/comics/${cleanComicId.value}/chapters`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({number})});
+      chapterId=created.id;cleanNewChapter.value="";await loadCleanChapters();
+    }
+  }catch(e){cleanError.value=e instanceof Error?e.message:"Gagal membuat chapter.";cleanUploading.value=false;return}
   const form=new FormData();
   cleanFiles.value.forEach(item=>form.append("files",item));
   form.append("cleanOnly","1");
+  if(cleanComicId.value)form.append("comicId",cleanComicId.value);
+  if(chapterId&&chapterId!=="__new__")form.append("chapterId",chapterId);
   if(cleanErase.value)form.append("eraseOnly","1");
+  if(cleanCropOnly.value)form.append("cropOnly","1");
+  if(cleanCropTop.value>0)form.append("cropTop",String(Math.round(cleanCropTop.value)));
+  if(cleanCropBottom.value>0)form.append("cropBottom",String(Math.round(cleanCropBottom.value)));
+  if(cleanCutEnd.value>cleanCutStart.value&&cleanCutStart.value>0){form.append("cutStart",String(Math.round(cleanCutStart.value)));form.append("cutEnd",String(Math.round(cleanCutEnd.value)));}
   form.append("title",cleanTitle.value.trim()||"Komik Terjemahan");
   form.append("chapter","1");
   try{
@@ -211,7 +252,7 @@ async function submitClean(){
       x.onerror=()=>fail(new Error("Upload gagal."));
       x.send(form);
     });
-    cleanOpen.value=false;cleanFiles.value=[];cleanTitle.value="";cleanErase.value=false;await refresh();
+    cleanOpen.value=false;cleanFiles.value=[];cleanTitle.value="";cleanErase.value=false;resetCleanCrop();if(cleanPreview.value)URL.revokeObjectURL(cleanPreview.value);cleanPreview.value="";await refresh();
   }catch(e){cleanError.value=e instanceof Error?e.message:"Gagal membuat job."}
   finally{cleanUploading.value=false}
 }
@@ -382,11 +423,57 @@ onMounted(async()=>{await refresh();timer=window.setInterval(async()=>{await ref
     <template v-if="!selectedComic"><div class="folder-create"><input v-model.trim="newComicTitle" maxlength="120" placeholder="Judul komik baru"><select v-model="newComicCategory" style="padding:9px;border:1px solid #293241;border-radius:8px;background:#0d131d;color:#fff;min-width:110px"><option value="manga">Manga</option><option value="manhwa">Manhwa</option><option value="manhua">Manhua</option></select><Button label="Buat Komik" icon="pi pi-folder-plus" :loading="creatingFolder" :disabled="!newComicTitle.trim()" @click="createComic" /></div><div class="folder-grid"><div v-for="comic in comics" :key="comic.id" class="folder-card"><button class="folder-open" @click="loadChapters(comic)"><i class="pi pi-folder"></i><span><b>{{comic.title}}</b><small>{{(comic.category||'manhwa').toUpperCase()}} · {{comic.chapter_count}} chapter · {{comic.job_count}} job</small></span><i class="pi pi-chevron-right"></i></button><Button icon="pi pi-trash" severity="danger" size="small" text rounded :loading="deleting===comic.id" :disabled="!!deleting" title="Hapus komik ini beserta semua chapter, job, dan memory-nya" @click.stop="deleteComic(comic)" /></div><div v-if="!comics.length" class="empty">Buat folder komik pertama Anda.</div></div></template>
     <template v-else-if="!selectedChapter"><div class="folder-tools"><b>{{selectedComic.title}}</b><Button label="Ganti Nama Judul" icon="pi pi-pencil" size="small" outlined :loading="creatingFolder" @click="renameComic" /></div><div class="memory-entry"><div><b>Memory {{selectedComic.title}}</b><small>Pelajari istilah dan gaya dari raw + hasil Indonesia chapter sebelumnya.</small></div><Button label="Pelajari Chapter Sebelumnya" icon="pi pi-graduation-cap" severity="help" @click="loadMemory(true)" /></div><div class="folder-create"><input v-model.trim="newChapterNumber" maxlength="40" placeholder="Nomor chapter, contoh: 1"><Button label="Buat Chapter" icon="pi pi-folder-plus" :loading="creatingFolder" :disabled="!newChapterNumber.trim()" @click="createChapter" /></div><div class="folder-grid"><div v-for="item in chapters" :key="item.id" class="folder-card"><button class="folder-open" @click="openChapter(item)"><i class="pi pi-folder-open"></i><span><b>Chapter {{item.number}}</b><small>{{item.job_count}} job terjemahan</small></span><i class="pi pi-chevron-right"></i></button><Button icon="pi pi-trash" severity="danger" size="small" text rounded :loading="deleting===item.id" :disabled="!!deleting" title="Hapus chapter ini beserta semua job dan hasilnya" @click.stop="deleteChapter(item)" /></div><div v-if="!chapters.length" class="empty">Belum ada chapter. Buat Chapter 1 untuk mulai.</div></div></template>
   </section>
-  <section class="panel upload"><div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap"><div><small style="display:block;color:#697386;font-size:.73rem">Komik sudah diterjemahkan orang lain?</small><b style="display:block;margin:3px 0"><i class="pi pi-eraser"></i> Bersihkan logo &amp; tempel Ryukomik</b><small style="display:block;color:#697386;font-size:.73rem">Upload ZIP/gambar hasil terjemahan. Tanpa translasi ulang, tanpa OCR teks.</small></div><Button label="Buka Cleaner" icon="pi pi-eraser" size="small" severity="secondary" outlined @click="cleanOpen=true"/></div><div v-if="jobs.some(job=>job.options&&(job.options as any).clean_only)" style="margin-top:10px;font-size:.75rem;color:#697386">Job cleaner yang sedang berjalan muncul di riwayat bawah.</div></section>
+  <section class="panel upload"><div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap"><div><small style="display:block;color:#697386;font-size:.73rem">Komik sudah diterjemahkan orang lain?</small><b style="display:block;margin:3px 0"><i class="pi pi-eraser"></i> Bersihkan logo &amp; tempel Ryukomik</b><small style="display:block;color:#697386;font-size:.73rem">Upload ZIP/gambar hasil terjemahan. Tanpa translasi ulang, tanpa OCR teks.</small></div><Button label="Buka Cleaner" icon="pi pi-eraser" size="small" severity="secondary" outlined @click="openCleaner"/></div><div v-if="jobs.some(job=>job.options&&(job.options as any).clean_only)" style="margin-top:10px;font-size:.75rem;color:#697386">Job cleaner yang sedang berjalan muncul di riwayat bawah.</div></section>
 <Dialog v-model:visible="cleanOpen" modal header="Clean logo scanlator" :style="{width:'540px',maxWidth:'95vw'}">
   <div style="display:flex;flex-direction:column;gap:12px">
-    <label style="display:flex;flex-direction:column;gap:5px;font-size:.78rem;color:#8793a5">Judul (untuk nama job)<input v-model.trim="cleanTitle" maxlength="120" placeholder="Mis. My Fiancé Only Wants My Body" style="padding:9px;border:1px solid #293241;border-radius:8px;background:#0d131d;color:#fff"></label>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:.74rem;color:#8793a5">Komik
+        <select v-model="cleanComicId" @change="loadCleanChapters" style="padding:8px;border:1px solid #293241;border-radius:8px;background:#0d131d;color:#fff">
+          <option value="" disabled>Pilih komik</option>
+          <option v-for="comic in comics" :key="comic.id" :value="comic.id">{{comic.title}}</option>
+        </select>
+      </label>
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:.74rem;color:#8793a5">Chapter
+        <select v-model="cleanChapterId" style="padding:8px;border:1px solid #293241;border-radius:8px;background:#0d131d;color:#fff">
+          <option v-for="item in cleanChapters" :key="item.id" :value="item.id">Chapter {{item.number}}</option>
+          <option value="__new__">+ Chapter baru…</option>
+        </select>
+      </label>
+    </div>
+    <label v-if="cleanChapterId==='__new__'" style="display:flex;flex-direction:column;gap:4px;font-size:.74rem;color:#8793a5">Nomor chapter baru
+      <input v-model.trim="cleanNewChapter" maxlength="40" placeholder="contoh: 16" style="padding:8px;border:1px solid #293241;border-radius:8px;background:#0d131d;color:#fff">
+    </label>
+<label style="display:flex;flex-direction:column;gap:5px;font-size:.78rem;color:#8793a5">Judul (untuk nama job)<input v-model.trim="cleanTitle" maxlength="120" placeholder="Mis. My Fiancé Only Wants My Body" style="padding:9px;border:1px solid #293241;border-radius:8px;background:#0d131d;color:#fff"></label>
     <label style="display:flex;flex-direction:column;gap:5px;font-size:.78rem;color:#8793a5">File (ZIP atau beberapa gambar)<input type="file" multiple accept=".zip,image/png,image/jpeg,image/webp" @change="pickClean" style="font-size:.78rem"></label>
+    <div v-if="cleanPreview" style="display:flex;flex-direction:column;gap:8px">
+      <div style="position:relative;line-height:0;background:#05070b;border-radius:10px;overflow:hidden;max-height:46vh">
+        <img :src="cleanPreview" style="width:100%;height:auto;max-height:46vh;object-fit:contain">
+        <div style="position:absolute;left:0;right:0;top:0;background:rgba(239,68,68,.28);border-bottom:2px solid #ef4444" :style="{height:cleanTopPercent+'%'}"></div>
+        <div style="position:absolute;left:0;right:0;bottom:0;background:rgba(239,68,68,.28);border-top:2px solid #ef4444" :style="{height:cleanBottomPercent+'%'}"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <label style="display:flex;flex-direction:column;gap:4px;font-size:.74rem;color:#8793a5">Potong atas (px)
+          <input v-model.number="cleanCropTop" type="number" min="0" :max="Math.max(0,cleanHeight-1)" style="padding:8px;border:1px solid #293241;border-radius:8px;background:#0d131d;color:#fff">
+        </label>
+        <label style="display:flex;flex-direction:column;gap:4px;font-size:.74rem;color:#8793a5">Potong bawah (px)
+          <input v-model.number="cleanCropBottom" type="number" min="0" :max="Math.max(0,cleanHeight-1)" style="padding:8px;border:1px solid #293241;border-radius:8px;background:#0d131d;color:#fff">
+        </label>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <label style="display:flex;flex-direction:column;gap:4px;font-size:.74rem;color:#8793a5">Potong tengah — mulai (px)
+          <input v-model.number="cleanCutStart" type="number" min="0" :max="Math.max(0,cleanHeight-1)" placeholder="mis. 6800" style="padding:8px;border:1px solid #293241;border-radius:8px;background:#0d131d;color:#fff">
+        </label>
+        <label style="display:flex;flex-direction:column;gap:4px;font-size:.74rem;color:#8793a5">Potong tengah — sampai (px)
+          <input v-model.number="cleanCutEnd" type="number" min="0" :max="Math.max(0,cleanHeight-1)" placeholder="mis. 7150" style="padding:8px;border:1px solid #293241;border-radius:8px;background:#0d131d;color:#fff">
+        </label>
+      </div>
+      <p style="margin:0;font-size:.72rem;color:#697386">Isi dua angka di atas untuk membuang pita di tengah halaman (mis. banner vendor). Kosongkan kalau tidak perlu.</p>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:.75rem;color:#8793a5">
+        <span>{{cleanWidth}}×{{cleanHeight}} px</span>
+        <Button label="Atur ulang potong" icon="pi pi-refresh" size="small" text @click="resetCleanCrop"/>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:.78rem;color:#8793a5"><input v-model="cleanCropOnly" type="checkbox">Cuma potong atas/bawah (tanpa hapus logo)</label>
+    </div>
     <label style="display:flex;align-items:center;gap:8px;font-size:.78rem;color:#8793a5"><input v-model="cleanErase" type="checkbox">Hapus logo saja, tanpa menempel branding Ryukomik</label>
     <p v-if="cleanFiles.length" style="margin:0;font-size:.75rem;color:#697386">{{cleanFiles.length}} file dipilih</p>
     <p v-if="cleanUploading" role="status" style="margin:0;font-size:.75rem;color:#60a5fa">Mengunggah {{cleanProgress}}%</p>
@@ -426,7 +513,7 @@ onMounted(async()=>{await refresh();timer=window.setInterval(async()=>{await ref
       <div v-if="!webtoonPages.length" class="empty">Belum ada gambar hasil untuk direview.</div>
     </div>
 
-    <div v-else class="editor-grid"><div class="preview" :class="{cropped:showCropped}"><button v-if="isCleanJob" class="before-toggle" :class="{active:showBefore}" @click="toggleBefore">{{showBefore?'Lihat hasil bersih':'Lihat halaman asli'}}</button><img :src="`/api/tools/translator/images/${currentImage.id}/preview?${showBefore?'variant=original&':''}${showCropped?'crop=1&':''}v=${previewKey}`" :alt="currentImage.filename"><button v-for="region in (showCropped?[]:regions)" :key="region.id" class="region-box" :class="{selected:selected?.id===region.id,warning:region.status==='NEEDS_REVIEW'}" :style="boxStyle(region)" :title="region.source_text" @click="pickRegion(region)"></button>
+    <div v-else class="editor-grid"><div class="preview" :class="{cropped:showCropped}"><button v-if="isCleanJob" class="before-toggle" :class="{active:showBefore}" @click="toggleBefore">{{showBefore?'Lihat hasil bersih':'Lihat halaman asli'}}</button><img :src="`/api/tools/translator/images/${currentImage.id}/preview?w=1400&${showBefore?'variant=original&':''}${showCropped?'crop=1&':''}v=${previewKey}`" :alt="currentImage.filename"><button v-for="region in (showCropped?[]:regions)" :key="region.id" class="region-box" :class="{selected:selected?.id===region.id,warning:region.status==='NEEDS_REVIEW'}" :style="boxStyle(region)" :title="region.source_text" @click="pickRegion(region)"></button>
       <div v-if="!showCropped" class="crop-shade" :style="{height:`${cropTopPercent}%`}"></div>
       <div v-if="!showCropped" class="crop-shade bottom" :style="{height:`${cropBottomPercent}%`}"></div>
       <div v-if="!showCropped" class="crop-line top" :class="{active:cropTop>0}" :style="{top:`${cropTopPercent}%`}" title="Geser untuk memotong bagian atas" @pointerdown="dragCrop($event,'top')"><span>{{cropTop?`Potong atas · ${cropTop}px`:'Potong atas'}}</span></div>
@@ -471,7 +558,7 @@ onMounted(async()=>{await refresh();timer=window.setInterval(async()=>{await ref
     </div>
   </div>
 
-  <section v-if="selectedComic&&selectedChapter" class="history chapter-contents"><header><div><b><i class="pi pi-folder-open"></i> Isi Chapter {{selectedChapter.number}}</b><small>{{selectedComic.title}} · {{selectedChapterJobs.length}} job tersimpan</small></div><small>Update setiap 4 detik</small></header><div v-if="!selectedChapterJobs.length" class="empty"><i class="pi pi-folder"></i><b>Folder chapter masih kosong</b><small>Download RAW dari source atau upload manual untuk membuat job pertama.</small></div><article v-for="job in selectedChapterJobs" :key="job.id"><i class="pi pi-images file-icon"></i><div class="copy"><b>{{name(job)}}</b><small>{{stage(job)}} · {{Math.round((job.progress||0)*100)}}% · {{new Date(job.created_at*1000).toLocaleString('id-ID')}}</small><small v-if="job.error" class="bad">{{job.error}}</small></div><span class="pill" :class="job.status.toLowerCase()">{{job.status.replace('_',' ')}}</span><div class="actions"><Button v-if="['QUEUED','WAITING_RESOURCE','PROCESSING'].includes(job.status)" :label="job.status==='PROCESSING'?'Stop proses':'Batalkan'" :icon="job.status==='PROCESSING'?'pi pi-stop-circle':'pi pi-times'" severity="danger" size="small" :text="job.status!=='PROCESSING'" @click="cancel(job)"/><Button v-if="['COMPLETED','REVIEW'].includes(job.status)" :label="(job.options as any)?.clean_only?'Preview':'Review'" icon="pi pi-pencil" size="small" text @click="openReview(job)"/><span v-if="job.review_count" class="review-count"><b>{{job.review_count}} review</b><small>{{reviewPages(job)}}</small></span><Button v-if="['COMPLETED','REVIEW'].includes(job.status)" :label="job.options?.input_files?.length&&job.options.input_files.length>1?'ZIP':'Unduh'" icon="pi pi-download" size="small" @click="download(job)"/><Button v-if="job.status!=='PROCESSING'" label="Hapus" icon="pi pi-trash" severity="danger" size="small" text @click="deleteJob(job)"/></div></article></section>
+  <section v-if="selectedComic&&selectedChapter" class="history chapter-contents"><header><div><b><i class="pi pi-folder-open"></i> Isi Chapter {{selectedChapter.number}}</b><small>{{selectedComic.title}} · {{selectedChapterJobs.length}} job tersimpan</small></div><small>Update setiap 4 detik</small></header><div v-if="!selectedChapterJobs.length" class="empty"><i class="pi pi-folder"></i><b>Folder chapter masih kosong</b><small>Download RAW dari source atau upload manual untuk membuat job pertama.</small></div><article v-for="job in selectedChapterJobs" :key="job.id"><i class="pi pi-images file-icon"></i><div class="copy"><b>{{name(job)}}</b><small>{{stage(job)}} · {{Math.round((job.progress||0)*100)}}% · {{new Date(job.created_at*1000).toLocaleString('id-ID')}}</small><small v-if="job.error" class="bad">{{job.error}}</small></div><span class="pill" :class="job.status.toLowerCase()">{{job.status.replace('_',' ')}}</span><span v-if="(job.options as any)?.clean_only" class="pill" style="background:rgba(167,139,250,.15);color:#c4b5fd">CLEAN</span><div class="actions"><Button v-if="['QUEUED','WAITING_RESOURCE','PROCESSING'].includes(job.status)" :label="job.status==='PROCESSING'?'Stop proses':'Batalkan'" :icon="job.status==='PROCESSING'?'pi pi-stop-circle':'pi pi-times'" severity="danger" size="small" :text="job.status!=='PROCESSING'" @click="cancel(job)"/><Button v-if="['COMPLETED','REVIEW'].includes(job.status)" :label="(job.options as any)?.clean_only?'Preview':'Review'" icon="pi pi-pencil" size="small" text @click="openReview(job)"/><span v-if="job.review_count" class="review-count"><b>{{job.review_count}} review</b><small>{{reviewPages(job)}}</small></span><Button v-if="['COMPLETED','REVIEW'].includes(job.status)" :label="job.options?.input_files?.length&&job.options.input_files.length>1?'ZIP':'Unduh'" icon="pi pi-download" size="small" @click="download(job)"/><Button v-if="job.status!=='PROCESSING'" label="Hapus" icon="pi pi-trash" severity="danger" size="small" text @click="deleteJob(job)"/></div></article></section>
 </template>
 
 <style scoped>

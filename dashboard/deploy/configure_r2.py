@@ -42,7 +42,7 @@ def main():
             "R2_ENDPOINT": endpoint})
     try:
         client.put_bucket_cors(Bucket=BUCKET, CORSConfiguration={"CORSRules": [{
-            "AllowedOrigins": ["https://staff.ryukomik.web.id"],
+            "AllowedOrigins": ["https://staff.ryukomik.com"],
             "AllowedMethods": ["GET", "PUT", "HEAD"],
             "AllowedHeaders": ["Content-Type"],
             "ExposeHeaders": ["ETag"],

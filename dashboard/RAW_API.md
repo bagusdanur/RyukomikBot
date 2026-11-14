@@ -1,6 +1,6 @@
 # RAW API (dipakai dari VPS lain)
 
-Server: `https://staff.ryukomik.web.id`
+Server: `https://staff.ryukomik.com`
 Base path: `/api/v1/raw`
 Auth: header `X-API-Key: <RAW_API_KEY>` (atau `Authorization: Bearer <key>`)
 
@@ -13,7 +13,7 @@ Tanpa kunci → `401`. Kalau `RAW_API_KEY` belum diset di proses → `503`.
 ```bash
 curl -H "X-API-Key: $RAW_API_KEY" \
   -o raw.zip \
-  "https://staff.ryukomik.web.id/api/v1/raw/get?title=Koshaku%20no%20Tsukibito%20Ossan&chapter=1"
+  "https://staff.ryukomik.com/api/v1/raw/get?title=Koshaku%20no%20Tsukibito%20Ossan&chapter=1"
 ```
 
 - `title` = judul (boleh sebagian, dicocokkan fuzzy; default source `mangadex`)
@@ -31,14 +31,14 @@ Catatan: endpoint ini menahan koneksi sampai paket siap. Nginx memakai
 # 1. buat paket
 TOKEN=$(curl -s -H "X-API-Key: $RAW_API_KEY" -H 'Content-Type: application/json' \
   -d '{"title":"Koshaku no Tsukibito Ossan","chapter":"1"}' \
-  https://staff.ryukomik.web.id/api/v1/raw/fetch | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+  https://staff.ryukomik.com/api/v1/raw/fetch | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
 
 # 2. cek status (QUEUED -> DOWNLOADING -> JOINING -> READY)
-curl -s -H "X-API-Key: $RAW_API_KEY" https://staff.ryukomik.web.id/api/v1/raw/status/$TOKEN
+curl -s -H "X-API-Key: $RAW_API_KEY" https://staff.ryukomik.com/api/v1/raw/status/$TOKEN
 
 # 3. unduh
 curl -H "X-API-Key: $RAW_API_KEY" -o raw.zip \
-  "https://staff.ryukomik.web.id/api/v1/raw/download/$TOKEN?mode=original"
+  "https://staff.ryukomik.com/api/v1/raw/download/$TOKEN?mode=original"
 ```
 
 ## Endpoint lain
@@ -57,7 +57,7 @@ curl -H "X-API-Key: $RAW_API_KEY" -o raw.zip \
 `dashboard/deploy/raw_api_client.py` (butuh `httpx`):
 
 ```bash
-export RAW_API_URL=https://staff.ryukomik.web.id
+export RAW_API_URL=https://staff.ryukomik.com
 export RAW_API_KEY=<isi file .raw-api-key>
 python raw_api_client.py "Koshaku no Tsukibito Ossan" --chapter 1 --out raw.zip
 ```
