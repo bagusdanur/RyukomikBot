@@ -59,6 +59,7 @@ from yuki_discord import (
     reset_yuki, response_embeds, response_view, setup_yuki_tables, yuki_health,
 )
 from views.giveaway_views import GiveawayJoinDynamic, GiveawayView
+from views.scanlator_access_views import scanlator_akses_command
 import database as db
 from server_management import (
     apply_server_housekeeping,
@@ -67,6 +68,7 @@ from server_management import (
     ensure_raw_watch_channel,
     ensure_project_scout_channel,
     ensure_scanlator_update_channel,
+    ensure_scanlator_community,
     ensure_giveaway_channel,
     is_web_keyword,
     send_goodbye,
@@ -227,6 +229,15 @@ class RyukomikBot(commands.Bot):
                     self.scanlator_channel_ready = True
             except Exception as exc:
                 print(f"[ERROR] Scanlator update channel failed: {exc}", flush=True)
+
+        if not getattr(self, "scanlator_community_ready", False):
+            try:
+                target_guild = self.get_guild(GUILD_ID)
+                if target_guild is not None:
+                    await ensure_scanlator_community(target_guild)
+                    self.scanlator_community_ready = True
+            except Exception as exc:
+                print(f"[ERROR] Scanlator community setup failed: {exc}", flush=True)
 
         if not self.recruitment_reconciled:
             try:
@@ -1686,6 +1697,23 @@ async def giveaway_list_command(interaction: discord.Interaction):
 
 
 bot.tree.add_command(giveaway_group)
+
+
+@bot.tree.command(name="scanlator-akses", description="Beri/cabut akses role komunitas Scanlator")
+@discord.app_commands.describe(
+    member="Member yang akan diatur aksesnya",
+    aksi="grant = beri role, revoke = cabut role",
+)
+@discord.app_commands.choices(aksi=[
+    discord.app_commands.Choice(name="Beri akses", value="grant"),
+    discord.app_commands.Choice(name="Cabut akses", value="revoke"),
+])
+async def scanlator_akses_slash(
+    interaction: discord.Interaction,
+    member: discord.Member,
+    aksi: str,
+):
+    await scanlator_akses_command(interaction, member, aksi)
 
 
 @bot.tree.error

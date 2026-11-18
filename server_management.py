@@ -21,6 +21,9 @@ from config import (
     ROLE_NOTIFICATION_ID,
     ROLE_NOTIFICATION_NAME,
     ROLE_STAFF_ID,
+    ROLE_SCANLATOR_ID,
+    SCANLATOR_CHANNEL_ID,
+    SCANLATOR_CHANNEL_NAME,
     RAW_WATCH_CHANNEL_NAME,
     PROJECT_SCOUT_CHANNEL_NAME,
     SCANLATOR_UPDATE_CHANNEL_NAME,
@@ -152,6 +155,105 @@ async def ensure_scanlator_update_channel(guild: discord.Guild) -> discord.TextC
         pass
     print(f"[PROJECT] scanlator-update channel id={channel.id}", flush=True)
     return channel
+
+
+async def ensure_scanlator_community(guild: discord.Guild):
+    """Role + channel komunitas Scanlator. Idempoten; dipanggil tiap startup."""
+    role = guild.get_role(ROLE_SCANLATOR_ID) if ROLE_SCANLATOR_ID else None
+    role = role or discord.utils.get(guild.roles, name="Scanlator")
+    if role is None:
+        try:
+            role = await guild.create_role(
+                name="Scanlator", color=discord.Color.green(),
+                mentionable=True, hoist=False,
+                reason="Role komunitas Scanlator Ryukomik",
+            )
+        except (discord.HTTPException, discord.Forbidden) as error:
+            print(f"[SCANLATOR] Gagal buat role: {error}", flush=True)
+            return None
+
+    channel = guild.get_channel(SCANLATOR_CHANNEL_ID) if SCANLATOR_CHANNEL_ID else None
+    channel = channel or _find_text_channel(guild, names=(SCANLATOR_CHANNEL_NAME,))
+    if channel is not None and not isinstance(channel, discord.TextChannel):
+        channel = None
+    created = channel is None
+    if created:
+        try:
+            category = discord.utils.get(guild.categories, name="💬 - COMMUNITY")
+            everyone_overwrite = discord.PermissionOverwrite(view_channel=False)
+            scan_overwrite = discord.PermissionOverwrite(
+                view_channel=True, send_messages=True, read_message_history=True,
+                attach_files=True, embed_links=True,
+            )
+            admin_overwrite = discord.PermissionOverwrite(
+                view_channel=True, send_messages=True, read_message_history=True,
+                attach_files=True, embed_links=True, manage_messages=True,
+            )
+            overwrites = {
+                guild.default_role: everyone_overwrite,
+                role: scan_overwrite,
+                guild.me: admin_overwrite,
+            }
+            admin_role = guild.get_role(ROLE_ADMIN_ID)
+            if admin_role is not None:
+                overwrites[admin_role] = admin_overwrite
+            channel = await guild.create_text_channel(
+                SCANLATOR_CHANNEL_NAME,
+                category=category,
+                overwrites=overwrites,
+                topic="Ruang komunitas tim Scanlator Ryukomik. Koordinasi, diskusi, dan bantuan.",
+                reason="Channel khusus grup Scanlator",
+            )
+        except (discord.HTTPException, discord.Forbidden) as error:
+            print(f"[SCANLATOR] Gagal buat channel: {error}", flush=True)
+            return None
+
+    # Housekeeping Helper bisa menimpa izin channel publik tiap restart.
+    # Tegakkan ulang overwrites tiap startup supaya channel tetap privat.
+    if channel is not None:
+        try:
+            everyone_overwrite = discord.PermissionOverwrite(view_channel=False)
+            scan_overwrite = discord.PermissionOverwrite(
+                view_channel=True, send_messages=True, read_message_history=True,
+                attach_files=True, embed_links=True,
+            )
+            admin_overwrite = discord.PermissionOverwrite(
+                view_channel=True, send_messages=True, read_message_history=True,
+                attach_files=True, embed_links=True, manage_messages=True,
+            )
+            await channel.set_permissions(guild.default_role, overwrite=everyone_overwrite)
+            await channel.set_permissions(role, overwrite=scan_overwrite)
+            await channel.set_permissions(guild.me, overwrite=admin_overwrite)
+            admin_role = guild.get_role(ROLE_ADMIN_ID)
+            if admin_role is not None:
+                await channel.set_permissions(admin_role, overwrite=admin_overwrite)
+            helper_role = guild.get_role(ROLE_HELPER_ID) if ROLE_HELPER_ID else discord.utils.get(guild.roles, name="Helper")
+            if helper_role is not None:
+                await channel.set_permissions(
+                    helper_role, overwrite=discord.PermissionOverwrite(view_channel=False)
+                )
+        except (discord.HTTPException, discord.Forbidden) as error:
+            print(f"[SCANLATOR] Gagal tegakkan izin channel: {error}", flush=True)
+
+    if channel is not None and created:
+        try:
+            embed = discord.Embed(
+                title="Selamat datang di ruang Scanlator",
+                description=(
+                    "Ruang ini untuk koordinasi tim Scanlator Ryukomik.\n\n"
+                    "• Daftar jadi Scanlator: https://ryukomik.com/scanlator/daftar\n"
+                    "• Direktori tim: https://ryukomik.com/scanlator/direktori\n\n"
+                    f"Akses grup diberikan Administrator melalui role <@&{role.id}>."
+                ),
+                color=discord.Color.green(),
+            )
+            message = await channel.send(embed=embed)
+            await message.pin(reason="Panduan ruang Scanlator")
+        except (discord.HTTPException, discord.Forbidden):
+            pass
+
+    print(f"[SCANLATOR] community ready role={role.id} channel={channel.id}", flush=True)
+    return role, channel
 
 
 async def ensure_notification_role_panel(guild: discord.Guild) -> bool:
@@ -451,9 +553,9 @@ def build_website_embed() -> discord.Embed:
 
 def build_website_view() -> discord.ui.View:
     view = discord.ui.View(timeout=None)
-    view.add_item(discord.ui.Button(label="Buka Komik", emoji="📚", style=discord.ButtonStyle.link, url="https://ryukomik.web.id/"))
-    view.add_item(discord.ui.Button(label="Buka Anime", emoji="🎬", style=discord.ButtonStyle.link, url="https://ryukomik.web.id/anime"))
-    view.add_item(discord.ui.Button(label="Buka Donghua", emoji="🐉", style=discord.ButtonStyle.link, url="https://ryukomik.web.id/donghua"))
+    view.add_item(discord.ui.Button(label="Buka Komik", emoji="📚", style=discord.ButtonStyle.link, url="https://ryukomik.com/"))
+    view.add_item(discord.ui.Button(label="Buka Anime", emoji="🎬", style=discord.ButtonStyle.link, url="https://ryukomik.com/anime"))
+    view.add_item(discord.ui.Button(label="Buka Donghua", emoji="🐉", style=discord.ButtonStyle.link, url="https://ryukomik.com/donghua"))
     return view
 
 
