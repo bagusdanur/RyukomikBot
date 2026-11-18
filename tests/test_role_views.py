@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from views.role_views import ZODIAC_NAMES, ZodiacRoleView, zodiac_roles
+from views.role_views import NotificationRoleView, ZODIAC_NAMES, ZodiacRoleView, zodiac_roles
 
 
 def test_zodiac_view_preserves_legacy_custom_id():
@@ -20,3 +20,10 @@ def test_zodiac_roles_only_returns_zodiac_roles():
         ]
     )
     assert [role.name for role in zodiac_roles(member)] == ["Leo"]
+
+
+def test_notification_role_view_is_persistent():
+    view = NotificationRoleView()
+    button = view.children[0]
+    assert button.custom_id == "project_notification_role_toggle"
+    assert view.timeout is None
