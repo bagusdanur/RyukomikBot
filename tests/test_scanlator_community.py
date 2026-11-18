@@ -25,7 +25,7 @@ class ScanlatorCommunityTests(unittest.TestCase):
         config = open(os.path.join(ROOT, "config.py")).read()
         self.assertIn("ROLE_SCANLATOR_ID", config)
         self.assertIn("SCANLATOR_CHANNEL_ID", config)
-        self.assertIn("・scanlator-ruang", config)
+        self.assertIn("scanlator-chat", config)
 
 
 if __name__ == "__main__":
