@@ -4,14 +4,11 @@ import discord
 
 from server_management import (
     _find_text_channel,
-    _helper_private_category,
-    _helper_private_channel,
     _plain_name,
     build_goodbye_embed,
     build_welcome_embed,
     build_welcome_view,
 )
-from config import REKRUT_CAT_ID
 
 
 def test_plain_name_handles_discord_channel_decoration():
@@ -31,21 +28,6 @@ def test_channel_lookup_does_not_create_or_rearrange_channels():
         assert _find_text_channel(guild, names=("welcome",)) is welcome
     finally:
         discord.TextChannel = original
-
-
-def test_helper_private_category_detects_tickets_and_staff_areas():
-    assert _helper_private_category(SimpleNamespace(id=REKRUT_CAT_ID, name="Recruitment"))
-    assert not _helper_private_category(SimpleNamespace(id=1, name="Staff Internal"))
-    assert _helper_private_category(SimpleNamespace(id=2, name="Tiket Bantuan"))
-    assert not _helper_private_category(SimpleNamespace(id=3, name="Info Project"))
-
-
-def test_helper_private_channel_detects_operational_channels():
-    for name in ("・staff-mod", "・raw-watch", "・project-scout", "・server-monitor"):
-        assert _helper_private_channel(SimpleNamespace(name=name))
-    assert not _helper_private_channel(SimpleNamespace(name="・update-project"))
-    assert _helper_private_channel(SimpleNamespace(name="🔒・tiket-member", category_id=4))
-    assert _helper_private_channel(SimpleNamespace(name="general", category_id=REKRUT_CAT_ID))
 
 
 def test_welcome_and_goodbye_cards_are_mobile_friendly():

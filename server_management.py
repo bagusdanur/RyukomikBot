@@ -24,6 +24,7 @@ from config import (
     ROLE_SCANLATOR_ID,
     SCANLATOR_CHANNEL_ID,
     SCANLATOR_CHANNEL_NAME,
+    SCANLATOR_CATEGORY_NAME,
     RAW_WATCH_CHANNEL_NAME,
     PROJECT_SCOUT_CHANNEL_NAME,
     SCANLATOR_UPDATE_CHANNEL_NAME,
@@ -179,7 +180,7 @@ async def ensure_scanlator_community(guild: discord.Guild):
     created = channel is None
     if created:
         try:
-            category = discord.utils.get(guild.categories, name="💬 - COMMUNITY")
+            category = discord.utils.get(guild.categories, name=SCANLATOR_CATEGORY_NAME) or discord.utils.get(guild.categories, name="🖌️ - SCANLATOR")
             everyone_overwrite = discord.PermissionOverwrite(view_channel=False)
             scan_overwrite = discord.PermissionOverwrite(
                 view_channel=True, send_messages=True, read_message_history=True,
