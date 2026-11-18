@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import discord
 
+from config import ROLE_NOTIFICATION_ID, ROLE_NOTIFICATION_NAME
+
 
 ZODIAC_NAMES = (
     "Aries",
@@ -118,3 +120,54 @@ class ZodiacRoleView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
         self.add_item(ZodiacSelect())
+
+
+def notification_role(guild: discord.Guild) -> discord.Role | None:
+    if ROLE_NOTIFICATION_ID:
+        role = guild.get_role(ROLE_NOTIFICATION_ID)
+        if role:
+            return role
+    return discord.utils.get(guild.roles, name=ROLE_NOTIFICATION_NAME)
+
+
+class NotificationRoleView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="Aktifkan Notifikasi Project",
+        emoji="🔔",
+        style=discord.ButtonStyle.primary,
+        custom_id="project_notification_role_toggle",
+    )
+    async def toggle(self, interaction: discord.Interaction, _: discord.ui.Button):
+        if not interaction.guild or not isinstance(interaction.user, discord.Member):
+            return await interaction.response.send_message(
+                "Role notifikasi hanya dapat diatur di server.", ephemeral=True
+            )
+        role = notification_role(interaction.guild)
+        if role is None:
+            return await interaction.response.send_message(
+                "Role notifikasi belum tersedia. Hubungi Administrator.", ephemeral=True
+            )
+        if not role.is_assignable():
+            return await interaction.response.send_message(
+                "Yuki belum dapat mengatur role notifikasi. Periksa hierarchy role bot.", ephemeral=True
+            )
+        await interaction.response.defer(ephemeral=True)
+        try:
+            if role in interaction.user.roles:
+                await interaction.user.remove_roles(role, reason="Menonaktifkan notifikasi project")
+                message = "🔕 Notifikasi project berhasil dinonaktifkan."
+            else:
+                await interaction.user.add_roles(role, reason="Mengaktifkan notifikasi project")
+                message = "🔔 Notifikasi project berhasil diaktifkan."
+            await interaction.followup.send(message, ephemeral=True)
+        except discord.Forbidden:
+            await interaction.followup.send(
+                "Yuki tidak dapat mengubah role tersebut. Periksa izin dan hierarchy role.", ephemeral=True
+            )
+        except discord.HTTPException:
+            await interaction.followup.send(
+                "Discord gagal memperbarui role. Silakan coba lagi.", ephemeral=True
+            )

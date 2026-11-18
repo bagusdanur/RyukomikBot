@@ -150,7 +150,7 @@ class ThreeSourceResolverTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["missing"], [])
 
     async def test_equal_coverage_uses_business_priority(self):
-        self.assertEqual(SOURCE_ORDER, ("asura", "omega", "doujiva", "diva", "evascan", "thunder", "vortex", "qimanga", "demon", "kagane", "mgeko", "dusk", "mangadex", "lagoon", "ken"))
+        self.assertEqual(SOURCE_ORDER, ("asura", "omega", "doujiva", "diva", "evascan", "thunder", "vortex", "qimanga", "demon", "kagane", "mgeko", "dusk", "lagoon", "ken", "mgread", "mangadex"))
         downloaders = {
             source: FakeDownloader([manga(source)], chapters(source, 1, 2))
             for source in SOURCE_ORDER
