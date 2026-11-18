@@ -181,7 +181,7 @@ async def ensure_scanlator_community(guild: discord.Guild):
     if created:
         try:
             category = (discord.utils.get(guild.categories, name=SCANLATOR_CATEGORY_NAME)
-                        or discord.utils.get(guild.categories, name="📁 INFO PROJECT"))
+                        or discord.utils.get(guild.categories, name="🖌️ - SCANLATOR"))
             everyone_overwrite = discord.PermissionOverwrite(view_channel=False)
             scan_overwrite = discord.PermissionOverwrite(
                 view_channel=True, send_messages=True, read_message_history=True,
