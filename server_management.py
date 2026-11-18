@@ -180,7 +180,8 @@ async def ensure_scanlator_community(guild: discord.Guild):
     created = channel is None
     if created:
         try:
-            category = discord.utils.get(guild.categories, name=SCANLATOR_CATEGORY_NAME) or discord.utils.get(guild.categories, name="🖌️ - SCANLATOR")
+            category = (discord.utils.get(guild.categories, name=SCANLATOR_CATEGORY_NAME)
+                        or discord.utils.get(guild.categories, name="📁 INFO PROJECT"))
             everyone_overwrite = discord.PermissionOverwrite(view_channel=False)
             scan_overwrite = discord.PermissionOverwrite(
                 view_channel=True, send_messages=True, read_message_history=True,
@@ -195,6 +196,9 @@ async def ensure_scanlator_community(guild: discord.Guild):
                 role: scan_overwrite,
                 guild.me: admin_overwrite,
             }
+            staff_role = guild.get_role(ROLE_STAFF_ID)
+            if staff_role is not None:
+                overwrites[staff_role] = scan_overwrite
             admin_role = guild.get_role(ROLE_ADMIN_ID)
             if admin_role is not None:
                 overwrites[admin_role] = admin_overwrite
@@ -225,6 +229,9 @@ async def ensure_scanlator_community(guild: discord.Guild):
             await channel.set_permissions(guild.default_role, overwrite=everyone_overwrite)
             await channel.set_permissions(role, overwrite=scan_overwrite)
             await channel.set_permissions(guild.me, overwrite=admin_overwrite)
+            staff_role = guild.get_role(ROLE_STAFF_ID)
+            if staff_role is not None:
+                await channel.set_permissions(staff_role, overwrite=scan_overwrite)
             admin_role = guild.get_role(ROLE_ADMIN_ID)
             if admin_role is not None:
                 await channel.set_permissions(admin_role, overwrite=admin_overwrite)
